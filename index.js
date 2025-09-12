@@ -86,6 +86,56 @@ const stage = new Scenes.Stage([setTriggerWizard]);
 bot.use(session());
 bot.use(stage.middleware());
 
+// 🔥 هندلر جدید برای #فعال - ثبت گروه توسط ادمین
+bot.hears(/.*#فعال.*/, async (ctx) => {
+  try {
+    const chatId = ctx.chat.id;
+    const userId = ctx.from.id;
+    const chatType = ctx.chat.type;
+    const chatTitle = ctx.chat.title || 'بدون نام';
+
+    // فقط برای گروه‌ها و سوپرگروه‌ها
+    if (chatType !== 'group' && chatType !== 'supergroup') {
+      return ctx.reply('❌ این دستور فقط در گروه‌ها قابل استفاده است.');
+    }
+
+    // بررسی آیا کاربر ادمین است
+    try {
+      const chatMember = await ctx.telegram.getChatMember(chatId, userId);
+      const isAdmin = ['administrator', 'creator'].includes(chatMember.status);
+      
+      if (!isAdmin) {
+        return ctx.reply('❌ فقط ادمین‌های گروه می‌توانند از این دستور استفاده کنند.');
+      }
+    } catch (error) {
+      console.error('Error checking admin status:', error);
+      return ctx.reply('❌ خطا در بررسی وضعیت ادمینی.');
+    }
+
+    // ذخیره گروه در دیتابیس
+    const { error } = await supabase
+      .from('groups')
+      .upsert({
+        chat_id: chatId,
+        title: chatTitle,
+        type: chatType,
+        is_bot_admin: true,
+        last_updated: new Date().toISOString()
+      });
+
+    if (error) {
+      console.error('Error saving group:', error);
+      return ctx.reply('❌ خطا در ثبت گروه. لطفاً بعداً تلاش کنید.');
+    }
+
+    await ctx.reply(`✅ گروه "${chatTitle}" با موفقیت در سیستم ثبت شد!\n\n🔹 آی‌دی گروه: ${chatId}\n🔹 نوع گروه: ${chatType}\n🔹 وضعیت ربات: ادمین`);
+
+  } catch (error) {
+    console.error('Error in #فعال command:', error);
+    ctx.reply('❌ خطایی در اجرای دستور رخ داد.');
+  }
+});
+
 // هندلر برای زمانی که ربات به گروهی اضافه می‌شود یا وضعیتش تغییر می‌کند
 bot.on('my_chat_member', async (ctx) => {
   try {
@@ -156,7 +206,7 @@ bot.on('chat_member', async (ctx) => {
     const userId = newMember.user.id;
     const chatId = ctx.chat.id;
     
-    // فقط زمانی که کاربر به عنوان ع��و جدید اضافه می‌شود
+    // فقط زمانی که کاربر به عنوان عضو جدید اضافه می‌شود
     if (newMember.status === 'member' || newMember.status === 'administrator') {
       // بررسی آیا کاربر در قرنطینه است
       const { data: quarantine, error: quarantineError } = await supabase
@@ -221,6 +271,18 @@ bot.start(async (ctx) => {
 
       await ctx.reply(`سلام ${firstName}! به ربات خوش آمدی. 😊`);
     }
+
+    // نمایش راهنمای دستورات
+    await ctx.replyWithHTML(`
+🤖 <b>دستورات disponibles:</b>
+/set_trigger - تنظیم تریگر جدید
+#ورود - فعال کردن تریگر
+#خروج - غیرفعال کردن تریگر
+#فعال - ثبت گروه در سیستم (فقط ادمین)
+/list_triggers - مشاهده لیست تریگرها
+/delete_trigger - حذف تریگر
+    `);
+
   } catch (err) {
     console.error('Error in /start command:', err);
     ctx.reply('❌ خطای غیرمنتظره‌ای رخ داد.');
