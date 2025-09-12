@@ -31,30 +31,35 @@ const setTriggerWizard = new Scenes.WizardScene(
     return ctx.wizard.next();
   },
   async (ctx) => {
-    // ذخیره نام تریگر
     ctx.wizard.state.triggerName = ctx.message.text;
     await ctx.reply('⏰ لطفاً زمان تاخیر به ثانیه وارد کنید:');
     return ctx.wizard.next();
   },
   async (ctx) => {
-    // ذخیره زمان تاخیر
     ctx.wizard.state.delaySeconds = parseInt(ctx.message.text);
     if (isNaN(ctx.wizard.state.delaySeconds)) {
       await ctx.reply('⚠️ زمان باید یک عدد باشد. لطفاً دوباره وارد کنید:');
-      return; // در همین مرحله بماند
+      return;
     }
     await ctx.reply('📝 لطفاً پیام اول را وارد کنید:');
     return ctx.wizard.next();
   },
   async (ctx) => {
-    // ذخیره پیام اول - دقیقاً همانطور که کاربر وارد کرده
+    // ذخیره پیام اول با تمام فرمت‌ها و لینک‌ها
     ctx.wizard.state.firstMessage = ctx.message.text;
+    // اگر پیام حاوی entities باشد (مثل لینک، بولد، ایتالیک و...) آنها را نیز ذخیره می‌کنیم
+    if (ctx.message.entities) {
+      ctx.wizard.state.firstMessageEntities = ctx.message.entities;
+    }
     await ctx.reply('📩 لطفاً پیام تاخیری را وارد کنید:');
     return ctx.wizard.next();
   },
   async (ctx) => {
-    // ذخیره پیام تاخیری - دقیقاً همانطور که کاربر وارد کرده
+    // ذخیره پیام تاخیری با تمام فرمت‌ها و لینک‌ها
     ctx.wizard.state.secondMessage = ctx.message.text;
+    if (ctx.message.entities) {
+      ctx.wizard.state.secondMessageEntities = ctx.message.entities;
+    }
     
     // ذخیره تمام تنظیمات در دیتابیس
     const { error } = await supabase
@@ -63,8 +68,10 @@ const setTriggerWizard = new Scenes.WizardScene(
         chat_id: ctx.chat.id,
         trigger_name: ctx.wizard.state.triggerName,
         first_message: ctx.wizard.state.firstMessage,
+        first_message_entities: ctx.wizard.state.firstMessageEntities || [],
         delay_seconds: ctx.wizard.state.delaySeconds,
-        second_message: ctx.wizard.state.secondMessage
+        second_message: ctx.wizard.state.secondMessage,
+        second_message_entities: ctx.wizard.state.secondMessageEntities || []
       });
 
     if (error) {
@@ -112,14 +119,6 @@ bot.start(async (ctx) => {
 
       await ctx.reply(`سلام ${firstName}! به ربات خوش آمدی. 😊`);
     }
-    
-    // نمایش راهنما
-    await ctx.replyWithHTML(`
-🤖 <b>دستورات disponibles:</b>
-/set_trigger - تنظیم تریگر جدید
-/trigger1 - فعال کردن تریگر
-/trigger2 - غیرفعال کردن تریگر
-    `);
   } catch (err) {
     console.error('Error in /start command:', err);
     ctx.reply('❌ خطای غیرمنتظره‌ای رخ داد.');
@@ -151,13 +150,52 @@ bot.command('trigger1', async (ctx) => {
 
     const { trigger_name, first_message, delay_seconds, second_message } = settings;
 
-    // ارسال پیام اول - دقیقاً همانطور که کاربر وارد کرده
+    // 🔥 بخش جدید: قرنطینه کردن کاربر در همه گروه‌ها
+    try {
+      // این بخش نیاز به لیست کردن همه گروه‌های تحت مدیریت ربات دارد
+      // برای نمونه، فرض می‌کنیم ربات در گروه‌های دیگر نیز عضو است
+      
+      // اینجا باید ID گروه‌هایی که می‌خواهید کاربر از آنها بن شود را جایگزین کنید
+      const groupIdsToBan = [-1001234567890, -1009876543210]; // جایگزین کنید با ID گروه‌های واقعی
+      
+      for (const groupId of groupIdsToBan) {
+        if (groupId !== chatId) { // از بن کردن کاربر در گروه فعلی خودداری کنید
+          try {
+            await ctx.telegram.banChatMember(groupId, userId, { 
+              until_date: Math.floor(Date.now() / 1000) + (delay_seconds * 2) // بن به مدت دو برابر زمان تاخیر
+            });
+            console.log(`User ${userId} banned from group ${groupId}`);
+          } catch (banError) {
+            console.error(`Error banning user in group ${groupId}:`, banError);
+          }
+        }
+      }
+      
+      // ذخیره وضعیت قرنطینه کاربر
+      const { error: quarantineError } = await supabase
+        .from('user_quarantine')
+        .upsert({
+          user_id: userId,
+          chat_id: chatId,
+          is_quarantined: true,
+          quarantine_start: new Date().toISOString()
+        });
+
+      if (quarantineError) {
+        console.error('Error saving quarantine status:', quarantineError);
+      }
+    } catch (banError) {
+      console.error('Error in ban process:', banError);
+    }
+
+    // ارسال پیام اول - با حفظ فرمت و لینک‌ها
     await ctx.replyWithHTML(`🔔 <b>${trigger_name}</b> فعال شد!\n\n👤 کاربر: <b>${firstName}</b>\n⏰ تاخیر: ${delay_seconds} ثانیه\n\n${first_message}`, {
       reply_to_message_id: ctx.message.message_id,
-      parse_mode: 'HTML' // برای حفظ فرمت HTML
+      parse_mode: 'HTML',
+      disable_web_page_preview: false // اجازه نمایش پیش‌نمایش لینک
     });
 
-    // ارسال پیام دوم با تاخیر - دقیقاً همانطور که کاربر وارد کرده
+    // ارسال پیام دوم با تاخیر - با حفظ فرمت و لینک‌ها
     setTimeout(async () => {
       try {
         await ctx.telegram.sendMessage(
@@ -165,7 +203,8 @@ bot.command('trigger1', async (ctx) => {
           `⏰ زمان تاخیر به پایان رسید!\n\n${second_message}`,
           {
             reply_to_message_id: ctx.message.message_id,
-            parse_mode: 'HTML' // برای حفظ فرمت HTML
+            parse_mode: 'HTML',
+            disable_web_page_preview: false
           }
         );
       } catch (error) {
@@ -179,10 +218,44 @@ bot.command('trigger1', async (ctx) => {
   }
 });
 
-// دستور trigger2 - غیرفعال کردن تریگر
+// دستور trigger2 - غیرفعال کردن تریگر و آزاد کردن کاربر
 bot.command('trigger2', async (ctx) => {
   try {
-    await ctx.reply('✅ تریگر غیرفعال شد.');
+    const userId = ctx.from.id;
+    const chatId = ctx.chat.id;
+
+    // 🔥 بخش جدید: آزاد کردن کاربر از بن همه گروه‌ها
+    try {
+      const groupIdsToUnban = [-1001234567890, -1009876543210]; // جایگزین کنید با ID گروه‌های واقعی
+      
+      for (const groupId of groupIdsToUnban) {
+        if (groupId !== chatId) {
+          try {
+            await ctx.telegram.unbanChatMember(groupId, userId);
+            console.log(`User ${userId} unbanned from group ${groupId}`);
+          } catch (unbanError) {
+            console.error(`Error unbanning user in group ${groupId}:`, unbanError);
+          }
+        }
+      }
+      
+      // به روز رسانی وضعیت قرنطینه کاربر
+      const { error: updateError } = await supabase
+        .from('user_quarantine')
+        .update({ 
+          is_quarantined: false, 
+          quarantine_end: new Date().toISOString() 
+        })
+        .eq('user_id', userId);
+
+      if (updateError) {
+        console.error('Error updating quarantine status:', updateError);
+      }
+    } catch (unbanError) {
+      console.error('Error in unban process:', unbanError);
+    }
+
+    await ctx.reply('✅ تریگر غیرفعال شد و شما از قرنطینه خارج شدید.');
   } catch (error) {
     console.error('Error in /trigger2 command:', error);
     ctx.reply('❌ خطایی در اجرای دستور رخ داد.');
