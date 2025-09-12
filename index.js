@@ -112,7 +112,6 @@ bot.on('my_chat_member', async (ctx) => {
           console.error('Error saving group:', error);
         } else {
           console.log(`✅ گروه ذخیره شد: ${chatTitle} (${chatId}) - ربات ادمین است`);
-          await ctx.reply(`🤖 ربات با موفقیت به گروه "${chatTitle}" اضافه شد و آماده کار است!`);
         }
       } else if (newStatus === 'member') {
         // ذخیره گروه با وضعیت عضو عادی
@@ -127,7 +126,7 @@ bot.on('my_chat_member', async (ctx) => {
           });
 
         if (error) {
-          console.error('Error saving group:', error);
+          console.error('Error updating group:', error);
         } else {
           console.log(`⚠️ گروه ذخیره شد: ${chatTitle} (${chatId}) - ربات عضو است (غیر ادمین)`);
         }
@@ -150,16 +149,16 @@ bot.on('my_chat_member', async (ctx) => {
   }
 });
 
-// هندلر جدید برای بن Instant هنگام ورود کاربر به گروه
+// 🔥 هندلر تقویت شده برای بررسی کاربران قرنطینه هنگام ورود به هر گروهی
 bot.on('chat_member', async (ctx) => {
   try {
     const newMember = ctx.update.chat_member.new_chat_member;
     const userId = newMember.user.id;
     const chatId = ctx.chat.id;
     
-    // چک کردن آیا این یک رویداد "عضو شدن" است
-    if (newMember.status === 'member') {
-      // چک کردن آیا کاربر در قرنطینه است
+    // فقط زمانی که کاربر به عنوان عضو جدید اضافه می‌شود
+    if (newMember.status === 'member' || newMember.status === 'administrator') {
+      // بررسی آیا کاربر در قرنطینه است
       const { data: quarantine, error: quarantineError } = await supabase
         .from('user_quarantine')
         .select('*')
@@ -168,14 +167,25 @@ bot.on('chat_member', async (ctx) => {
         .single();
 
       if (quarantine && !quarantineError) {
-        // بن فوری کاربر از این گروه جدید
+        // بررسی آیا ربات در این گروه ادمین است و حق بن کردن دارد
         try {
-          await ctx.telegram.banChatMember(chatId, userId, { 
-            until_date: Math.floor(Date.now() / 1000) + (60 * 60 * 24 * 7) // بن ۱ هفته‌ای
-          });
-          console.log(`🚫 کاربر ${userId} به طور خودکار از گروه ${chatId} بن شد (قرنطینه فعال)`);
+          const chatMember = await ctx.telegram.getChatMember(chatId, ctx.botInfo.id);
+          const isBotAdmin = chatMember.status === 'administrator' && chatMember.can_restrict_members;
+          
+          if (isBotAdmin) {
+            // بن فوری کاربر از گروه
+            await ctx.telegram.banChatMember(chatId, userId, { 
+              until_date: Math.floor(Date.now() / 1000) + (60 * 60 * 24 * 7) // بن ۷ روزه
+            });
+            console.log(`🚫 کاربر ${userId} به طور خودکار از گروه ${chatId} بن شد (قرنطینه فعال)`);
+            
+            // حذف کاربر از گروه
+            await ctx.telegram.kickChatMember(chatId, userId);
+          } else {
+            console.log(`⚠️ ربات در گروه ${chatId} ادمین نیست یا حق بن کردن ندارد`);
+          }
         } catch (banError) {
-          console.error(`❌ خطا در بن Instant کاربر ${userId} در گروه ${chatId}:`, banError);
+          console.error(`❌ خطا در بن کردن کاربر ${userId} در گروه ${chatId}:`, banError);
         }
       }
     }
@@ -222,8 +232,8 @@ bot.command('set_trigger', (ctx) => {
   ctx.scene.enter('set_trigger_wizard');
 });
 
-// دستور trigger1 - فعال کردن تریگر و بن کاربر
-bot.command('trigger1', async (ctx) => {
+// دستور /ورود (جایگزین /trigger1)
+bot.command('ورود', async (ctx) => {
   try {
     const userId = ctx.from.id;
     const chatId = ctx.chat.id;
@@ -242,7 +252,7 @@ bot.command('trigger1', async (ctx) => {
 
     const { trigger_name, first_message, delay_seconds, second_message } = settings;
 
-    // بن کاربر در تمام گروه‌های ذخیره شده
+    // 🔥 بن کاربر در تمام گروه‌های موجود و آینده
     try {
       // دریافت همه گروه‌هایی که ربات در آنها ادمین است
       const { data: groups, error: groupsError } = await supabase
@@ -307,13 +317,13 @@ bot.command('trigger1', async (ctx) => {
     }, delay_seconds * 1000);
 
   } catch (error) {
-    console.error('Error in /trigger1 command:', error);
+    console.error('Error in /ورود command:', error);
     ctx.reply('❌ خطایی در اجرای دستور رخ داد.');
   }
 });
 
-// دستور trigger2 - غیرفعال کردن تریگر و آنبن کاربر
-bot.command('trigger2', async (ctx) => {
+// دستور /خروج (جایگزین /trigger2)
+bot.command('خروج', async (ctx) => {
   try {
     const userId = ctx.from.id;
     const chatId = ctx.chat.id;
@@ -356,8 +366,70 @@ bot.command('trigger2', async (ctx) => {
 
     await ctx.reply('✅ تریگر غیرفعال شد و شما از قرنطینه خارج شدید.');
   } catch (error) {
-    console.error('Error in /trigger2 command:', error);
+    console.error('Error in /خروج command:', error);
     ctx.reply('❌ خطایی در اجرای دستور رخ داد.');
+  }
+});
+
+// دستور برای نمایش لیست تریگرها
+bot.command('list_triggers', async (ctx) => {
+  try {
+    const chatId = ctx.chat.id;
+    
+    // دریافت تمام تریگرهای گروه
+    const { data: triggers, error } = await supabase
+      .from('trigger_settings')
+      .select('*')
+      .eq('chat_id', chatId)
+      .order('created_at', { ascending: true });
+
+    if (error || !triggers || triggers.length === 0) {
+      return ctx.reply('❌ هیچ تریگری برای این گروه ثبت نشده است.');
+    }
+
+    let message = '📋 لیست تریگرهای این گروه:\n\n';
+    
+    triggers.forEach((trigger, index) => {
+      message += `${index + 1}. ${trigger.trigger_name}\n`;
+      message += `   ⏰ تاخیر: ${trigger.delay_seconds} ثانیه\n`;
+      message += `   📅 تاریخ ایجاد: ${new Date(trigger.created_at).toLocaleDateString('fa-IR')}\n\n`;
+    });
+
+    await ctx.reply(message);
+  } catch (error) {
+    console.error('Error in /list_triggers command:', error);
+    ctx.reply('❌ خطایی در دریافت لیست تریگرها رخ داد.');
+  }
+});
+
+// دستور برای حذف تریگر
+bot.command('delete_trigger', async (ctx) => {
+  try {
+    const chatId = ctx.chat.id;
+    const params = ctx.message.text.split(' ');
+    
+    if (params.length < 2) {
+      return ctx.reply('⚠️ لطفاً نام تریگر را مشخص کنید. فرمت: /delete_trigger <نام تریگر>');
+    }
+
+    const triggerName = params.slice(1).join(' ');
+
+    // حذف تریگر
+    const { error } = await supabase
+      .from('trigger_settings')
+      .delete()
+      .eq('chat_id', chatId)
+      .eq('trigger_name', triggerName);
+
+    if (error) {
+      console.error('Error deleting trigger:', error);
+      return ctx.reply('❌ خطا در حذف تریگر. لطفاً نام تریگر را بررسی کنید.');
+    }
+
+    await ctx.reply(`✅ تریگر "${triggerName}" با موفقیت حذف شد.`);
+  } catch (error) {
+    console.error('Error in /delete_trigger command:', error);
+    ctx.reply('❌ خطایی در حذف تریگر رخ داد.');
   }
 });
 
