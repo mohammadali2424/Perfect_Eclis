@@ -45,9 +45,7 @@ const setTriggerWizard = new Scenes.WizardScene(
     return ctx.wizard.next();
   },
   async (ctx) => {
-    // ذخیره پیام اول با تمام فرمت‌ها و لینک‌ها
     ctx.wizard.state.firstMessage = ctx.message.text;
-    // اگر پیام حاوی entities باشد (مثل لینک، بولد، ایتالیک و...) آنها را نیز ذخیره می‌کنیم
     if (ctx.message.entities) {
       ctx.wizard.state.firstMessageEntities = ctx.message.entities;
     }
@@ -55,13 +53,11 @@ const setTriggerWizard = new Scenes.WizardScene(
     return ctx.wizard.next();
   },
   async (ctx) => {
-    // ذخیره پیام تاخیری با تمام فرمت‌ها و لینک‌ها
     ctx.wizard.state.secondMessage = ctx.message.text;
     if (ctx.message.entities) {
       ctx.wizard.state.secondMessageEntities = ctx.message.entities;
     }
     
-    // ذخیره تمام تنظیمات در دیتابیس
     const { error } = await supabase
       .from('trigger_settings')
       .upsert({
@@ -78,7 +74,7 @@ const setTriggerWizard = new Scenes.WizardScene(
       console.error('Error saving trigger settings:', error);
       await ctx.reply('❌ خطا در ذخیره تنظیمات.');
     } else {
-      await ctx.replyWithHTML(`✅ تنظیمات تریگر با موفقیت ذخیره شد!\n\n📋 خلاصه تنظیمات:\n<b>نام:</b> ${ctx.wizard.state.triggerName}\n<b>تاخیر:</b> ${ctx.wizard.state.delaySeconds} ثانیه\n<b>پیام اول:</b> ${ctx.wizard.state.firstMessage}\n<b>پیام تاخیری:</b> ${ctx.wizard.state.secondMessage}`);
+      await ctx.replyWithHTML(`✅ تنظیمات تریگر با موفقیت ذخیره شد!\n\n📋 خلاصه تنظیمات:\n<b>نام:</b> ${ctx.wizard.state.triggerName}\n<b>تاخیر:</b> ${ctx.wizard.state.delaySeconds} ثانیه`);
     }
     
     return ctx.scene.leave();
@@ -90,6 +86,52 @@ const stage = new Scenes.Stage([setTriggerWizard]);
 bot.use(session());
 bot.use(stage.middleware());
 
+// 🔥 هندلر جدید: هنگامی که ربات به گروه اضافه می‌شود
+bot.on('my_chat_member', async (ctx) => {
+  try {
+    const chatId = ctx.chat.id;
+    const newStatus = ctx.update.my_chat_member.new_chat_member.status;
+    const chatTitle = ctx.chat.title || 'بدون نام';
+    const chatType = ctx.chat.type;
+
+    // فقط برای گروه‌ها و سوپرگروه‌ها
+    if (chatType === 'group' || chatType === 'supergroup') {
+      if (newStatus === 'administrator' || newStatus === 'member') {
+        // ذخیره گروه در دیتابیس
+        const { error } = await supabase
+          .from('groups')
+          .upsert({
+            chat_id: chatId,
+            title: chatTitle,
+            type: chatType,
+            is_bot_admin: newStatus === 'administrator'
+          });
+
+        if (error) {
+          console.error('Error saving group:', error);
+        } else {
+          console.log(`✅ گروه جدید ذخیره شد: ${chatTitle} (${chatId})`);
+          await ctx.reply(`🤖 ربات با موفقیت به گروه "${chatTitle}" اضافه شد و آماده کار است!`);
+        }
+      } else if (newStatus === 'kicked' || newStatus === 'left') {
+        // حذف گروه از دیتابیس وقتی ربات حذف می‌شود
+        const { error } = await supabase
+          .from('groups')
+          .delete()
+          .eq('chat_id', chatId);
+
+        if (error) {
+          console.error('Error deleting group:', error);
+        } else {
+          console.log(`🗑️ گروه حذف شد: ${chatId}`);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error in my_chat_member handler:', error);
+  }
+});
+
 // دستور start
 bot.start(async (ctx) => {
   try {
@@ -97,7 +139,6 @@ bot.start(async (ctx) => {
     const firstName = ctx.message.chat.first_name || 'کاربر';
     const username = ctx.message.chat.username;
 
-    // بررسی آیا کاربر قبلاً ثبت شده است
     const { data: existingUser, error: checkError } = await supabase
       .from('users')
       .select('chat_id')
@@ -107,7 +148,6 @@ bot.start(async (ctx) => {
     if (existingUser) {
       await ctx.reply(`سلام ${firstName}! شما قبلاً در ربات ثبت شده‌اید. 😊`);
     } else {
-      // کاربر جدید - ذخیره در دیتابیس
       const { error } = await supabase
         .from('users')
         .insert([{ chat_id: chatId, first_name: firstName, username: username }]);
@@ -130,7 +170,7 @@ bot.command('set_trigger', (ctx) => {
   ctx.scene.enter('set_trigger_wizard');
 });
 
-// دستور trigger1 - فعال کردن تریگر
+// دستور trigger1 - فعال کردن تریگر و بن کاربر
 bot.command('trigger1', async (ctx) => {
   try {
     const userId = ctx.from.id;
@@ -150,27 +190,28 @@ bot.command('trigger1', async (ctx) => {
 
     const { trigger_name, first_message, delay_seconds, second_message } = settings;
 
-    // 🔥 بخش جدید: قرنطینه کردن کاربر در همه گروه‌ها
+    // 🔥 بن کاربر در تمام گروه‌های ذخیره شده
     try {
-      // این بخش نیاز به لیست کردن همه گروه‌های تحت مدیریت ربات دارد
-      // برای نمونه، فرض می‌کنیم ربات در گروه‌های دیگر نیز عضو است
-      
-      // اینجا باید ID گروه‌هایی که می‌خواهید کاربر از آنها بن شود را جایگزین کنید
-      const groupIdsToBan = [-1001234567890, -1009876543210]; // جایگزین کنید با ID گروه‌های واقعی
-      
-      for (const groupId of groupIdsToBan) {
-        if (groupId !== chatId) { // از بن کردن کاربر در گروه فعلی خودداری کنید
-          try {
-            await ctx.telegram.banChatMember(groupId, userId, { 
-              until_date: Math.floor(Date.now() / 1000) + (delay_seconds * 2) // بن به مدت دو برابر زمان تاخیر
-            });
-            console.log(`User ${userId} banned from group ${groupId}`);
-          } catch (banError) {
-            console.error(`Error banning user in group ${groupId}:`, banError);
+      // دریافت همه گروه‌هایی که ربات در آنها عضو است
+      const { data: groups, error: groupsError } = await supabase
+        .from('groups')
+        .select('chat_id, title, is_bot_admin');
+
+      if (!groupsError && groups && groups.length > 0) {
+        for (const group of groups) {
+          if (group.chat_id !== chatId && group.is_bot_admin) {
+            try {
+              await ctx.telegram.banChatMember(group.chat_id, userId, { 
+                until_date: Math.floor(Date.now() / 1000) + (delay_seconds * 2)
+              });
+              console.log(`✅ کاربر ${userId} از گروه ${group.title} بن شد`);
+            } catch (banError) {
+              console.error(`❌ خطا در بن کردن کاربر در گروه ${group.chat_id}:`, banError);
+            }
           }
         }
       }
-      
+
       // ذخیره وضعیت قرنطینه کاربر
       const { error: quarantineError } = await supabase
         .from('user_quarantine')
@@ -188,14 +229,14 @@ bot.command('trigger1', async (ctx) => {
       console.error('Error in ban process:', banError);
     }
 
-    // ارسال پیام اول - با حفظ فرمت و لینک‌ها
+    // ارسال پیام اول
     await ctx.replyWithHTML(`🔔 <b>${trigger_name}</b> فعال شد!\n\n👤 کاربر: <b>${firstName}</b>\n⏰ تاخیر: ${delay_seconds} ثانیه\n\n${first_message}`, {
       reply_to_message_id: ctx.message.message_id,
       parse_mode: 'HTML',
-      disable_web_page_preview: false // اجازه نمایش پیش‌نمایش لینک
+      disable_web_page_preview: false
     });
 
-    // ارسال پیام دوم با تاخیر - با حفظ فرمت و لینک‌ها
+    // ارسال پیام دوم با تاخیر
     setTimeout(async () => {
       try {
         await ctx.telegram.sendMessage(
@@ -218,27 +259,31 @@ bot.command('trigger1', async (ctx) => {
   }
 });
 
-// دستور trigger2 - غیرفعال کردن تریگر و آزاد کردن کاربر
+// دستور trigger2 - غیرفعال کردن تریگر و آنبن کاربر
 bot.command('trigger2', async (ctx) => {
   try {
     const userId = ctx.from.id;
     const chatId = ctx.chat.id;
 
-    // 🔥 بخش جدید: آزاد کردن کاربر از بن همه گروه‌ها
+    // 🔥 آنبن کاربر از تمام گروه‌های ذخیره شده
     try {
-      const groupIdsToUnban = [-1001234567890, -1009876543210]; // جایگزین کنید با ID گروه‌های واقعی
-      
-      for (const groupId of groupIdsToUnban) {
-        if (groupId !== chatId) {
-          try {
-            await ctx.telegram.unbanChatMember(groupId, userId);
-            console.log(`User ${userId} unbanned from group ${groupId}`);
-          } catch (unbanError) {
-            console.error(`Error unbanning user in group ${groupId}:`, unbanError);
+      const { data: groups, error: groupsError } = await supabase
+        .from('groups')
+        .select('chat_id, title, is_bot_admin');
+
+      if (!groupsError && groups && groups.length > 0) {
+        for (const group of groups) {
+          if (group.chat_id !== chatId && group.is_bot_admin) {
+            try {
+              await ctx.telegram.unbanChatMember(group.chat_id, userId);
+              console.log(`✅ کاربر ${userId} از گروه ${group.title} آنبن شد`);
+            } catch (unbanError) {
+              console.error(`❌ خطا در آنبن کردن کاربر در گروه ${group.chat_id}:`, unbanError);
+            }
           }
         }
       }
-      
+
       // به روز رسانی وضعیت قرنطینه کاربر
       const { error: updateError } = await supabase
         .from('user_quarantine')
