@@ -156,7 +156,7 @@ bot.on('chat_member', async (ctx) => {
     const userId = newMember.user.id;
     const chatId = ctx.chat.id;
     
-    // فقط زمانی که کاربر به عنوان عضو جدید اضافه می‌شود
+    // فقط زمانی که کاربر به عنوان ع��و جدید اضافه می‌شود
     if (newMember.status === 'member' || newMember.status === 'administrator') {
       // بررسی آیا کاربر در قرنطینه است
       const { data: quarantine, error: quarantineError } = await supabase
@@ -232,8 +232,8 @@ bot.command('set_trigger', (ctx) => {
   ctx.scene.enter('set_trigger_wizard');
 });
 
-// دستور /ورود (جایگزین /trigger1)
-bot.command('ورود', async (ctx) => {
+// 🔥 تشخیص #ورود در هر جای متن (جایگزین /trigger1)
+bot.hears(/.*#ورود.*/, async (ctx) => {
   try {
     const userId = ctx.from.id;
     const chatId = ctx.chat.id;
@@ -317,13 +317,13 @@ bot.command('ورود', async (ctx) => {
     }, delay_seconds * 1000);
 
   } catch (error) {
-    console.error('Error in /ورود command:', error);
+    console.error('Error in #ورود command:', error);
     ctx.reply('❌ خطایی در اجرای دستور رخ داد.');
   }
 });
 
-// دستور /خروج (جایگزین /trigger2)
-bot.command('خروج', async (ctx) => {
+// 🔥 تشخیص #خروج در هر جای متن (جایگزین /trigger2)
+bot.hears(/.*#خروج.*/, async (ctx) => {
   try {
     const userId = ctx.from.id;
     const chatId = ctx.chat.id;
@@ -366,7 +366,7 @@ bot.command('خروج', async (ctx) => {
 
     await ctx.reply('✅ تریگر غیرفعال شد و شما از قرنطینه خارج شدید.');
   } catch (error) {
-    console.error('Error in /خروج command:', error);
+    console.error('Error in #خروج command:', error);
     ctx.reply('❌ خطایی در اجرای دستور رخ داد.');
   }
 });
