@@ -1,7 +1,6 @@
 {
-  "name": "my-modular-telegram-bot",
+  "name": "telegram-bot",
   "version": "1.0.0",
-  "description": "A modular Telegram bot with Supabase",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
