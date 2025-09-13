@@ -6,138 +6,51 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // بررسی وجود متغیرهای محیطی
-console.log('🔍 Checking environment variables...');
-const requiredEnvVars = ['BOT_TOKEN', 'SUPABASE_URL', 'SUPABASE_KEY'];
-requiredEnvVars.forEach(envVar => {
-  if (!process.env[envVar]) {
-    console.error(`❌ ERROR: ${envVar} is not set!`);
-    process.exit(1);
-  } else {
-    console.log(`✅ ${envVar}: Set`);
-  }
-});
+if (!process.env.BOT_TOKEN) {
+  console.error('❌ ERROR: BOT_TOKEN is not set!');
+  process.exit(1);
+}
+if (!process.env.SUPABASE_URL) {
+  console.error('❌ ERROR: SUPABASE_URL is not set!');
+  process.exit(1);
+}
+if (!process.env.SUPABASE_KEY) {
+  console.error('❌ ERROR: SUPABASE_KEY is not set!');
+  process.exit(1);
+}
 
 // مقداردهی Supabase و Telegraf
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const bot = new Telegraf(process.env.BOT_TOKEN);
-console.log('✅ Telegraf and Supabase initialized');
 
-// کش برای مدیریت کاربران قرنطینه
-const quarantineCache = {
-  users: new Map(),
+// کشینگ برای کاهش درخواست‌های دیتابیس
+const cache = {
   releasedUsers: new Map(),
-  
-  // لود داده‌ها از دیتابیس
-  loadFromDatabase: async function() {
-    try {
-      console.log('🔄 Loading quarantine data from database...');
-      
-      // دریافت کاربران قرنطینه شده
-      const { data: quarantinedUsers, error: quarantineError } = await supabase
-        .from('user_quarantine')
-        .select('user_id, quarantined_at')
-        .eq('is_quarantined', true);
-      
-      if (quarantineError) throw quarantineError;
-      
-      // دریافت کاربران آزاد شده (24 ساعت اخیر)
-      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: releasedUsers, error: releasedError } = await supabase
-        .from('user_quarantine')
-        .select('user_id, released_at')
-        .eq('is_quarantined', false)
-        .gt('released_at', twentyFourHoursAgo);
-      
-      if (releasedError) throw releasedError;
-      
-      // پر کردن کش
-      this.users.clear();
-      this.releasedUsers.clear();
-      
-      quarantinedUsers.forEach(user => {
-        this.users.set(user.user_id, { 
-          timestamp: new Date(user.quarantined_at).getTime() 
-        });
-      });
-      
-      releasedUsers.forEach(user => {
-        this.releasedUsers.set(user.user_id, { 
-          timestamp: new Date(user.released_at).getTime() 
-        });
-      });
-      
-      console.log(`✅ Data loaded: ${this.users.size} quarantined, ${this.releasedUsers.size} released`);
-    } catch (error) {
-      console.error('❌ Error loading data:', error);
-    }
-  },
-  
-  // اضافه کردن کاربر به قرنطینه
-  addUser: async function(userId) {
-    const now = Date.now();
-    this.users.set(userId, { timestamp: now });
-    this.releasedUsers.delete(userId);
-    
-    try {
-      const { error } = await supabase
-        .from('user_quarantine')
-        .upsert({
-          user_id: userId,
-          is_quarantined: true,
-          quarantined_at: new Date(now).toISOString(),
-          released_at: null
-        });
-      
-      if (error) throw error;
-      console.log(`✅ User ${userId} quarantined (saved to DB)`);
-    } catch (error) {
-      console.error(`❌ Error saving user ${userId}:`, error);
-    }
-  },
-  
-  // آزاد کردن کاربر از قرنطینه
-  releaseUser: async function(userId) {
-    if (!this.users.has(userId)) return;
-    
-    const now = Date.now();
-    this.users.delete(userId);
-    this.releasedUsers.set(userId, { timestamp: now });
-    
-    try {
-      const { error } = await supabase
-        .from('user_quarantine')
-        .upsert({
-          user_id: userId,
-          is_quarantined: false,
-          released_at: new Date(now).toISOString()
-        });
-      
-      if (error) throw error;
-      console.log(`✅ User ${userId} released (saved to DB)`);
-    } catch (error) {
-      console.error(`❌ Error releasing user ${userId}:`, error);
-    }
-  },
-  
-  // بررسی وضعیت قرنطینه کاربر
-  isUserQuarantined: function(userId) {
-    return this.users.has(userId) && !this.releasedUsers.has(userId);
-  },
-  
-  // پاکسازی خودکار
-  cleanup: function() {
-    const now = Date.now();
-    const twentyFourHours = 24 * 60 * 60 * 1000;
-    
-    for (const [userId, data] of this.releasedUsers.entries()) {
-      if (now - data.timestamp > twentyFourHours) {
-        this.releasedUsers.delete(userId);
-      }
-    }
-  }
+  groups: new Map(),
+  lastCleanup: Date.now()
 };
 
-// تعریف سناریو برای تنظیمات تریگر
+// تابع برای دریافت داده با کش
+async function getCachedData(key, fetchFunction, ttl = 60000) {
+  const cached = cache[key];
+  if (cached && Date.now() - cached.timestamp < ttl) {
+    return cached.data;
+  }
+  
+  const data = await fetchFunction();
+  cache[key] = { data, timestamp: Date.now() };
+  return data;
+}
+
+// تابع برای پاکسازی کش هر 1 ساعت
+setInterval(() => {
+  cache.releasedUsers = new Map();
+  cache.groups = new Map();
+  cache.lastCleanup = Date.now();
+  console.log('🧹 Cache cleared');
+}, 60 * 60 * 1000);
+
+// تعریف سناریو برای تنظیمات تریگر (Wizard)
 const setTriggerWizard = new Scenes.WizardScene(
   'set_trigger_wizard',
   async (ctx) => {
@@ -195,36 +108,12 @@ const setTriggerWizard = new Scenes.WizardScene(
   }
 );
 
-// سناریو برای مشاهده آمار
-const statsScene = new Scenes.BaseScene('stats');
-statsScene.enter(async (ctx) => {
-  try {
-    const totalQuarantined = quarantineCache.users.size;
-    const totalReleased = quarantineCache.releasedUsers.size;
-
-    const statsMessage = `
-📊 آمار سیستم قرنطینه:
-
-👥 کاربران قرنطینه: ${totalQuarantined}
-✅ کاربران آزاد شده: ${totalReleased}
-
-🕒 آخرین بروزرسانی: ${new Date().toLocaleTimeString('fa-IR')}
-    `;
-
-    await ctx.reply(statsMessage);
-    ctx.scene.leave();
-  } catch (error) {
-    console.error('Error in stats scene:', error);
-    await ctx.reply('❌ خطا در دریافت آمار.');
-    ctx.scene.leave();
-  }
-});
-
-const stage = new Scenes.Stage([setTriggerWizard, statsScene]);
+// ثبت سناریو
+const stage = new Scenes.Stage([setTriggerWizard]);
 bot.use(session());
 bot.use(stage.middleware());
 
-// هندلر برای #فعال
+// 🔥 هندلر جدید برای #فعال - ثبت گروه توسط ادمین
 bot.hears(/.*#فعال.*/, async (ctx) => {
   try {
     const chatId = ctx.chat.id;
@@ -232,10 +121,12 @@ bot.hears(/.*#فعال.*/, async (ctx) => {
     const chatType = ctx.chat.type;
     const chatTitle = ctx.chat.title || 'بدون نام';
 
+    // فقط برای گروه‌ها و سوپرگروه‌ها
     if (chatType !== 'group' && chatType !== 'supergroup') {
       return ctx.reply('❌ این دستور فقط در گروه‌ها قابل استفاده است.');
     }
 
+    // بررسی آیا کاربر ادمین است
     try {
       const chatMember = await ctx.telegram.getChatMember(chatId, userId);
       const isAdmin = ['administrator', 'creator'].includes(chatMember.status);
@@ -248,52 +139,68 @@ bot.hears(/.*#فعال.*/, async (ctx) => {
       return ctx.reply('❌ خطا در بررسی وضعیت ادمینی.');
     }
 
-    // ذخیره در دیتابیس
-    const { error: dbError } = await supabase
+    // ذخیره گروه در دیتابیس
+    const { error } = await supabase
       .from('groups')
       .upsert({
         chat_id: chatId,
         title: chatTitle,
         type: chatType,
-        registered_by: userId,
-        registered_at: new Date().toISOString(),
-        is_active: true
+        is_bot_admin: true,
+        last_updated: new Date().toISOString()
       });
 
-    if (dbError) {
-      console.error('Error saving group to database:', dbError);
-      return ctx.reply('❌ خطا در ثبت گروه در دیتابیس.');
+    if (error) {
+      console.error('Error saving group:', error);
+      return ctx.reply('❌ خطا در ثبت گروه. لطفاً بعداً تلاش کنید.');
     }
 
-    await ctx.reply(`✅ گروه "${chatTitle}" با موفقیت در سیستم ثبت شد!\n\n🔹 آی‌دی گروه: ${chatId}\n🔹 نوع گروه: ${chatType}`);
+    // آپدیت کش
+    cache.groups.set(chatId, {
+      chat_id: chatId,
+      title: chatTitle,
+      type: chatType,
+      is_bot_admin: true,
+      last_updated: new Date().toISOString()
+    });
+
+    await ctx.reply(`✅ گروه "${chatTitle}" با موفقیت در سیستم ثبت شد!\n\n🔹 آی‌دی گروه: ${chatId}\n🔹 نوع گروه: ${chatType}\n🔹 وضعیت ربات: ادمین`);
+
   } catch (error) {
     console.error('Error in #فعال command:', error);
     ctx.reply('❌ خطایی در اجرای دستور رخ داد.');
   }
 });
 
-// هندلر اصلی: حذف کاربران قرنطینه
+// 🔥 هندلر تقویت شده برای قرنطینه خودکار کاربران هنگام ورود به هر گروهی
 bot.on('chat_member', async (ctx) => {
   try {
     const newMember = ctx.update.chat_member.new_chat_member;
     const userId = newMember.user.id;
     const chatId = ctx.chat.id;
-    const chatType = ctx.chat.type;
     
-    if ((chatType === 'group' || chatType === 'supergroup') && 
-        (newMember.status === 'member' || newMember.status === 'administrator')) {
+    // فقط زمانی که کاربر به عنوان عضو جدید اضافه می‌شود
+    if (newMember.status === 'member' || newMember.status === 'administrator') {
+      // بررسی آیا کاربر در لیست released است (از کش استفاده می‌کنیم)
+      const isReleased = cache.releasedUsers.has(userId);
       
-      if (quarantineCache.isUserQuarantined(userId)) {
+      if (!isReleased) {
+        // بررسی آیا ربات در این گروه ادمین است و حق بن کردن دارد
         try {
           const chatMember = await ctx.telegram.getChatMember(chatId, ctx.botInfo.id);
-          const canRestrict = chatMember.status === 'administrator' && chatMember.can_restrict_members;
+          const isBotAdmin = chatMember.status === 'administrator' && chatMember.can_restrict_members;
           
-          if (canRestrict) {
-            await ctx.telegram.kickChatMember(chatId, userId);
-            console.log(`🚫 User ${userId} removed from group ${chatId} (quarantine active)`);
+          if (isBotAdmin) {
+            // بن موقت کاربر از گروه (به مدت 7 روز)
+            await ctx.telegram.banChatMember(chatId, userId, { 
+              until_date: Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60) // بن ۷ روزه
+            });
+            console.log(`🚫 کاربر ${userId} به طور خودکار از گروه ${chatId} بن موقت شد`);
+          } else {
+            console.log(`⚠️ ربات در گروه ${chatId} ادمین نیست یا حق بن کردن ندارد`);
           }
-        } catch (error) {
-          console.error(`❌ Error removing user ${userId}:`, error);
+        } catch (banError) {
+          console.error(`❌ خطا در بن کردن کاربر ${userId} در گروه ${chatId}:`, banError);
         }
       }
     }
@@ -302,39 +209,42 @@ bot.on('chat_member', async (ctx) => {
   }
 });
 
-// قرنطینه خودکار کاربران جدید
-bot.on('chat_member', async (ctx) => {
-  try {
-    const newMember = ctx.update.chat_member.new_chat_member;
-    const userId = newMember.user.id;
-    const chatType = ctx.chat.type;
-    
-    if ((chatType === 'group' || chatType === 'supergroup') && 
-        newMember.status === 'member' &&
-        !quarantineCache.isUserQuarantined(userId) &&
-        !quarantineCache.releasedUsers.has(userId)) {
-      
-      await quarantineCache.addUser(userId);
-      console.log(`✅ User ${userId} automatically quarantined`);
-    }
-  } catch (error) {
-    console.error('Error in auto-quarantine handler:', error);
-  }
-});
-
 // دستور start
 bot.start(async (ctx) => {
   try {
+    const chatId = ctx.message.chat.id;
     const firstName = ctx.message.chat.first_name || 'کاربر';
+    const username = ctx.message.chat.username;
 
-    await ctx.reply(`سلام ${firstName}! به ربات مدیریت قرنطینه خوش آمدی. 😊`);
+    const { data: existingUser, error: checkError } = await supabase
+      .from('users')
+      .select('chat_id')
+      .eq('chat_id', chatId)
+      .single();
 
+    if (existingUser) {
+      await ctx.reply(`سلام ${firstName}! شما قبلاً در ربات ثبت شده‌اید. 😊`);
+    } else {
+      const { error } = await supabase
+        .from('users')
+        .insert([{ chat_id: chatId, first_name: firstName, username: username }]);
+
+      if (error) {
+        console.error('Supabase insert error:', error);
+        return ctx.reply('⚠️ مشکلی در ثبت اطلاعات پیش آمد. لطفاً بعداً تلاش کنید.');
+      }
+
+      await ctx.reply(`سلام ${firstName}! به ربات خوش آمدی. 😊`);
+    }
+
+    // نمایش راهنمای دستورات
     await ctx.replyWithHTML(`
 🤖 <b>دستورات disponibles:</b>
 /set_trigger - تنظیم تریگر جدید
-/stats - مشاهده آمار سیستم
-#خروج - خروج از قرنطینه
+#خروج - غیرفعال کردن قرنطینه
 #فعال - ثبت گروه در سیستم (فقط ادمین)
+/list_triggers - مشاهده لیست تریگرها
+/delete_trigger - حذف تریگر
     `);
 
   } catch (err) {
@@ -343,28 +253,109 @@ bot.start(async (ctx) => {
   }
 });
 
-// دستور stats
-bot.command('stats', (ctx) => {
-  ctx.scene.enter('stats');
-});
-
-// دستور set_trigger
+// دستور set_trigger - شروع فرآیند تنظیمات
 bot.command('set_trigger', (ctx) => {
   ctx.scene.enter('set_trigger_wizard');
 });
 
-// تشخیص #خروج
+// 🔥 تشخیص #خروج در هر جای متن - غیرفعال کردن قرنطینه
 bot.hears(/.*#خروج.*/, async (ctx) => {
   try {
     const userId = ctx.from.id;
+    const chatId = ctx.chat.id;
 
-    await quarantineCache.releaseUser(userId);
-    
-    await ctx.reply('✅ شما از قرنطینه خارج شدید و از این پس می‌توانید آزادانه به گروه‌ها وارد شوید.');
-    
+    // افزودن کاربر به لیست released در کش
+    cache.releasedUsers.set(userId, {
+      user_id: userId,
+      released_at: new Date().toISOString()
+    });
+
+    // آنبن کاربر از تمام گروه‌های ذخیره شده
+    try {
+      const groups = Array.from(cache.groups.values());
+      
+      if (groups && groups.length > 0) {
+        for (const group of groups) {
+          if (group.chat_id !== chatId && group.is_bot_admin) {
+            try {
+              await ctx.telegram.unbanChatMember(group.chat_id, userId);
+              console.log(`✅ کاربر ${userId} از گروه ${group.title} آنبن شد`);
+            } catch (unbanError) {
+              console.error(`❌ خطا در آنبن کردن کاربر در گروه ${group.chat_id}:`, unbanError);
+            }
+          }
+        }
+      }
+    } catch (unbanError) {
+      console.error('Error in unban process:', unbanError);
+    }
+
+    await ctx.reply('✅ شما از قرنطینه خارج شدید و از این پس می‌توانید به همه گروه‌ها دسترسی داشته باشید.');
   } catch (error) {
     console.error('Error in #خروج command:', error);
     ctx.reply('❌ خطایی در اجرای دستور رخ داد.');
+  }
+});
+
+// دستور برای نمایش لیست تریگرها
+bot.command('list_triggers', async (ctx) => {
+  try {
+    const chatId = ctx.chat.id;
+    
+    // دریافت تمام تریگرهای گروه
+    const { data: triggers, error } = await supabase
+      .from('trigger_settings')
+      .select('*')
+      .eq('chat_id', chatId)
+      .order('created_at', { ascending: true });
+
+    if (error || !triggers || triggers.length === 0) {
+      return ctx.reply('❌ هیچ تریگری برای این گروه ثبت نشده است.');
+    }
+
+    let message = '📋 لیست تریگرهای این گروه:\n\n';
+    
+    triggers.forEach((trigger, index) => {
+      message += `${index + 1}. ${trigger.trigger_name}\n`;
+      message += `   ⏰ تاخیر: ${trigger.delay_seconds} ثانیه\n`;
+      message += `   📅 تاریخ ایجاد: ${new Date(trigger.created_at).toLocaleDateString('fa-IR')}\n\n`;
+    });
+
+    await ctx.reply(message);
+  } catch (error) {
+    console.error('Error in /list_triggers command:', error);
+    ctx.reply('❌ خطایی در دریافت لیست تریگرها رخ داد.');
+  }
+});
+
+// دستور برای حذف تریگر
+bot.command('delete_trigger', async (ctx) => {
+  try {
+    const chatId = ctx.chat.id;
+    const params = ctx.message.text.split(' ');
+    
+    if (params.length < 2) {
+      return ctx.reply('⚠️ لطفاً نام تریگر را مشخص کنید. فرمت: /delete_trigger <نام تریگر>');
+    }
+
+    const triggerName = params.slice(1).join(' ');
+
+    // حذف تریگر
+    const { error } = await supabase
+      .from('trigger_settings')
+      .delete()
+      .eq('chat_id', chatId)
+      .eq('trigger_name', triggerName);
+
+    if (error) {
+      console.error('Error deleting trigger:', error);
+      return ctx.reply('❌ خطا در حذف تریگر. لطفاً نام تریگر را بررسی کنید.');
+    }
+
+    await ctx.reply(`✅ تریگر "${triggerName}" با موفقیت حذف شد.`);
+  } catch (error) {
+    console.error('Error in /delete_trigger command:', error);
+    ctx.reply('❌ خطایی در حذف تریگر رخ داد.');
   }
 });
 
@@ -381,14 +372,33 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// راه‌اندازی سرور و لود داده‌ها
-app.listen(PORT, async () => {
+// راه‌اندازی سرور
+app.listen(PORT, () => {
   console.log(`🤖 ربات در پورت ${PORT} راه‌اندازی شد...`);
-  await quarantineCache.loadFromDatabase();
-  console.log('✅ ربات آماده به کار است!');
+  
+  // لود اولیه داده‌ها از دیتابیس
+  loadInitialData();
 });
 
-// پاکسازی خودکار هر 24 ساعت
-setInterval(() => {
-  quarantineCache.cleanup();
-}, 24 * 60 * 60 * 1000);
+// تابع برای لود اولیه داده‌ها از دیتابیس
+async function loadInitialData() {
+  try {
+    // لود گروه‌ها
+    const { data: groups, error: groupsError } = await supabase
+      .from('groups')
+      .select('*');
+    
+    if (!groupsError && groups) {
+      groups.forEach(group => {
+        cache.groups.set(group.chat_id, group);
+      });
+      console.log(`✅ ${groups.length} گروه در حافظه کش شدند`);
+    }
+    
+    // لود کاربران released (اگر در آینده ذخیره کنیم)
+    // در حالتی که می‌خواهیم وضعیت را نگه داریم
+    
+  } catch (error) {
+    console.error('Error loading initial data:', error);
+  }
+         }
