@@ -1,24 +1,16 @@
-
 {
-  "name": "telegram-quarantine-bot",
+  "name": "telegram-bot",
   "version": "1.0.0",
-  "description": "Telegram bot for user quarantine management",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "telegraf": "^4.16.3",
     "@supabase/supabase-js": "^2.39.0",
     "express": "^4.19.2"
   },
-  "keywords": [
-    "telegram",
-    "bot",
-    "quarantine",
-    "security"
-  ],
-  "author": "Your Name",
-  "license": "MIT"
+  "engines": {
+    "node": "20.x"
+  }
 }
