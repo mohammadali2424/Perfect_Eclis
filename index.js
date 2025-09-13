@@ -51,9 +51,10 @@ async function checkUserQuarantine(userId) {
       data: quarantine,
       timestamp: Date.now()
     });
+    return quarantine;
   }
   
-  return quarantine;
+  return null;
 }
 
 // تابع برای کیک کردن کاربر از گروه
@@ -209,7 +210,7 @@ bot.on('my_chat_member', async (ctx) => {
     const chatTitle = ctx.chat.title || 'بدون نام';
     const chatType = ctx.chat.type;
 
-    // فقط برای گروه‌ها و سوپرگروه‌ها
+    // فقط برای گروه‌ها و سوپرگroup‌ها
     if (chatType === 'group' || chatType === 'supergroup') {
       if (newStatus === 'administrator') {
         // ذخیره گروه با وضعیت ادمینی
@@ -312,7 +313,7 @@ bot.on('new_chat_members', async (ctx) => {
       const quarantine = await checkUserQuarantine(userId);
       
       if (quarantine) {
-        await kickUserFromGroup(ctx, chatId, userId, 'کاربر در قرنطینه است');
+        await kickUserFromGroup(ctx, chatId, userId, '��اربر در قرنطینه است');
         
         // ثبت اطلاعات کاربر در دیتابیس
         const { error: userError } = await supabase
@@ -406,25 +407,53 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
 
     const { trigger_name, first_message, delay_seconds, second_message } = settings;
 
-    // 🔥 ثبت کاربر در قرنطینه
+    // 🔥 ثبت یا به‌روزرسانی وضعیت قرنطینه کاربر
     try {
-      // ذخیره وضعیت قرنطینه کاربر
-      const { error: quarantineError } = await supabase
+      // بررسی وجود رکورد قبلی
+      const { data: existingRecord, error: checkError } = await supabase
         .from('user_quarantine')
-        .upsert({
-          user_id: userId,
-          chat_id: chatId,
-          is_quarantined: true,
-          username: username,
-          first_name: ctx.from.first_name,
-          last_name: ctx.from.last_name,
-          quarantine_start: new Date().toISOString(),
-          quarantine_end: null
-        });
+        .select('user_id')
+        .eq('user_id', userId)
+        .single();
 
-      if (quarantineError) {
-        console.error('Error saving quarantine status:', quarantineError);
-        return ctx.reply('❌ خطا در ثبت قرنطینه کاربر.');
+      if (existingRecord) {
+        // به‌روزرسانی رکورد موجود
+        const { error: updateError } = await supabase
+          .from('user_quarantine')
+          .update({
+            chat_id: chatId,
+            is_quarantined: true,
+            username: username,
+            first_name: ctx.from.first_name,
+            last_name: ctx.from.last_name,
+            quarantine_start: new Date().toISOString(),
+            quarantine_end: null
+          })
+          .eq('user_id', userId);
+
+        if (updateError) {
+          console.error('Error updating quarantine status:', updateError);
+          return ctx.reply('❌ خطا در به روز رسانی قرنطینه کاربر.');
+        }
+      } else {
+        // ایجاد رکورد جدید
+        const { error: insertError } = await supabase
+          .from('user_quarantine')
+          .insert({
+            user_id: userId,
+            chat_id: chatId,
+            is_quarantined: true,
+            username: username,
+            first_name: ctx.from.first_name,
+            last_name: ctx.from.last_name,
+            quarantine_start: new Date().toISOString(),
+            quarantine_end: null
+          });
+
+        if (insertError) {
+          console.error('Error inserting quarantine status:', insertError);
+          return ctx.reply('❌ خطا در ثبت قرنطینه کاربر.');
+        }
       }
 
       // پاکسازی کش
@@ -487,6 +516,17 @@ bot.hears(/.*#خروج.*/, async (ctx) => {
   try {
     const userId = ctx.from.id;
     const chatId = ctx.chat.id;
+
+    // بررسی وجود کاربر در قرنطینه
+    const { data: quarantine, error: checkError } = await supabase
+      .from('user_quarantine')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (!quarantine) {
+      return ctx.reply('❌ شما در حال حاضر در قرنطینه نیستید.');
+    }
 
     // به روز رسانی وضعیت قرنطینه کاربر
     const { error: updateError } = await supabase
