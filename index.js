@@ -31,7 +31,6 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 دقیقه
 async function checkUserQuarantine(userId) {
   const cacheKey = `quarantine_${userId}`;
   
-  // بررسی کش
   if (userCache.has(cacheKey)) {
     const cached = userCache.get(cacheKey);
     if (Date.now() - cached.timestamp < CACHE_TTL) {
@@ -60,7 +59,6 @@ async function checkUserQuarantine(userId) {
 // تابع برای کیک کردن کاربر از گروه
 async function kickUserFromGroup(ctx, chatId, userId, reason = 'قرنطینه فعال') {
   try {
-    // بررسی آیا ربات ادمین است و حق کیک کردن دارد
     const botMember = await ctx.telegram.getChatMember(chatId, ctx.botInfo.id);
     const canKick = botMember.status === 'administrator' && botMember.can_restrict_members;
     
@@ -69,11 +67,9 @@ async function kickUserFromGroup(ctx, chatId, userId, reason = 'قرنطینه �
       return false;
     }
     
-    // کیک کردن کاربر
     await ctx.telegram.kickChatMember(chatId, userId);
     console.log(`✅ کاربر ${userId} از گروه ${chatId} کیک شد (${reason})`);
     
-    // آنبن کردن کاربر (برای امکان بازگشت بعدی)
     setTimeout(async () => {
       try {
         await ctx.telegram.unbanChatMember(chatId, userId);
@@ -87,6 +83,52 @@ async function kickUserFromGroup(ctx, chatId, userId, reason = 'قرنطینه �
     console.error(`❌ خطا در کیک کردن کاربر ${userId}:`, error);
     return false;
   }
+}
+
+// تابع برای کیک کردن کاربر از تمام گروه‌ها به جز گروه فعلی
+async function kickUserFromAllGroupsExceptCurrent(ctx, userId, currentChatId) {
+  try {
+    const { data: groups, error: groupsError } = await supabase
+      .from('groups')
+      .select('chat_id, title')
+      .eq('is_bot_admin', true);
+
+    if (!groupsError && groups && groups.length > 0) {
+      let kickedCount = 0;
+      
+      for (const group of groups) {
+        if (group.chat_id !== currentChatId) {
+          const kicked = await kickUserFromGroup(ctx, group.chat_id, userId, 'قرنطینه فعال - انتقال به گروه جدید');
+          if (kicked) kickedCount++;
+        }
+      }
+      
+      console.log(`✅ کاربر ${userId} از ${kickedCount} گروه کیک شد`);
+      return kickedCount;
+    }
+    return 0;
+  } catch (error) {
+    console.error('Error kicking user from all groups:', error);
+    return 0;
+  }
+}
+
+// تابع برای ذخیره‌سازی پیام با entities
+async function saveMessageWithEntities(messageText, messageEntities) {
+  if (!messageEntities || messageEntities.length === 0) {
+    return { text: messageText, entities: [] };
+  }
+
+  const entities = messageEntities.map(entity => ({
+    type: entity.type,
+    offset: entity.offset,
+    length: entity.length,
+    url: entity.url || null,
+    user: entity.user || null,
+    language: entity.language || null
+  }));
+
+  return { text: messageText, entities };
 }
 
 // تعریف سناریو برای تنظیمات تریگر (Wizard)
@@ -107,33 +149,38 @@ const setTriggerWizard = new Scenes.WizardScene(
       await ctx.reply('⚠️ زمان باید یک عدد باشد. لطفاً دوباره وارد کنید:');
       return;
     }
-    await ctx.reply('📝 لطفاً پیام اول را وارد کنید:');
+    await ctx.reply('📝 لطفاً پیام اول را وارد کنید (می‌توانید از لینک استفاده کنید):');
     return ctx.wizard.next();
   },
   async (ctx) => {
+    // ذخیره متن و entities پیام اول
     ctx.wizard.state.firstMessage = ctx.message.text;
-    if (ctx.message.entities) {
-      ctx.wizard.state.firstMessageEntities = ctx.message.entities;
-    }
-    await ctx.reply('📩 لطفاً پیام تاخیری را وارد کنید:');
+    ctx.wizard.state.firstMessageData = await saveMessageWithEntities(
+      ctx.message.text,
+      ctx.message.entities
+    );
+    
+    await ctx.reply('📩 لطفاً پیام تاخیری را وارد کنید (می‌توانید از لینک استفاده کنید):');
     return ctx.wizard.next();
   },
   async (ctx) => {
+    // ذخیره متن و entities پیام دوم
     ctx.wizard.state.secondMessage = ctx.message.text;
-    if (ctx.message.entities) {
-      ctx.wizard.state.secondMessageEntities = ctx.message.entities;
-    }
+    ctx.wizard.state.secondMessageData = await saveMessageWithEntities(
+      ctx.message.text,
+      ctx.message.entities
+    );
     
     const { error } = await supabase
       .from('trigger_settings')
       .upsert({
         chat_id: ctx.chat.id,
         trigger_name: ctx.wizard.state.triggerName,
-        first_message: ctx.wizard.state.firstMessage,
-        first_message_entities: ctx.wizard.state.firstMessageEntities || [],
+        first_message: ctx.wizard.state.firstMessageData.text,
+        first_message_entities: ctx.wizard.state.firstMessageData.entities,
         delay_seconds: ctx.wizard.state.delaySeconds,
-        second_message: ctx.wizard.state.secondMessage,
-        second_message_entities: ctx.wizard.state.secondMessageEntities || []
+        second_message: ctx.wizard.state.secondMessageData.text,
+        second_message_entities: ctx.wizard.state.secondMessageData.entities
       });
 
     if (error) {
@@ -160,12 +207,10 @@ bot.hears(/.*#فعال.*/, async (ctx) => {
     const chatType = ctx.chat.type;
     const chatTitle = ctx.chat.title || 'بدون نام';
 
-    // فقط برای گروه‌ها و سوپرگروه‌ها
     if (chatType !== 'group' && chatType !== 'supergroup') {
       return ctx.reply('❌ این دستور فقط در گروه‌ها قابل استفاده است.');
     }
 
-    // بررسی آیا کاربر ادمین است
     try {
       const chatMember = await ctx.telegram.getChatMember(chatId, userId);
       const isAdmin = ['administrator', 'creator'].includes(chatMember.status);
@@ -178,7 +223,6 @@ bot.hears(/.*#فعال.*/, async (ctx) => {
       return ctx.reply('❌ خطا در بررسی وضعیت ادمینی.');
     }
 
-    // ذخیره گروه در دیتابیس
     const { error } = await supabase
       .from('groups')
       .upsert({
@@ -210,10 +254,8 @@ bot.on('my_chat_member', async (ctx) => {
     const chatTitle = ctx.chat.title || 'بدون نام';
     const chatType = ctx.chat.type;
 
-    // فقط برای گروه‌ها و سوپرگroup‌ها
     if (chatType === 'group' || chatType === 'supergroup') {
       if (newStatus === 'administrator') {
-        // ذخیره گروه با وضعیت ادمینی
         const { error } = await supabase
           .from('groups')
           .upsert({
@@ -230,7 +272,6 @@ bot.on('my_chat_member', async (ctx) => {
           console.log(`✅ گروه ذخیره شد: ${chatTitle} (${chatId}) - ربات ادمین است`);
         }
       } else if (newStatus === 'member') {
-        // ذخیره گروه با وضعیت عضو عادی
         const { error } = await supabase
           .from('groups')
           .upsert({
@@ -247,7 +288,6 @@ bot.on('my_chat_member', async (ctx) => {
           console.log(`⚠️ گروه ذخیره شد: ${chatTitle} (${chatId}) - ربات عضو است (غیر ادمین)`);
         }
       } else if (newStatus === 'kicked' || newStatus === 'left') {
-        // حذف گروه از دیتابیس
         const { error } = await supabase
           .from('groups')
           .delete()
@@ -265,74 +305,122 @@ bot.on('my_chat_member', async (ctx) => {
   }
 });
 
-// 🔥 هندلر تقویت شده برای بررسی کاربران قرنطینه هنگام ورود به هر گروهی
+// 🔥 هندلر جدید: قرنطینه خودکار کاربران هنگام ورود به هر گروهی
+bot.on('new_chat_members', async (ctx) => {
+  try {
+    const chatId = ctx.chat.id;
+    const chatTitle = ctx.chat.title || 'بدون نام';
+    
+    for (const newMember of ctx.message.new_chat_members) {
+      const userId = newMember.id;
+      
+      // بررسی آیا کاربر ربات است
+      if (newMember.is_bot) continue;
+      
+      // ثبت اطلاعات کاربر در دیتابیس
+      const { error: userError } = await supabase
+        .from('users')
+        .upsert({
+          chat_id: userId,
+          first_name: newMember.first_name,
+          username: newMember.username,
+          last_name: newMember.last_name,
+          updated_at: new Date().toISOString()
+        });
+
+      if (userError) {
+        console.error('Error saving user info:', userError);
+      }
+
+      // 🔥 قرنطینه خودکار کاربر جدید
+      try {
+        // بررسی وجود رکورد قبلی
+        const { data: existingRecord, error: checkError } = await supabase
+          .from('user_quarantine')
+          .select('user_id')
+          .eq('user_id', userId)
+          .single();
+
+        if (existingRecord) {
+          // به‌روزرسانی رکورد موجود
+          const { error: updateError } = await supabase
+            .from('user_quarantine')
+            .update({
+              chat_id: chatId,
+              is_quarantined: true,
+              username: newMember.username,
+              first_name: newMember.first_name,
+              last_name: newMember.last_name,
+              quarantine_start: new Date().toISOString(),
+              quarantine_end: null
+            })
+            .eq('user_id', userId);
+
+          if (updateError) {
+            console.error('Error updating quarantine status:', updateError);
+          }
+        } else {
+          // ایجاد رکورد جدید
+          const { error: insertError } = await supabase
+            .from('user_quarantine')
+            .insert({
+              user_id: userId,
+              chat_id: chatId,
+              is_quarantined: true,
+              username: newMember.username,
+              first_name: newMember.first_name,
+              last_name: newMember.last_name,
+              quarantine_start: new Date().toISOString(),
+              quarantine_end: null
+            });
+
+          if (insertError) {
+            console.error('Error inserting quarantine status:', insertError);
+          }
+        }
+
+        // پاکسازی کش
+        userCache.delete(`quarantine_${userId}`);
+        
+        // کیک کردن کاربر از تمام گروه‌های دیگر
+        const kickedCount = await kickUserFromAllGroupsExceptCurrent(ctx, userId, chatId);
+        
+        console.log(`✅ کاربر ${userId} به طور خودکار قرنطینه شد و از ${kickedCount} گروه کیک شد`);
+        
+        // ارسال پیام اطلاع‌رسانی
+        await ctx.replyWithHTML(
+          `🔔 <b>سیستم قرنطینه خودکار</b>\n\n` +
+          `👤 کاربر <b>${newMember.first_name || 'ناشناس'}</b> به طور خودکار قرنطینه شد!\n` +
+          `📌 این کاربر از تمام گروه‌های دیگر حذف خواهد شد.`,
+          { reply_to_message_id: ctx.message.message_id }
+        );
+        
+      } catch (error) {
+        console.error('Error in auto quarantine process:', error);
+      }
+    }
+  } catch (error) {
+    console.error('Error in new_chat_members handler:', error);
+  }
+});
+
+// 🔥 هندلر تقویت شده برای بررسی کاربران قرنطینه
 bot.on('chat_member', async (ctx) => {
   try {
     const newMember = ctx.update.chat_member.new_chat_member;
     const userId = newMember.user.id;
     const chatId = ctx.chat.id;
     
-    // فقط زمانی که کاربر به عنوان عضو جدید اضافه می‌شود
     if (newMember.status === 'member' || newMember.status === 'administrator') {
-      // بررسی آیا کاربر در قرنطینه است
       const quarantine = await checkUserQuarantine(userId);
       
-      if (quarantine) {
+      if (quarantine && quarantine.chat_id !== chatId) {
         await kickUserFromGroup(ctx, chatId, userId, 'کاربر در قرنطینه است');
-        
-        // ثبت اطلاعات کاربر در دیتابیس (اگر قبلا ثبت نشده)
-        const { error: userError } = await supabase
-          .from('users')
-          .upsert({
-            chat_id: userId,
-            first_name: newMember.user.first_name,
-            username: newMember.user.username,
-            last_name: newMember.user.last_name,
-            updated_at: new Date().toISOString()
-          });
-
-        if (userError) {
-          console.error('Error saving user info:', userError);
-        }
+        await kickUserFromAllGroupsExceptCurrent(ctx, userId, quarantine.chat_id);
       }
     }
   } catch (error) {
     console.error('Error in chat_member handler:', error);
-  }
-});
-
-// 🔥 هندلر جدید برای زمانی که کاربر جدیدی به گروه اضافه می‌شود
-bot.on('new_chat_members', async (ctx) => {
-  try {
-    const chatId = ctx.chat.id;
-    
-    for (const newMember of ctx.message.new_chat_members) {
-      const userId = newMember.id;
-      
-      // بررسی آیا کاربر در قرنطینه است
-      const quarantine = await checkUserQuarantine(userId);
-      
-      if (quarantine) {
-        await kickUserFromGroup(ctx, chatId, userId, '��اربر در قرنطینه است');
-        
-        // ثبت اطلاعات کاربر در دیتابیس
-        const { error: userError } = await supabase
-          .from('users')
-          .upsert({
-            chat_id: userId,
-            first_name: newMember.first_name,
-            username: newMember.username,
-            last_name: newMember.last_name,
-            updated_at: new Date().toISOString()
-          });
-
-        if (userError) {
-          console.error('Error saving user info:', userError);
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Error in new_chat_members handler:', error);
   }
 });
 
@@ -350,7 +438,7 @@ bot.start(async (ctx) => {
       .single();
 
     if (existingUser) {
-      await ctx.reply(`سلام ${firstName}! شما قبلاً در ربات ثبت شده‌اید. 😊`);
+      await ctx.reply(`سلام ${firstName}! شما قبلاً در ربات ثبت شده���اید. 😊`);
     } else {
       const { error } = await supabase
         .from('users')
@@ -364,7 +452,6 @@ bot.start(async (ctx) => {
       await ctx.reply(`سلام ${firstName}! به ربات خوش آمدی. 😊`);
     }
 
-    // نمایش راهنمای دستورات
     await ctx.replyWithHTML(`
 🤖 <b>دستورات disponibles:</b>
 /set_trigger - تنظیم تریگر جدید
@@ -386,7 +473,7 @@ bot.command('set_trigger', (ctx) => {
   ctx.scene.enter('set_trigger_wizard');
 });
 
-// 🔥 تشخیص #ورود در هر جای متن - فعال کردن قرنطینه
+// 🔥 تشخیص #ورود در هر جای متن
 bot.hears(/.*#ورود.*/, async (ctx) => {
   try {
     const userId = ctx.from.id;
@@ -394,7 +481,6 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
     const firstName = ctx.from.first_name || 'کاربر';
     const username = ctx.from.username;
 
-    // دریافت تنظیمات از Supabase
     const { data: settings, error: settingsError } = await supabase
       .from('trigger_settings')
       .select('*')
@@ -405,11 +491,10 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
       return ctx.reply('❌ تنظیمات تریگر یافت نشد. لطفاً ابتدا از /set_trigger استفاده کنید.');
     }
 
-    const { trigger_name, first_message, delay_seconds, second_message } = settings;
+    const { trigger_name, first_message, delay_seconds, second_message, first_message_entities, second_message_entities } = settings;
 
     // 🔥 ثبت یا به‌روزرسانی وضعیت قرنطینه کاربر
     try {
-      // بررسی وجود رکورد قبلی
       const { data: existingRecord, error: checkError } = await supabase
         .from('user_quarantine')
         .select('user_id')
@@ -417,7 +502,6 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
         .single();
 
       if (existingRecord) {
-        // به‌روزرسانی رکورد موجود
         const { error: updateError } = await supabase
           .from('user_quarantine')
           .update({
@@ -436,7 +520,6 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
           return ctx.reply('❌ خطا در به روز رسانی قرنطینه کاربر.');
         }
       } else {
-        // ایجاد رکورد جدید
         const { error: insertError } = await supabase
           .from('user_quarantine')
           .insert({
@@ -456,50 +539,62 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
         }
       }
 
-      // پاکسازی کش
       userCache.delete(`quarantine_${userId}`);
+      const kickedCount = await kickUserFromAllGroupsExceptCurrent(ctx, userId, chatId);
       
-      // کیک کردن کاربر از تمام گروه‌های موجود
-      const { data: groups, error: groupsError } = await supabase
-        .from('groups')
-        .select('chat_id, title')
-        .eq('is_bot_admin', true);
+      console.log(`✅ کاربر ${userId} از ${kickedCount} گروه کیک شد و در گروه ${chatId} قرنطینه شد`);
 
-      if (!groupsError && groups && groups.length > 0) {
-        let kickedCount = 0;
-        
-        for (const group of groups) {
-          if (group.chat_id !== chatId) {
-            const kicked = await kickUserFromGroup(ctx, group.chat_id, userId, 'قرنطینه فعال');
-            if (kicked) kickedCount++;
-          }
-        }
-        
-        console.log(`✅ کاربر ${userId} از ${kickedCount} گروه کیک شد`);
-      }
     } catch (error) {
       console.error('Error in quarantine process:', error);
+      return ctx.reply('❌ خطایی در فرآیند قرنطینه رخ داد.');
     }
 
-    // ارسال پیام اول
-    await ctx.replyWithHTML(`🔔 <b>${trigger_name}</b> فعال شد!\n\n👤 کاربر: <b>${firstName}</b>\n⏰ تاخیر: ${delay_seconds} ثانیه\n\n${first_message}`, {
-      reply_to_message_id: ctx.message.message_id,
-      parse_mode: 'HTML',
-      disable_web_page_preview: false
-    });
+    // ارسال پیام اول با حفظ entities
+    let firstMessageText = first_message;
+    if (first_message_entities && first_message_entities.length > 0) {
+      await ctx.telegram.sendMessage(
+        chatId,
+        `🔔 <b>${trigger_name}</b> فعال شد!\n\n👤 کاربر: <b>${firstName}</b>\n⏰ تاخیر: ${delay_seconds} ثانیه\n\n${firstMessageText}`,
+        {
+          reply_to_message_id: ctx.message.message_id,
+          parse_mode: 'HTML',
+          disable_web_page_preview: false,
+          entities: first_message_entities
+        }
+      );
+    } else {
+      await ctx.replyWithHTML(`🔔 <b>${trigger_name}</b> فعال شد!\n\n👤 کاربر: <b>${firstName}</b>\n⏰ تاخیر: ${delay_seconds} ثانیه\n\n${firstMessageText}`, {
+        reply_to_message_id: ctx.message.message_id,
+        disable_web_page_preview: false
+      });
+    }
 
     // ارسال پیام دوم با تاخیر
     setTimeout(async () => {
       try {
-        await ctx.telegram.sendMessage(
-          chatId, 
-          `⏰ زمان تاخیر به پایان رسید!\n\n${second_message}`,
-          {
-            reply_to_message_id: ctx.message.message_id,
-            parse_mode: 'HTML',
-            disable_web_page_preview: false
-          }
-        );
+        let secondMessageText = second_message;
+        if (second_message_entities && second_message_entities.length > 0) {
+          await ctx.telegram.sendMessage(
+            chatId,
+            `⏰ زمان تاخیر به پایان رسید!\n\n${secondMessageText}`,
+            {
+              reply_to_message_id: ctx.message.message_id,
+              parse_mode: 'HTML',
+              disable_web_page_preview: false,
+              entities: second_message_entities
+            }
+          );
+        } else {
+          await ctx.telegram.sendMessage(
+            chatId,
+            `⏰ زمان تاخیر به پایان رسید!\n\n${secondMessageText}`,
+            {
+              reply_to_message_id: ctx.message.message_id,
+              parse_mode: 'HTML',
+              disable_web_page_preview: false
+            }
+          );
+        }
       } catch (error) {
         console.error('Error sending delayed message:', error);
       }
@@ -511,13 +606,12 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
   }
 });
 
-// 🔥 تشخیص #خروج در هر جای متن - غیرفعال کردن قرنطینه
+// 🔥 تشخیص #خروج در هر جای متن
 bot.hears(/.*#خروج.*/, async (ctx) => {
   try {
     const userId = ctx.from.id;
     const chatId = ctx.chat.id;
 
-    // بررسی وجود کاربر در قرنطینه
     const { data: quarantine, error: checkError } = await supabase
       .from('user_quarantine')
       .select('*')
@@ -528,7 +622,6 @@ bot.hears(/.*#خروج.*/, async (ctx) => {
       return ctx.reply('❌ شما در حال حاضر در قرنطینه نیستید.');
     }
 
-    // به روز رسانی وضعیت قرنطینه کاربر
     const { error: updateError } = await supabase
       .from('user_quarantine')
       .update({ 
@@ -542,7 +635,6 @@ bot.hears(/.*#خروج.*/, async (ctx) => {
       return ctx.reply('❌ خطا در به روز رسانی وضعیت قرنطینه.');
     }
 
-    // پاکسازی کش
     userCache.delete(`quarantine_${userId}`);
     
     await ctx.reply('✅ تریگر غیرفعال شد و شما از قرنطینه خارج شدید.');
@@ -557,7 +649,6 @@ bot.command('list_triggers', async (ctx) => {
   try {
     const chatId = ctx.chat.id;
     
-    // دریافت تمام تریگرهای گروه
     const { data: triggers, error } = await supabase
       .from('trigger_settings')
       .select('*')
@@ -595,7 +686,6 @@ bot.command('delete_trigger', async (ctx) => {
 
     const triggerName = params.slice(1).join(' ');
 
-    // حذف تریگر
     const { error } = await supabase
       .from('trigger_settings')
       .delete()
@@ -631,4 +721,3 @@ app.post('/webhook', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🤖 ربات در پورت ${PORT} راه‌اندازی شد...`);
 });
-
