@@ -27,7 +27,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const userCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 دقیقه
 
-// تابع برای بررسی وضعیت ق��نطینه کاربر
+// تابع برای بررسی وضعیت قرنطینه کاربر
 async function checkUserQuarantine(userId) {
   const cacheKey = `quarantine_${userId}`;
   
@@ -143,7 +143,7 @@ async function saveMessageWithEntities(messageText, messageEntities) {
 async function sendFormattedMessage(chatId, text, entities, replyToMessageId = null) {
   try {
     const messageOptions = {
-      parse_mode: 'HTML',
+      parse_mode: entities && entities.length > 0 ? undefined : 'HTML',
       disable_web_page_preview: false
     };
 
@@ -371,7 +371,7 @@ bot.on('chat_member', async (ctx) => {
       
       if (quarantine && quarantine.chat_id !== chatId) {
         // کاربر در قرنطینه است و باید کیک شود
-        await kickUserFromGroup(chatId, userId, 'کاربر در قرنطینه است');
+        await kickUserFromGroup(chatId, userId, 'کارب�� در قرنطینه است');
       }
     }
   } catch (error) {
@@ -410,7 +410,7 @@ bot.on('new_chat_members', async (ctx) => {
       
       if (quarantine && quarantine.chat_id !== chatId) {
         // کاربر در قرنطینه است و باید کیک شود
-        await kickUserFromGroup(chatId, userId, 'کاربر در قرنطینه است');
+        await kickUserFromGroup(chatId, userId, 'کاربر در قرنطین�� است');
         continue;
       }
       
