@@ -113,72 +113,6 @@ async function kickUserFromAllGroupsExceptCurrent(userId, currentChatId) {
   }
 }
 
-// تابع برای ذخیره‌سازی پیام با entities و فرمت‌ها
-async function saveMessageWithEntities(messageText, messageEntities) {
-  if (!messageEntities || messageEntities.length === 0) {
-    return { text: messageText, entities: [] };
-  }
-
-  // تبدیل entities به فرمت قابل ذخیره در Supabase
-  const entities = messageEntities.map(entity => {
-    const baseEntity = {
-      type: entity.type,
-      offset: entity.offset,
-      length: entity.length
-    };
-    
-    // اضافه کردن فیلدهای خاص بر اساس نوع entity
-    if (entity.url) baseEntity.url = entity.url;
-    if (entity.user) baseEntity.user = entity.user;
-    if (entity.language) baseEntity.language = entity.language;
-    if (entity.custom_emoji_id) baseEntity.custom_emoji_id = entity.custom_emoji_id;
-    
-    return baseEntity;
-  });
-
-  return { text: messageText, entities };
-}
-
-// تابع برای ارسال پیام با حفظ entities و فرمت‌ها
-async function sendFormattedMessage(chatId, text, entities, replyToMessageId = null) {
-  try {
-    const messageOptions = {
-      parse_mode: entities && entities.length > 0 ? undefined : 'HTML',
-      disable_web_page_preview: false
-    };
-
-    if (replyToMessageId) {
-      messageOptions.reply_to_message_id = replyToMessageId;
-    }
-
-    if (entities && entities.length > 0) {
-      messageOptions.entities = entities;
-    }
-
-    await bot.telegram.sendMessage(chatId, text, messageOptions);
-    return true;
-  } catch (error) {
-    console.error('Error sending formatted message:', error);
-    
-    // Fallback: ارسال بدون entities
-    try {
-      await bot.telegram.sendMessage(
-        chatId,
-        text,
-        {
-          parse_mode: 'HTML',
-          disable_web_page_preview: false,
-          reply_to_message_id: replyToMessageId
-        }
-      );
-      return true;
-    } catch (fallbackError) {
-      console.error('Fallback message sending also failed:', fallbackError);
-      return false;
-    }
-  }
-}
-
 // تابع برای تبدیل ثانیه به فرمت خوانا
 function formatDelayTime(seconds) {
   if (seconds < 60) {
@@ -212,27 +146,12 @@ const setTriggerWizard = new Scenes.WizardScene(
     }
     
     ctx.wizard.state.delaySeconds = delaySeconds;
-    await ctx.reply('📝 لطفاً پیام اول را وارد کنید (می‌توانید از لینک استفاده کنید):');
-    return ctx.wizard.next();
-  },
-  async (ctx) => {
-    // ذخیره متن و entities پیام اول
-    ctx.wizard.state.firstMessage = ctx.message.text;
-    ctx.wizard.state.firstMessageData = await saveMessageWithEntities(
-      ctx.message.text,
-      ctx.message.entities || ctx.message.caption_entities
-    );
-    
     await ctx.reply('📩 لطفاً پیام تاخیری را وارد کنید (می‌توانید از لینک استفاده کنید):');
     return ctx.wizard.next();
   },
   async (ctx) => {
-    // ذخیره متن و entities پیام دوم
+    // ذخیره پیام تاخیری
     ctx.wizard.state.secondMessage = ctx.message.text;
-    ctx.wizard.state.secondMessageData = await saveMessageWithEntities(
-      ctx.message.text,
-      ctx.message.entities || ctx.message.caption_entities
-    );
     
     // ذخیره در دیتابیس
     const { error } = await supabase
@@ -240,11 +159,8 @@ const setTriggerWizard = new Scenes.WizardScene(
       .upsert({
         chat_id: ctx.chat.id,
         trigger_name: ctx.wizard.state.triggerName,
-        first_message: ctx.wizard.state.firstMessageData.text,
-        first_message_entities: ctx.wizard.state.firstMessageData.entities,
         delay_seconds: ctx.wizard.state.delaySeconds,
-        second_message: ctx.wizard.state.secondMessageData.text,
-        second_message_entities: ctx.wizard.state.secondMessageData.entities
+        second_message: ctx.wizard.state.secondMessage
       });
 
     if (error) {
@@ -544,7 +460,7 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
     const userId = ctx.from.id;
     const chatId = ctx.chat.id;
     const firstName = ctx.from.first_name || 'کاربر';
-    const username = ctx.from.username;
+    const chatTitle = ctx.chat.title || 'منطقه';
 
     const { data: settings, error: settingsError } = await supabase
       .from('trigger_settings')
@@ -556,7 +472,7 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
       return ctx.reply('❌ تنظیمات تریگر یافت نشد. لطفاً ابتدا از /set_trigger استفاده کنید.');
     }
 
-    const { trigger_name, first_message, delay_seconds, second_message, first_message_entities, second_message_entities } = settings;
+    const { trigger_name, delay_seconds, second_message } = settings;
 
     // 🔥 ثبت یا به‌روزرسانی وضعیت قرنطینه کاربر
     try {
@@ -572,7 +488,7 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
           .update({
             chat_id: chatId,
             is_quarantined: true,
-            username: username,
+            username: ctx.from.username,
             first_name: ctx.from.first_name,
             last_name: ctx.from.last_name,
             quarantine_start: new Date().toISOString(),
@@ -591,7 +507,7 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
             user_id: userId,
             chat_id: chatId,
             is_quarantined: true,
-            username: username,
+            username: ctx.from.username,
             first_name: ctx.from.first_name,
             last_name: ctx.from.last_name,
             quarantine_start: new Date().toISOString(),
@@ -614,40 +530,25 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
       return ctx.reply('❌ خطایی در فرآیند قرنطینه رخ داد.');
     }
 
-    // ارسال پیام اول با حفظ فرمت
-    const firstMessageSent = await sendFormattedMessage(
-      chatId,
-      first_message,
-      first_message_entities,
-      ctx.message.message_id
+    // ارسال پیام اول (ثابت)
+    const formattedDelay = formatDelayTime(delay_seconds);
+    await ctx.reply(
+      `پلیر ${firstName} وارد منطقه ${chatTitle} شد.\n\n⏳┊مدت زمان سفر : ${formattedDelay}`,
+      { reply_to_message_id: ctx.message.message_id }
     );
-
-    if (!firstMessageSent) {
-      await ctx.reply('⚠️ خطا در ارسال پیام اول با فرمت اصلی. پیام بدون فرمت ارسال شد.');
-    }
 
     // ارسال پیام دوم با تاخیر
     setTimeout(async () => {
       try {
-        // ارسال پیام دوم با حفظ فرمت و لینک‌ها
-        const secondMessageSent = await sendFormattedMessage(
+        // ارسال پیام دوم (پیام تاخیری دلخواه)
+        await bot.telegram.sendMessage(
           chatId,
           second_message,
-          second_message_entities,
-          ctx.message.message_id
+          {
+            reply_to_message_id: ctx.message.message_id,
+            disable_web_page_preview: false
+          }
         );
-        
-        if (!secondMessageSent) {
-          await bot.telegram.sendMessage(
-            chatId,
-            `⏰ زمان تاخیر به پایان رسید!\n\n${second_message}`,
-            {
-              reply_to_message_id: ctx.message.message_id,
-              parse_mode: 'HTML',
-              disable_web_page_preview: false
-            }
-          );
-        }
       } catch (error) {
         console.error('Error sending delayed message:', error);
       }
@@ -663,6 +564,7 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
 bot.hears(/.*#خروج.*/, async (ctx) => {
   try {
     const userId = ctx.from.id;
+    const firstName = ctx.from.first_name || 'پلیر';
 
     // بررسی وجود کاربر در قرنطینه
     const { data: quarantine, error: checkError } = await supabase
@@ -692,7 +594,8 @@ bot.hears(/.*#خروج.*/, async (ctx) => {
     // پاکسازی کش
     userCache.delete(`quarantine_${userId}`);
     
-    await ctx.reply('✅ شما از قرنطینه خارج شدید.');
+    // ارسال پیام خروج
+    await ctx.reply(`🧭┊سفر به سلامت ${firstName}`);
     
   } catch (error) {
     console.error('Error in #خروج command:', error);
