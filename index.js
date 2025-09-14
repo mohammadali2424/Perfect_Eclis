@@ -56,6 +56,18 @@ async function checkUserQuarantine(userId) {
   return null;
 }
 
+// تابع برای بررسی آیا کاربر در هر گروهی قرنطینه است
+async function isUserInQuarantine(userId) {
+  const { data: quarantine, error } = await supabase
+    .from('user_quarantine')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('is_quarantined', true)
+    .single();
+
+  return !error && quarantine;
+}
+
 // تابع برای کیک کردن کاربر از گروه
 async function kickUserFromGroup(ctx, chatId, userId, reason = 'قرنطینه فعال') {
   try {
@@ -129,6 +141,20 @@ async function saveMessageWithEntities(messageText, messageEntities) {
   }));
 
   return { text: messageText, entities };
+}
+
+// تابع برای ارسال پیام به کاربر درباره وضعیت قرنطینه
+async function notifyUserAboutQuarantine(userId, chatTitle) {
+  try {
+    await bot.telegram.sendMessage(
+      userId,
+      `🔒 شما در گروه "${chatTitle}" قرنطینه شده‌اید.\n\n` +
+      `برای خروج از قرنطینه و رفتن به گروه دیگر، باید در گروه فعلی #خروج بزنید.\n\n` +
+      `تا زمانی که #خروج نزده‌اید، نمی‌توانید به گروه‌های دیگر بروید.`
+    );
+  } catch (error) {
+    console.error('Error sending notification to user:', error);
+  }
 }
 
 // تعریف سناریو برای تنظیمات تریگر (Wizard)
@@ -305,7 +331,39 @@ bot.on('my_chat_member', async (ctx) => {
   }
 });
 
-// 🔥 هندلر جدید: قرنطینه خودکار کاربران هنگام ورود به هر گروهی
+// 🔥 هندلر تقویت شده برای بررسی کاربران قرنطینه
+bot.on('chat_member', async (ctx) => {
+  try {
+    const newMember = ctx.update.chat_member.new_chat_member;
+    const userId = newMember.user.id;
+    const chatId = ctx.chat.id;
+    
+    // فقط زمانی که کاربر به عنوان عضو جدید اضافه می‌شود
+    if (newMember.status === 'member' || newMember.status === 'administrator') {
+      // بررسی آیا کاربر در قرنطینه است
+      const quarantine = await isUserInQuarantine(userId);
+      
+      if (quarantine) {
+        // اگر کاربر در گروه دیگری قرنطینه است
+        if (quarantine.chat_id !== chatId) {
+          // کاربر باید کیک شود چون هنوز #خروج نزده
+          await kickUserFromGroup(ctx, chatId, userId, 'کاربر در قرنطینه است و باید ابتدا #خروج بزند');
+          
+          // ارسال پیام به گروه
+          await ctx.reply(
+            `⚠️ کاربر @${newMember.user.username || 'ناشناس'} در گروه دیگری قرنطینه است.\n` +
+            `لطفاً ابتدا از گروه قبلی #خروج بزند سپس به این گروه بیاید.`,
+            { reply_to_message_id: ctx.message.message_id }
+          );
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error in chat_member handler:', error);
+  }
+});
+
+// 🔥 هندلر برای زمانی که کاربر جدیدی به گروه اضافه می‌شود
 bot.on('new_chat_members', async (ctx) => {
   try {
     const chatId = ctx.chat.id;
@@ -332,6 +390,26 @@ bot.on('new_chat_members', async (ctx) => {
         console.error('Error saving user info:', userError);
       }
 
+      // بررسی آیا کاربر در قرنطینه است
+      const quarantine = await isUserInQuarantine(userId);
+      
+      if (quarantine) {
+        // اگر کاربر در گروه دیگری قرنطینه است
+        if (quarantine.chat_id !== chatId) {
+          // کاربر باید کیک شود چون هنوز #خروج نزده
+          await kickUserFromGroup(ctx, chatId, userId, 'کاربر در قرنطینه است و باید ابتدا #خروج بزند');
+          
+          // ارسال پیام به گروه
+          await ctx.reply(
+            `⚠️ کاربر @${newMember.username || 'ناشناس'} در گروه دیگری قرنطینه است.\n` +
+            `لطفاً ابتدا از گروه قبلی #خروج بزند سپس به این گروه بیاید.`,
+            { reply_to_message_id: ctx.message.message_id }
+          );
+          
+          continue; // به کاربر بعدی برو
+        }
+      }
+      
       // 🔥 قرنطینه خودکار کاربر جدید
       try {
         // بررسی وجود رکورد قبلی
@@ -387,7 +465,10 @@ bot.on('new_chat_members', async (ctx) => {
         
         console.log(`✅ کاربر ${userId} به طور خودکار قرنطینه شد و از ${kickedCount} گروه کیک شد`);
         
-        // ارسال پیام اطلاع‌رسانی
+        // ارسال پیام اطلاع‌رسانی به کاربر
+        await notifyUserAboutQuarantine(userId, chatTitle);
+        
+        // ارسال پیام اطلاع‌رسانی به گروه
         await ctx.replyWithHTML(
           `🔔 <b>سیستم قرنطینه خودکار</b>\n\n` +
           `👤 کاربر <b>${newMember.first_name || 'ناشناس'}</b> به طور خودکار قرنطینه شد!\n` +
@@ -401,26 +482,6 @@ bot.on('new_chat_members', async (ctx) => {
     }
   } catch (error) {
     console.error('Error in new_chat_members handler:', error);
-  }
-});
-
-// 🔥 هندلر تقویت شده برای بررسی کاربران قرنطینه
-bot.on('chat_member', async (ctx) => {
-  try {
-    const newMember = ctx.update.chat_member.new_chat_member;
-    const userId = newMember.user.id;
-    const chatId = ctx.chat.id;
-    
-    if (newMember.status === 'member' || newMember.status === 'administrator') {
-      const quarantine = await checkUserQuarantine(userId);
-      
-      if (quarantine && quarantine.chat_id !== chatId) {
-        await kickUserFromGroup(ctx, chatId, userId, 'کاربر در قرنطینه است');
-        await kickUserFromAllGroupsExceptCurrent(ctx, userId, quarantine.chat_id);
-      }
-    }
-  } catch (error) {
-    console.error('Error in chat_member handler:', error);
   }
 });
 
@@ -438,7 +499,7 @@ bot.start(async (ctx) => {
       .single();
 
     if (existingUser) {
-      await ctx.reply(`سلام ${firstName}! شما قبلاً در ربات ثبت شده���اید. 😊`);
+      await ctx.reply(`سلام ${firstName}! شما قبلاً در ربات ثبت شده‌اید. 😊`);
     } else {
       const { error } = await supabase
         .from('users')
@@ -606,12 +667,13 @@ bot.hears(/.*#ورود.*/, async (ctx) => {
   }
 });
 
-// 🔥 تشخیص #خروج در هر جای متن
+// 🔥 تشخیص #خروج در هر جای متن - غیرفعال کردن قرنطینه
 bot.hears(/.*#خروج.*/, async (ctx) => {
   try {
     const userId = ctx.from.id;
     const chatId = ctx.chat.id;
 
+    // بررسی وجود کاربر در قرنطینه
     const { data: quarantine, error: checkError } = await supabase
       .from('user_quarantine')
       .select('*')
@@ -622,6 +684,7 @@ bot.hears(/.*#خروج.*/, async (ctx) => {
       return ctx.reply('❌ شما در حال حاضر در قرنطینه نیستید.');
     }
 
+    // به روز رسانی وضعیت قرنطینه کاربر
     const { error: updateError } = await supabase
       .from('user_quarantine')
       .update({ 
@@ -635,9 +698,11 @@ bot.hears(/.*#خروج.*/, async (ctx) => {
       return ctx.reply('❌ خطا در به روز رسانی وضعیت قرنطینه.');
     }
 
+    // پاکسازی کش
     userCache.delete(`quarantine_${userId}`);
     
-    await ctx.reply('✅ تریگر غیرفعال شد و شما از قرنطینه خارج شدید.');
+    await ctx.reply('✅ شما از قرنطینه خارج شدید. اکنون می‌توانید به گروه‌های دیگر بروید.');
+    
   } catch (error) {
     console.error('Error in #خروج command:', error);
     ctx.reply('❌ خطایی در اجرای دستور رخ داد.');
@@ -719,5 +784,5 @@ app.post('/webhook', async (req, res) => {
 
 // راه‌اندازی سرور
 app.listen(PORT, () => {
-  console.log(`🤖 ربات در پورت ${PORT} راه‌اندازی شد...`);
+  console.log(`🤖 ربات در پорт ${PORT} راه‌اندازی شد...`);
 });
