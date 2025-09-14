@@ -113,7 +113,7 @@ async function kickUserFromAllGroupsExceptCurrent(userId, currentChatId) {
   }
 }
 
-// تابع برای ذخیره‌سازی پیام با entities و فرمت‌ها
+// تابع برای ذخیره‌سازی پیا�� با entities و فرمت‌ها
 async function saveMessageWithEntities(messageText, messageEntities) {
   if (!messageEntities || messageEntities.length === 0) {
     return { text: messageText, entities: [] };
@@ -189,6 +189,53 @@ function formatDelayTime(seconds) {
     return remainingSeconds > 0 
       ? `${minutes} دقیقه و ${remainingSeconds} ثانیه` 
       : `${minutes} دقیقه`;
+  }
+}
+
+// تابع برای بررسی دسترسی ربات در گروه
+async function checkBotAdminStatus(chatId) {
+  try {
+    // بررسی اولیه از کش
+    const cacheKey = `bot_admin_${chatId}`;
+    if (userCache.has(cacheKey)) {
+      return userCache.get(cacheKey);
+    }
+
+    // بررسی از دیتابیس
+    const { data: group, error } = await supabase
+      .from('groups')
+      .select('is_bot_admin')
+      .eq('chat_id', chatId)
+      .single();
+
+    if (!error && group) {
+      userCache.set(cacheKey, group.is_bot_admin);
+      return group.is_bot_admin;
+    }
+
+    // بررسی مستقیم از تلگرام
+    try {
+      const botMember = await bot.telegram.getChatMember(chatId, bot.botInfo.id);
+      const isAdmin = botMember.status === 'administrator' && botMember.can_restrict_members;
+      
+      // ذخیره در دیتابیس
+      await supabase
+        .from('groups')
+        .upsert({
+          chat_id: chatId,
+          is_bot_admin: isAdmin,
+          last_updated: new Date().toISOString()
+        });
+
+      userCache.set(cacheKey, isAdmin);
+      return isAdmin;
+    } catch (tgError) {
+      console.error('Error checking bot admin status:', tgError);
+      return false;
+    }
+  } catch (error) {
+    console.error('Error in checkBotAdminStatus:', error);
+    return false;
   }
 }
 
@@ -275,13 +322,17 @@ bot.hears(/.*#فعال.*/, async (ctx) => {
       return ctx.reply('❌ خطا در بررسی وضعیت ادمینی.');
     }
 
+    // بررسی دسترسی ربات در گروه
+    const botMember = await ctx.telegram.getChatMember(chatId, ctx.botInfo.id);
+    const isBotAdmin = botMember.status === 'administrator' && botMember.can_restrict_members;
+
     const { error } = await supabase
       .from('groups')
       .upsert({
         chat_id: chatId,
         title: chatTitle,
         type: chatType,
-        is_bot_admin: true,
+        is_bot_admin: isBotAdmin,
         last_updated: new Date().toISOString()
       });
 
@@ -298,7 +349,7 @@ bot.hears(/.*#فعال.*/, async (ctx) => {
   }
 });
 
-// هندلر برای زمانی که ربات به گروهی اضافه می‌شود یا وضعیتش تغییر می‌کند
+// 🔥 هندلر تقویت شده برای زمانی که ربات به گروهی اضافه می‌شود
 bot.on('my_chat_member', async (ctx) => {
   try {
     const chatId = ctx.chat.id;
@@ -307,53 +358,91 @@ bot.on('my_chat_member', async (ctx) => {
     const chatType = ctx.chat.type;
 
     if (chatType === 'group' || chatType === 'supergroup') {
-      if (newStatus === 'administrator') {
-        const { error } = await supabase
-          .from('groups')
-          .upsert({
-            chat_id: chatId,
-            title: chatTitle,
-            type: chatType,
-            is_bot_admin: true,
-            last_updated: new Date().toISOString()
-          });
+      // بررسی آیا ربات ادمین است
+      const isBotAdmin = newStatus === 'administrator';
+      
+      const { error } = await supabase
+        .from('groups')
+        .upsert({
+          chat_id: chatId,
+          title: chatTitle,
+          type: chatType,
+          is_bot_admin: isBotAdmin,
+          last_updated: new Date().toISOString()
+        });
 
-        if (error) {
-          console.error('Error saving group:', error);
-        } else {
-          console.log(`✅ گروه ذخیره شد: ${chatTitle} (${chatId}) - ربات ادمین است`);
-        }
-      } else if (newStatus === 'member') {
-        const { error } = await supabase
-          .from('groups')
-          .upsert({
-            chat_id: chatId,
-            title: chatTitle,
-            type: chatType,
-            is_bot_admin: false,
-            last_updated: new Date().toISOString()
-          });
-
-        if (error) {
-          console.error('Error updating group:', error);
-        } else {
-          console.log(`⚠️ گروه ذخیره شد: ${chatTitle} (${chatId}) - ربات عضو است (غیر ادمین)`);
-        }
-      } else if (newStatus === 'kicked' || newStatus === 'left') {
-        const { error } = await supabase
-          .from('groups')
-          .delete()
-          .eq('chat_id', chatId);
-
-        if (error) {
-          console.error('Error deleting group:', error);
-        } else {
-          console.log(`🗑️ گروه حذف شد: ${chatId}`);
-        }
+      if (error) {
+        console.error('Error saving group:', error);
+      } else {
+        console.log(`✅ گروه ذخیره شد: ${chatTitle} (${chatId}) - وضعیت ادمین: ${isBotAdmin}`);
+        
+        // پاکسازی کش وضعیت ربات
+        userCache.delete(`bot_admin_${chatId}`);
       }
     }
   } catch (error) {
     console.error('Error in my_chat_member handler:', error);
+  }
+});
+
+// 🔥 هندلر تقویت شده برای کاربران جدید
+bot.on('new_chat_members', async (ctx) => {
+  try {
+    const chatId = ctx.chat.id;
+    const chatTitle = ctx.chat.title || 'بدون نام';
+    
+    for (const newMember of ctx.message.new_chat_members) {
+      const userId = newMember.id;
+      
+      if (newMember.is_bot) continue;
+
+      // بررسی دسترسی ربات در این گروه
+      const isBotAdmin = await checkBotAdminStatus(chatId);
+      if (!isBotAdmin) {
+        console.log(`⚠️ ربات در گروه ${chatId} ادمین نیست، نمی‌تواند کاربر را قرنطینه کند`);
+        continue;
+      }
+
+      // ثبت اطلاعات کاربر در دیتابیس
+      await supabase
+        .from('users')
+        .upsert({
+          chat_id: userId,
+          first_name: newMember.first_name,
+          username: newMember.username,
+          last_name: newMember.last_name,
+          updated_at: new Date().toISOString()
+        });
+
+      // بررسی قرنطینه کاربر
+      const quarantine = await checkUserQuarantine(userId);
+      
+      if (quarantine && quarantine.chat_id !== chatId) {
+        await kickUserFromGroup(chatId, userId, 'کاربر در قرنطینه است');
+        continue;
+      }
+      
+      // قرنطینه خودکار کاربر جدید
+      await supabase
+        .from('user_quarantine')
+        .upsert({
+          user_id: userId,
+          chat_id: chatId,
+          is_quarantined: true,
+          username: newMember.username,
+          first_name: newMember.first_name,
+          last_name: newMember.last_name,
+          quarantine_start: new Date().toISOString(),
+          quarantine_end: null
+        });
+
+      userCache.delete(`quarantine_${userId}`);
+      await kickUserFromAllGroupsExceptCurrent(userId, chatId);
+      
+      console.log(`✅ کاربر ${userId} در گروه جدید ${chatTitle} (${chatId}) قرنطینه شد`);
+    }
+  } catch (error) {
+    console.error('Error in new_chat_members handler:', error);
   }
 });
 
@@ -370,111 +459,15 @@ bot.on('chat_member', async (ctx) => {
       const quarantine = await checkUserQuarantine(userId);
       
       if (quarantine && quarantine.chat_id !== chatId) {
-        // کاربر در قرنطینه است و باید کیک شود
-        await kickUserFromGroup(chatId, userId, 'کارب�� در قرنطینه است');
+        // بررسی دسترسی ربات
+        const isBotAdmin = await checkBotAdminStatus(chatId);
+        if (isBotAdmin) {
+          await kickUserFromGroup(chatId, userId, 'کاربر در قرنطینه است');
+        }
       }
     }
   } catch (error) {
     console.error('Error in chat_member handler:', error);
-  }
-});
-
-// 🔥 هندلر برای زمانی که کاربر جدیدی به گروه اضافه می‌شود
-bot.on('new_chat_members', async (ctx) => {
-  try {
-    const chatId = ctx.chat.id;
-    
-    for (const newMember of ctx.message.new_chat_members) {
-      const userId = newMember.id;
-      
-      // بررسی آیا کاربر ربات است
-      if (newMember.is_bot) continue;
-      
-      // ثبت اطلاعات کاربر در دیتابیس
-      const { error: userError } = await supabase
-        .from('users')
-        .upsert({
-          chat_id: userId,
-          first_name: newMember.first_name,
-          username: newMember.username,
-          last_name: newMember.last_name,
-          updated_at: new Date().toISOString()
-        });
-
-      if (userError) {
-        console.error('Error saving user info:', userError);
-      }
-
-      // بررسی آیا کاربر در قرنطینه است
-      const quarantine = await checkUserQuarantine(userId);
-      
-      if (quarantine && quarantine.chat_id !== chatId) {
-        // کاربر در قرنطینه است و باید کیک شود
-        await kickUserFromGroup(chatId, userId, 'کاربر در قرنطین�� است');
-        continue;
-      }
-      
-      // 🔥 قرنطینه خودکار کاربر جدید
-      try {
-        // بررسی وجود رکورد قبلی
-        const { data: existingRecord, error: checkError } = await supabase
-          .from('user_quarantine')
-          .select('user_id')
-          .eq('user_id', userId)
-          .single();
-
-        if (existingRecord) {
-          // به‌روزرسانی رکورد موجود
-          const { error: updateError } = await supabase
-            .from('user_quarantine')
-            .update({
-              chat_id: chatId,
-              is_quarantined: true,
-              username: newMember.username,
-              first_name: newMember.first_name,
-              last_name: newMember.last_name,
-              quarantine_start: new Date().toISOString(),
-              quarantine_end: null
-            })
-            .eq('user_id', userId);
-
-          if (updateError) {
-            console.error('Error updating quarantine status:', updateError);
-          }
-        } else {
-          // ایجاد رکورد جدید
-          const { error: insertError } = await supabase
-            .from('user_quarantine')
-            .insert({
-              user_id: userId,
-              chat_id: chatId,
-              is_quarantined: true,
-              username: newMember.username,
-              first_name: newMember.first_name,
-              last_name: newMember.last_name,
-              quarantine_start: new Date().toISOString(),
-              quarantine_end: null
-            });
-
-          if (insertError) {
-            console.error('Error inserting quarantine status:', insertError);
-          }
-        }
-
-        // پاکسازی کش
-        userCache.delete(`quarantine_${userId}`);
-        
-        // کیک کردن کاربر از تمام گروه‌های دیگر
-        await kickUserFromAllGroupsExceptCurrent(userId, chatId);
-        
-        console.log(`✅ کاربر ${userId} به طور خودکار قرنطینه شد`);
-        
-      } catch (error) {
-        console.error('Error in auto quarantine process:', error);
-      }
-    }
-  } catch (error) {
-    console.error('Error in new_chat_members handler:', error);
   }
 });
 
@@ -512,6 +505,7 @@ bot.start(async (ctx) => {
 #فعال - ثبت گروه در سیستم (فقط ادمین)
 /list_triggers - مشاهده لیست تریگرها
 /delete_trigger - حذف تریگر
+/group_status - بررسی وضعیت گروه
     `);
 
   } catch (err) {
@@ -729,6 +723,40 @@ bot.command('delete_trigger', async (ctx) => {
   } catch (error) {
     console.error('Error in /delete_trigger command:', error);
     ctx.reply('❌ خطایی در حذف تریگر رخ داد.');
+  }
+});
+
+// دستور برای بررسی وضعیت گروه
+bot.command('group_status', async (ctx) => {
+  try {
+    const chatId = ctx.chat.id;
+    
+    const [dbStatus, botStatus] = await Promise.all([
+      // بررسی وضعیت در دیتابیس
+      supabase
+        .from('groups')
+        .select('*')
+        .eq('chat_id', chatId)
+        .single(),
+      
+      // بررسی وضعیت واقعی از تلگرام
+      bot.telegram.getChatMember(chatId, bot.botInfo.id)
+    ]);
+
+    let message = `📊 وضعیت گروه ${ctx.chat.title || 'بدون نام'}:\n\n`;
+    
+    if (!dbStatus.error && dbStatus.data) {
+      message += `🗄️ وضعیت دیتابیس: ${dbStatus.data.is_bot_admin ? 'ادمین ✅' : 'غیر ادمین ❌'}\n`;
+    } else {
+      message += `🗄️ وضعیت دیتابیس: ثبت نشده ❌\n`;
+    }
+    
+    message += `🤖 وضعیت واقعی: ${['administrator', 'creator'].includes(botStatus.status) ? 'ادمین ✅' : 'غیر ادمین ❌'}\n`;
+    
+    await ctx.reply(message);
+  } catch (error) {
+    console.error('Error in group_status command:', error);
+    ctx.reply('❌ خطا در بررسی وضعیت گروه');
   }
 });
 
