@@ -19,7 +19,7 @@ async function isChatAdmin(chatId, userId) {
     const member = await bot.telegram.getChatMember(chatId, userId);
     return ['administrator', 'creator'].includes(member.status);
   } catch (error) {
-    console.error(error);
+    console.error('خطا در بررسی ادمین:', error);
     return false;
   }
 }
@@ -27,7 +27,7 @@ async function isChatAdmin(chatId, userId) {
 // تابع حذف کاربر از گروه (فقط حذف - بدون بن)
 async function removeUserFromChat(chatId, userId) {
   try {
-    // فقط کاربر را از گروه حذف می‌کند (بدون بن) [citation:5][citation:8]
+    // فقط کاربر را از گروه حذف می‌کند (بدون بن)
     await bot.telegram.kickChatMember(chatId, userId);
     return true;
   } catch (error) {
@@ -86,7 +86,7 @@ async function handleNewUser(ctx, user) {
       // کاربر جدید - قرنطینه اتوماتیک
       const { error } = await supabase
         .from('quarantine_users')
-        .insert({
+        .upsert({
           user_id: user.id,
           username: user.username,
           first_name: user.first_name,
@@ -94,10 +94,10 @@ async function handleNewUser(ctx, user) {
           current_chat_id: ctx.chat.id,
           created_at: now,
           updated_at: now
-        });
+        }, { onConflict: 'user_id' });
       
       if (error) {
-        console.error('خطا در ذخیره کاربر در قر��طینه:', error);
+        console.error('خطا در ذخیره کاربر در قرنطینه:', error);
         return;
       }
       
@@ -125,60 +125,59 @@ async function handleNewUser(ctx, user) {
 
 // مدیریت اضافه شدن ربات به گروه
 bot.on('new_chat_members', async (ctx) => {
-  const newMembers = ctx.message.new_chat_members;
-  
-  for (const member of newMembers) {
-    if (member.is_bot && member.username === ctx.botInfo.username) {
-      // ربات به گروه اضافه شده
-      if (!(await isChatAdmin(ctx.chat.id, ctx.message.from.id))) {
-        await ctx.leaveChat();
-        return;
-      }
-      
-      // ذخیره گروه در دیتابیس
-      const { error } = await supabase
-        .from('allowed_chats')
-        .upsert({
-          chat_id: ctx.chat.id,
-          chat_title: ctx.chat.title,
-          created_at: new Date().toISOString()
-        }, { onConflict: 'chat_id' });
+  try {
+    const newMembers = ctx.message.new_chat_members;
+    
+    for (const member of newMembers) {
+      if (member.is_bot && member.username === ctx.botInfo.username) {
+        // ربات به گروه اضافه شده
+        if (!(await isChatAdmin(ctx.chat.id, ctx.message.from.id))) {
+          await ctx.leaveChat();
+          return;
+        }
         
-    } else {
-      // کاربر عادی به گروه اضافه شده - قرنطینه اتوماتیک
-      await handleNewUser(ctx, member);
+        // ذخیره گروه در دیتابیس
+        const { error } = await supabase
+          .from('allowed_chats')
+          .upsert({
+            chat_id: ctx.chat.id,
+            chat_title: ctx.chat.title,
+            created_at: new Date().toISOString()
+          }, { onConflict: 'chat_id' });
+          
+      } else {
+        // کاربر عادی به گروه اضافه شده - قرنطینه اتوماتیک
+        await handleNewUser(ctx, member);
+      }
     }
+  } catch (error) {
+    console.error('خطا در پردازش عضو جدید:', error);
   }
 });
 
 // دستور #فعال برای ثبت گروه
 bot.hears('#فعال', async (ctx) => {
-  if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
-  
-  const { error } = await supabase
-    .from('allowed_chats')
-    .upsert({
-      chat_id: ctx.chat.id,
-      chat_title: ctx.chat.title,
-      created_at: new Date().toISOString()
-    }, { onConflict: 'chat_id' });
+  try {
+    if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
+    
+    const { error } = await supabase
+      .from('allowed_chats')
+      .upsert({
+        chat_id: ctx.chat.id,
+        chat_title: ctx.chat.title,
+        created_at: new Date().toISOString()
+      }, { onConflict: 'chat_id' });
+  } catch (error) {
+    console.error('خطا در دستور فعال:', error);
+  }
 });
 
-// دستور #خروج برای خروج از قرنطینه (در هر متنی که باشد)
+// دستور #خروج برای خروج از قرنطینه
 bot.on('text', async (ctx) => {
-  const messageText = ctx.message.text;
-  
-  if (messageText.includes('#خروج')) {
-    // بررسی آیا کاربر در قرنطینه است
-    const { data: user } = await supabase
-      .from('quarantine_users')
-      .select('*')
-      .eq('user_id', ctx.from.id)
-      .eq('is_quarantined', true)
-      .single();
+  try {
+    const messageText = ctx.message.text;
     
-    if (user) {
-      // حذف کاربر از قرنطینه
+    if (messageText && messageText.includes('#خروج')) {
       const { error } = await supabase
         .from('quarantine_users')
         .update({ 
@@ -192,27 +191,32 @@ bot.on('text', async (ctx) => {
         console.error('خطا در به‌روزرسانی وضعیت کاربر:', error);
       }
     }
+  } catch (error) {
+    console.error('خطا در پردازش دستور خروج:', error);
   }
 });
 
 // دستور #حذف برای ادمین‌ها (ریپلای روی کاربر)
 bot.on('message', async (ctx) => {
-  const messageText = ctx.message.text;
-  
-  if (messageText.includes('#حذف') && ctx.message.reply_to_message) {
-    if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
+  try {
+    const messageText = ctx.message.text;
     
-    const targetUser = ctx.message.reply_to_message.from;
-    
-    // حذف کاربر از قرنطینه
-    const { error } = await supabase
-      .from('quarantine_users')
-      .update({ 
-        is_quarantined: false,
-        current_chat_id: null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('user_id', targetUser.id);
+    if (messageText && messageText.includes('#حذف') && ctx.message.reply_to_message) {
+      if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
+      
+      const targetUser = ctx.message.reply_to_message.from;
+      
+      const { error } = await supabase
+        .from('quarantine_users')
+        .update({ 
+          is_quarantined: false,
+          current_chat_id: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', targetUser.id);
+    }
+  } catch (error) {
+    console.error('خطا در پردازش دستور حذف:', error);
   }
 });
 
@@ -227,3 +231,6 @@ app.post('/webhook', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// فعال سازی وب هوک (یک بار اجرا شود)
+// bot.telegram.setWebhook('https://your-render-url.onrender.com/webhook');
