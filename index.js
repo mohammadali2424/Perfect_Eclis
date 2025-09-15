@@ -26,9 +26,84 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
+// تابع کمکی برای Kick ساده (بدون بن موقت)
+async function kickUser(chatId, userId) {
+  try {
+    await bot.telegram.kickChatMember(chatId, userId);
+    return true;
+  } catch (error) {
+    console.error('خطا در کیک کاربر:', error);
+    return false;
+  }
+}
+
+// تابع بررسی ادمین بودن
+async function isChatAdmin(chatId, userId) {
+  try {
+    const member = await bot.telegram.getChatMember(chatId, userId);
+    return ['administrator', 'creator'].includes(member.status);
+  } catch (error) {
+    console.error(error);
+    return false;
+  }
+}
+
+// تابع پردازش کاربر جدید
+async function handleNewUser(ctx, user) {
+  const { data: userData } = await supabase
+    .from('users')
+    .select('*')
+    .eq('user_id', user.id)
+    .single();
+    
+  if (userData?.in_quarantine) {
+    try {
+      // کاربر را از تمام گروه‌های دیگر به جز گروه فعلی کیک کن
+      const { data: allChats } = await supabase
+        .from('allowed_chats')
+        .select('chat_id');
+        
+      if (allChats) {
+        for (const chat of allChats) {
+          if (chat.chat_id !== ctx.chat.id) {
+            try {
+              await kickUser(chat.chat_id, user.id);
+            } catch (error) {
+              console.error(`اخراج از گروه ${chat.chat_id} ناموفق بود:`, error);
+            }
+          }
+        }
+      }
+      
+      // پیام اطلاع‌رسانی
+      await ctx.reply(`کاربر ${user.first_name} به دلیل قرنطینه از سایر گروه‌ها اخراج شد.`);
+      
+      // به روز رسانی گروه فعلی کاربر
+      await supabase
+        .from('users')
+        .update({ current_chat: ctx.chat.id })
+        .eq('user_id', user.id);
+        
+    } catch (error) {
+      console.error('اخراج کاربر ناموفق بود:', error);
+    }
+  } else {
+    // کاربر جدید - اضافه کردن به دیتابیس
+    const { error } = await supabase
+      .from('users')
+      .upsert({
+        user_id: user.id,
+        username: user.username,
+        in_quarantine: true,
+        current_chat: ctx.chat.id
+      }, { onConflict: 'user_id' });
+      
+    if (error) console.error(error);
+  }
+}
+
 // دستور start
 bot.start(async (ctx) => {
-  // بررسی مالک بودن
   const { data: isOwner } = await supabase
     .from('allowed_owners')
     .select('*')
@@ -39,7 +114,6 @@ bot.start(async (ctx) => {
     return ctx.reply('شما مجاز به استفاده از این ربات نیستید.');
   }
 
-  // ذخیره کاربر
   const { error } = await supabase
     .from('users')
     .upsert({
@@ -73,15 +147,12 @@ bot.on('new_chat_members', async (ctx) => {
   const newMembers = ctx.message.new_chat_members;
   
   for (const member of newMembers) {
-    // اگر ربات باشد
     if (member.is_bot && member.username === ctx.botInfo.username) {
-      // بررسی ادمین بودن افزودن‌کننده
       if (!(await isChatAdmin(ctx.chat.id, ctx.message.from.id))) {
         await ctx.leaveChat();
         return;
       }
       
-      // ذخیره گروه
       const { error } = await supabase
         .from('allowed_chats')
         .upsert({
@@ -93,7 +164,6 @@ bot.on('new_chat_members', async (ctx) => {
       
       await ctx.reply('ربات با موفقیت فعال شد!');
     } else {
-      // اگر کاربر عادی باشد
       await handleNewUser(ctx, member);
     }
   }
@@ -101,12 +171,10 @@ bot.on('new_chat_members', async (ctx) => {
 
 // دستور #فعال
 bot.hears('#فعال', async (ctx) => {
-  // بررسی ادمین بودن
   if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) {
     return ctx.reply('فقط ادمین‌ها می‌توانند ربات را فعال کنند.');
   }
   
-  // ذخیره گروه
   const { error } = await supabase
     .from('allowed_chats')
     .upsert({
@@ -177,64 +245,6 @@ bot.hears('#خروج', async (ctx) => {
   
   ctx.reply('شما از قرنطینه خارج شدید.');
 });
-
-// تابع بررسی ادمین
-async function isChatAdmin(chatId, userId) {
-  try {
-    const member = await bot.telegram.getChatMember(chatId, userId);
-    return ['administrator', 'creator'].includes(member.status);
-  } catch (error) {
-    console.error(error);
-    return false;
-  }
-}
-
-// تابع پردازش کاربر جدید
-async function handleNewUser(ctx, user) {
-  // بررسی آیا کاربر در قرنطینه است
-  const { data: userData } = await supabase
-    .from('users')
-    .select('*')
-    .eq('user_id', user.id)
-    .single();
-    
-  if (userData?.in_quarantine) {
-    try {
-      await ctx.kickChatMember(user.id);
-      await ctx.reply(`کاربر ${user.first_name} به دلیل قرنطینه اخراج شد.`);
-      
-      // اخراج از گروه قبلی
-      if (userData.current_chat && userData.current_chat !== ctx.chat.id) {
-        try {
-          await bot.telegram.kickChatMember(userData.current_chat, user.id);
-        } catch (error) {
-          console.error('اخراج از گروه قبلی ناموفق بود:', error);
-        }
-      }
-      
-      // به روز رسانی گروه فعلی
-      await supabase
-        .from('users')
-        .update({ current_chat: ctx.chat.id })
-        .eq('user_id', user.id);
-        
-    } catch (error) {
-      console.error('اخراج کاربر ناموفق بود:', error);
-    }
-  } else {
-    // افزودن کاربر جدید به دیتابیس
-    const { error } = await supabase
-      .from('users')
-      .upsert({
-        user_id: user.id,
-        username: user.username,
-        in_quarantine: true,
-        current_chat: ctx.chat.id
-      }, { onConflict: 'user_id' });
-      
-    if (error) console.error(error);
-  }
-}
 
 // وب سرور برای Render
 app.use(express.json());
