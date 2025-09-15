@@ -13,30 +13,32 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // توکن ربات
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// middleware برای تشخیص کاربر
-bot.use(async (ctx, next) => {
-  if (ctx.from) {
-    const { data: user } = await supabase
-      .from('users')
-      .select('*')
-      .eq('user_id', ctx.from.id)
-      .single();
-    ctx.userData = user || null;
-  }
-  return next();
-});
-
-// تابع کمکی برای حذف کاربر از گروه (بدون بن)
-async function removeUserFromChat(chatId, userId) {
+// سیستم پاک‌سازی کاربران قدیمی (فقط کاربران غیرقرنطینه)
+async function cleanupOldUsers() {
   try {
-    // فقط کاربر را از گروه حذف می‌کند (بدون بن کردن)
-    await bot.telegram.unbanChatMember(chatId, userId);
-    return true;
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    
+    // پاک‌سازی کاربرانی که 3 روز از آخرین فعالیتشان گذشته و در قرنطینه نیستند
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .lt('updated_at', threeDaysAgo.toISOString())
+      .eq('in_quarantine', false);
+    
+    if (error) {
+      console.error('خطا در پاک‌سازی کاربران قدیمی:', error);
+    } else {
+      console.log('پاک‌سازی کاربران قدیمی انجام شد');
+    }
   } catch (error) {
-    console.error('خطا در حذف کاربر:', error);
-    return false;
+    console.error('خطا در پاک‌سازی:', error);
   }
 }
+
+// اجرای پاک‌سازی هر 24 ساعت
+setInterval(cleanupOldUsers, 24 * 60 * 60 * 1000);
+cleanupOldUsers(); // اجرای اولیه
 
 // تابع بررسی ادمین بودن
 async function isChatAdmin(chatId, userId) {
@@ -49,21 +51,78 @@ async function isChatAdmin(chatId, userId) {
   }
 }
 
-// تابع پردازش کاربر جدید
+// تابع حذف کاربر از گروه (فقط remove)
+async function removeUserFromChat(chatId, userId) {
+  try {
+    // فقط کاربر را از گروه حذف می‌کند (بدون بن)
+    await bot.telegram.kickChatMember(chatId, userId);
+    return true;
+  } catch (error) {
+    console.error('خطا در حذف کاربر از گروه:', error);
+    return false;
+  }
+}
+
+// تابع پردازش کاربر جدید (قرنطینه اتوماتیک)
 async function handleNewUser(ctx, user) {
-  const { data: userData } = await supabase
-    .from('users')
-    .select('*')
-    .eq('user_id', user.id)
-    .single();
+  try {
+    // بررسی آیا کاربر در قرنطینه است
+    const { data: userData } = await supabase
+      .from('users')
+      .select('*')
+      .eq('user_id', user.id)
+      .single();
     
-  if (userData?.in_quarantine) {
-    try {
-      // کاربر را از تمام گروه‌های دیگر به جز گروه فعلی حذف کن
+    const now = new Date().toISOString();
+    
+    if (userData?.in_quarantine) {
+      // کاربر در حال حاضر در قرنطینه است
+      if (userData.current_chat !== ctx.chat.id) {
+        // کاربر از گروه فعلی حذف شود
+        await removeUserFromChat(ctx.chat.id, user.id);
+      }
+      
+      // کاربر از تمام گروه‌های دیگر حذف شود
       const { data: allChats } = await supabase
         .from('allowed_chats')
         .select('chat_id');
-        
+      
+      if (allChats) {
+        for (const chat of allChats) {
+          if (chat.chat_id !== userData.current_chat) {
+            try {
+              await removeUserFromChat(chat.chat_id, user.id);
+            } catch (error) {
+              console.error(`حذف از گروه ${chat.chat_id} ناموفق بود:`, error);
+            }
+          }
+        }
+      }
+      
+    } else {
+      // کاربر جدید - قرنطینه اتوماتیک
+      const { error } = await supabase
+        .from('users')
+        .upsert({
+          user_id: user.id,
+          username: user.username,
+          first_name: user.first_name,
+          in_quarantine: true,
+          current_chat: ctx.chat.id,
+          created_at: now,
+          updated_at: now
+        }, { onConflict: 'user_id' });
+      
+      if (error) {
+        console.error('خطا در ذخیره کاربر:', error);
+        return;
+      }
+      
+      // کاربر از تمام گروه‌های دیگر حذف شود
+      const { data: allChats } = await supabase
+        .from('allowed_chats')
+        .select('chat_id');
+      
       if (allChats) {
         for (const chat of allChats) {
           if (chat.chat_id !== ctx.chat.id) {
@@ -75,32 +134,13 @@ async function handleNewUser(ctx, user) {
           }
         }
       }
-      
-      // به روز رسانی گروه فعلی کاربر
-      await supabase
-        .from('users')
-        .update({ current_chat: ctx.chat.id })
-        .eq('user_id', user.id);
-        
-    } catch (error) {
-      console.error('حذف کاربر ناموفق بود:', error);
     }
-  } else {
-    // کاربر جدید - اضافه کردن به دیتابیس
-    const { error } = await supabase
-      .from('users')
-      .upsert({
-        user_id: user.id,
-        username: user.username,
-        in_quarantine: true,
-        current_chat: ctx.chat.id
-      }, { onConflict: 'user_id' });
-      
-    if (error) console.error(error);
+  } catch (error) {
+    console.error('خطا در پردازش کاربر جدید:', error);
   }
 }
 
-// دستور start
+// دستور start فقط برای مالکین
 bot.start(async (ctx) => {
   const { data: isOwner } = await supabase
     .from('allowed_owners')
@@ -108,137 +148,85 @@ bot.start(async (ctx) => {
     .eq('owner_id', ctx.from.id)
     .single();
 
-  if (!isOwner) {
-    return;
-  }
-
-  const { error } = await supabase
-    .from('users')
-    .upsert({
-      user_id: ctx.from.id,
-      username: ctx.from.username,
-      in_quarantine: false,
-      current_chat: null
-    }, { onConflict: 'user_id' });
-
-  if (error) {
-    console.error(error);
-  }
+  if (!isOwner) return;
 });
 
-// مدیریت اضافه شدن به گروه
+// مدیریت اضافه شدن ربات به گروه
 bot.on('new_chat_members', async (ctx) => {
   const newMembers = ctx.message.new_chat_members;
   
   for (const member of newMembers) {
     if (member.is_bot && member.username === ctx.botInfo.username) {
+      // ربات به گروه اضافه شده
       if (!(await isChatAdmin(ctx.chat.id, ctx.message.from.id))) {
         await ctx.leaveChat();
         return;
       }
       
+      // ذخیره گروه در دیتابیس
       const { error } = await supabase
         .from('allowed_chats')
         .upsert({
           chat_id: ctx.chat.id,
-          chat_title: ctx.chat.title
+          chat_title: ctx.chat.title,
+          created_at: new Date().toISOString()
         }, { onConflict: 'chat_id' });
         
       if (error) console.error(error);
       
     } else {
+      // کاربر عادی به گروه اضافه شده - قرنطینه اتوماتیک
       await handleNewUser(ctx, member);
     }
   }
 });
 
-// دستور #فعال
+// دستور #فعال برای ثبت گروه
 bot.hears('#فعال', async (ctx) => {
-  if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) {
-    return;
-  }
+  if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
   
   const { error } = await supabase
     .from('allowed_chats')
     .upsert({
       chat_id: ctx.chat.id,
-      chat_title: ctx.chat.title
+      chat_title: ctx.chat.title,
+      created_at: new Date().toISOString()
     }, { onConflict: 'chat_id' });
     
-  if (error) {
-    console.error(error);
-  }
+  if (error) console.error(error);
 });
 
-// دستور #ورود
-bot.hears('#ورود', async (ctx) => {
-  if (!ctx.userData) {
-    const { error } = await supabase
-      .from('users')
-      .insert({
-        user_id: ctx.from.id,
-        username: ctx.from.username,
-        in_quarantine: true,
-        current_chat: ctx.chat.id
-      });
-      
-    if (error) {
-      console.error(error);
-    }
-  } else {
-    const { error } = await supabase
-      .from('users')
-      .update({ 
-        in_quarantine: true, 
-        current_chat: ctx.chat.id 
-      })
-      .eq('user_id', ctx.from.id);
-      
-    if (error) {
-      console.error(error);
-    }
-  }
-});
-
-// دستور #خروج
+// دستور #خروج برای خروج از قرنطینه
 bot.hears('#خروج', async (ctx) => {
-  if (!ctx.userData?.in_quarantine) {
-    return;
-  }
-  
   const { error } = await supabase
     .from('users')
     .update({ 
-      in_quarantine: false, 
-      current_chat: null 
+      in_quarantine: false,
+      current_chat: null,
+      updated_at: new Date().toISOString()
     })
     .eq('user_id', ctx.from.id);
     
-  if (error) {
-    console.error(error);
-  }
+  if (error) console.error(error);
 });
 
-// دستور #حذف (برای ادمین‌ها)
+// دستور #حذف برای ادمین‌ها (ریپلای روی کاربر)
 bot.on('message', async (ctx) => {
   if (ctx.message.text === '#حذف' && ctx.message.reply_to_message) {
-    if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) {
-      return;
-    }
+    if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
     
     const targetUser = ctx.message.reply_to_message.from;
     
     const { error } = await supabase
       .from('users')
       .update({ 
-        in_quarantine: false, 
-        current_chat: null 
+        in_quarantine: false,
+        current_chat: null,
+        updated_at: new Date().toISOString()
       })
       .eq('user_id', targetUser.id);
     
-    if (error) {
-      console.error(error);
-    }
+    if (error) console.error(error);
   }
 });
 
@@ -254,5 +242,5 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-// فعال سازی وب هوک (یک بار اجرا شود)
+// فعال سازی وب هوک
 // bot.telegram.setWebhook('https://your-render-url.onrender.com/webhook');
