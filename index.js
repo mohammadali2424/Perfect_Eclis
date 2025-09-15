@@ -13,33 +13,6 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // توکن ربات
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// سیستم پاک‌سازی کاربران قدیمی (فقط کاربران غیرقرنطینه)
-async function cleanupOldUsers() {
-  try {
-    const threeDaysAgo = new Date();
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-    
-    // پاک‌سازی کاربرانی که 3 روز از آخرین فعالیتشان گذشته و در قرنطینه نیستند
-    const { error } = await supabase
-      .from('users')
-      .delete()
-      .lt('updated_at', threeDaysAgo.toISOString())
-      .eq('in_quarantine', false);
-    
-    if (error) {
-      console.error('خطا در پاک‌سازی کاربران قدیمی:', error);
-    } else {
-      console.log('پاک‌سازی کاربران قدیمی انجام شد');
-    }
-  } catch (error) {
-    console.error('خطا در پاک‌سازی:', error);
-  }
-}
-
-// اجرای پاک‌سازی هر 24 ساعت
-setInterval(cleanupOldUsers, 24 * 60 * 60 * 1000);
-cleanupOldUsers(); // اجرای اولیه
-
 // تابع بررسی ادمین بودن
 async function isChatAdmin(chatId, userId) {
   try {
@@ -51,10 +24,10 @@ async function isChatAdmin(chatId, userId) {
   }
 }
 
-// تابع حذف کاربر از گروه (فقط remove - بدون بن)
+// تابع حذف کاربر از گروه (فقط حذف - بدون بن)
 async function removeUserFromChat(chatId, userId) {
   try {
-    // فقط کاربر را از گروه اخراج می‌کند (بدون بن)
+    // فقط کاربر را از گروه حذف می‌کند (بدون بن) [citation:5][citation:8]
     await bot.telegram.kickChatMember(chatId, userId);
     return true;
   } catch (error) {
@@ -63,21 +36,22 @@ async function removeUserFromChat(chatId, userId) {
   }
 }
 
-// تابع پردازش کاربر جدید (قرنطینه اتوم��تیک)
+// تابع پردازش کاربر جدید (قرنطینه اتوماتیک)
 async function handleNewUser(ctx, user) {
   try {
-    // بررسی آیا کاربر در قرنطینه است
-    const { data: userData } = await supabase
-      .from('users')
-      .select('*')
-      .eq('user_id', user.id)
-      .single();
-    
     const now = new Date().toISOString();
     
-    if (userData?.in_quarantine) {
-      // کاربر در حال حاضر در قرنطینه است
-      if (userData.current_chat !== ctx.chat.id) {
+    // بررسی آیا کاربر در حال حاضر در قرنطینه است
+    const { data: existingUser } = await supabase
+      .from('quarantine_users')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('is_quarantined', true)
+      .single();
+
+    if (existingUser) {
+      // کاربر از قبل در قرنطینه است
+      if (existingUser.current_chat_id !== ctx.chat.id) {
         // کاربر از گروه فعلی حذف شود
         await removeUserFromChat(ctx.chat.id, user.id);
       }
@@ -89,7 +63,7 @@ async function handleNewUser(ctx, user) {
       
       if (allChats) {
         for (const chat of allChats) {
-          if (chat.chat_id !== userData.current_chat) {
+          if (chat.chat_id !== existingUser.current_chat_id) {
             try {
               await removeUserFromChat(chat.chat_id, user.id);
             } catch (error) {
@@ -99,22 +73,31 @@ async function handleNewUser(ctx, user) {
         }
       }
       
+      // به روز رسانی گروه فعلی کاربر
+      await supabase
+        .from('quarantine_users')
+        .update({ 
+          current_chat_id: ctx.chat.id,
+          updated_at: now
+        })
+        .eq('user_id', user.id);
+        
     } else {
       // کاربر جدید - قرنطینه اتوماتیک
       const { error } = await supabase
-        .from('users')
-        .upsert({
+        .from('quarantine_users')
+        .insert({
           user_id: user.id,
           username: user.username,
           first_name: user.first_name,
-          in_quarantine: true,
-          current_chat: ctx.chat.id,
+          is_quarantined: true,
+          current_chat_id: ctx.chat.id,
           created_at: now,
           updated_at: now
-        }, { onConflict: 'user_id' });
+        });
       
       if (error) {
-        console.error('خطا در ذخیره کاربر:', error);
+        console.error('خطا در ذخیره کاربر در قر��طینه:', error);
         return;
       }
       
@@ -140,17 +123,6 @@ async function handleNewUser(ctx, user) {
   }
 }
 
-// دستور start فقط برای مالکین
-bot.start(async (ctx) => {
-  const { data: isOwner } = await supabase
-    .from('allowed_owners')
-    .select('*')
-    .eq('owner_id', ctx.from.id)
-    .single();
-
-  if (!isOwner) return;
-});
-
 // مدیریت اضافه شدن ربات به گروه
 bot.on('new_chat_members', async (ctx) => {
   const newMembers = ctx.message.new_chat_members;
@@ -172,8 +144,6 @@ bot.on('new_chat_members', async (ctx) => {
           created_at: new Date().toISOString()
         }, { onConflict: 'chat_id' });
         
-      if (error) console.error(error);
-      
     } else {
       // کاربر عادی به گروه اضافه شده - قرنطینه اتوماتیک
       await handleNewUser(ctx, member);
@@ -192,8 +162,6 @@ bot.hears('#فعال', async (ctx) => {
       chat_title: ctx.chat.title,
       created_at: new Date().toISOString()
     }, { onConflict: 'chat_id' });
-    
-  if (error) console.error(error);
 });
 
 // دستور #خروج برای خروج از قرنطینه (در هر متنی که باشد)
@@ -201,17 +169,28 @@ bot.on('text', async (ctx) => {
   const messageText = ctx.message.text;
   
   if (messageText.includes('#خروج')) {
-    const { error } = await supabase
-      .from('users')
-      .update({ 
-        in_quarantine: false,
-        current_chat: null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('user_id', ctx.from.id);
-      
-    if (error) {
-      console.error('خطا در به‌روزرسانی وضعیت کاربر:', error);
+    // بررسی آیا کاربر در قرنطینه است
+    const { data: user } = await supabase
+      .from('quarantine_users')
+      .select('*')
+      .eq('user_id', ctx.from.id)
+      .eq('is_quarantined', true)
+      .single();
+    
+    if (user) {
+      // حذف کاربر از قرنطینه
+      const { error } = await supabase
+        .from('quarantine_users')
+        .update({ 
+          is_quarantined: false,
+          current_chat_id: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', ctx.from.id);
+        
+      if (error) {
+        console.error('خطا در به‌روزرسانی وضعیت کاربر:', error);
+      }
     }
   }
 });
@@ -225,16 +204,15 @@ bot.on('message', async (ctx) => {
     
     const targetUser = ctx.message.reply_to_message.from;
     
+    // حذف کاربر از قرنطینه
     const { error } = await supabase
-      .from('users')
+      .from('quarantine_users')
       .update({ 
-        in_quarantine: false,
-        current_chat: null,
+        is_quarantined: false,
+        current_chat_id: null,
         updated_at: new Date().toISOString()
       })
       .eq('user_id', targetUser.id);
-    
-    if (error) console.error(error);
   }
 });
 
@@ -249,6 +227,3 @@ app.post('/webhook', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-// فعال سازی وب هوک
-// bot.telegram.setWebhook('https://your-render-url.onrender.com/webhook');
