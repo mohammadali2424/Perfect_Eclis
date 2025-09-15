@@ -51,10 +51,10 @@ async function isChatAdmin(chatId, userId) {
   }
 }
 
-// تابع حذف کاربر از گروه (فقط remove)
+// تابع حذف کاربر از گروه (فقط remove - بدون بن)
 async function removeUserFromChat(chatId, userId) {
   try {
-    // فقط کاربر را از گروه حذف می‌کند (بدون بن)
+    // فقط کاربر را از گروه اخراج می‌کند (بدون بن)
     await bot.telegram.kickChatMember(chatId, userId);
     return true;
   } catch (error) {
@@ -63,7 +63,7 @@ async function removeUserFromChat(chatId, userId) {
   }
 }
 
-// تابع پردازش کاربر جدید (قرنطینه اتوماتیک)
+// تابع پردازش کاربر جدید (قرنطینه اتوم��تیک)
 async function handleNewUser(ctx, user) {
   try {
     // بررسی آیا کاربر در قرنطینه است
@@ -196,23 +196,31 @@ bot.hears('#فعال', async (ctx) => {
   if (error) console.error(error);
 });
 
-// دستور #خروج برای خروج از قرنطینه
-bot.hears('#خروج', async (ctx) => {
-  const { error } = await supabase
-    .from('users')
-    .update({ 
-      in_quarantine: false,
-      current_chat: null,
-      updated_at: new Date().toISOString()
-    })
-    .eq('user_id', ctx.from.id);
-    
-  if (error) console.error(error);
+// دستور #خروج برای خروج از قرنطینه (در هر متنی که باشد)
+bot.on('text', async (ctx) => {
+  const messageText = ctx.message.text;
+  
+  if (messageText.includes('#خروج')) {
+    const { error } = await supabase
+      .from('users')
+      .update({ 
+        in_quarantine: false,
+        current_chat: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', ctx.from.id);
+      
+    if (error) {
+      console.error('خطا در به‌روزرسانی وضعیت کاربر:', error);
+    }
+  }
 });
 
 // دستور #حذف برای ادمین‌ها (ریپلای روی کاربر)
 bot.on('message', async (ctx) => {
-  if (ctx.message.text === '#حذف' && ctx.message.reply_to_message) {
+  const messageText = ctx.message.text;
+  
+  if (messageText.includes('#حذف') && ctx.message.reply_to_message) {
     if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
     
     const targetUser = ctx.message.reply_to_message.from;
