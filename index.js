@@ -66,7 +66,7 @@ async function handleNewUser(ctx, user) {
       .eq('is_quarantined', true)
       .single();
 
-    if (queryError && queryError.code !== 'PGRST116') { // PGRST116 یعنی رکوردی پیدا نشده
+    if (queryError && queryError.code !== 'PGRST116') {
       console.error('خطا در بررسی کاربر موجود:', queryError);
       return;
     }
@@ -76,7 +76,6 @@ async function handleNewUser(ctx, user) {
       if (existingUser.current_chat_id !== ctx.chat.id) {
         // کاربر از گروه فعلی حذف شود
         await removeUserFromChat(ctx.chat.id, user.id);
-        await ctx.reply(`کاربر @${user.username || user.first_name} از گروه حذف شد زیرا در قرنطینه است.`);
       }
       
       // کاربر از تمام گروه‌های دیگر حذف شود
@@ -154,8 +153,6 @@ async function handleNewUser(ctx, user) {
           }
         }
       }
-      
-      await ctx.reply(`کاربر @${user.username || user.first_name} به قرنطینه اضافه شد. برای خروج از قرنطینه #خروج را ارسال کنید.`);
     }
   } catch (error) {
     console.error('خطا در پردازش کاربر جدید:', error);
@@ -171,7 +168,6 @@ bot.on('new_chat_members', async (ctx) => {
       if (member.is_bot && member.username === ctx.botInfo.username) {
         // ربات به گروه اضافه شده
         if (!(await isChatAdmin(ctx.chat.id, ctx.message.from.id))) {
-          await ctx.reply('فقط ادمین‌ها می‌توانند ربات را اضافه کنند.');
           await ctx.leaveChat();
           return;
         }
@@ -184,13 +180,6 @@ bot.on('new_chat_members', async (ctx) => {
             chat_title: ctx.chat.title,
             created_at: new Date().toISOString()
           }, { onConflict: 'chat_id' });
-          
-        if (error) {
-          console.error('خطا در ذخیره گروه:', error);
-          await ctx.reply('خطا در ثبت گروه. لطفاً دوباره تلاش کنید.');
-        } else {
-          await ctx.reply('گروه با موفقیت ثبت شد و ربات آماده به کار است.');
-        }
           
       } else if (!member.is_bot) {
         // کاربر عادی به گروه اضافه شده - قرنطینه اتوماتیک
@@ -205,10 +194,7 @@ bot.on('new_chat_members', async (ctx) => {
 // دستور #فعال برای ثبت گروه
 bot.hears('#فعال', async (ctx) => {
   try {
-    if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) {
-      await ctx.reply('فقط ادمین‌ها می‌توانند از این دستور استفاده کنند.');
-      return;
-    }
+    if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
     
     const { error } = await supabase
       .from('allowed_chats')
@@ -217,16 +203,8 @@ bot.hears('#فعال', async (ctx) => {
         chat_title: ctx.chat.title,
         created_at: new Date().toISOString()
       }, { onConflict: 'chat_id' });
-    
-    if (error) {
-      console.error('خطا در دستور فعال:', error);
-      await ctx.reply('خطا در ثبت گروه. لطفاً دوباره تلاش کنید.');
-    } else {
-      await ctx.reply('گروه با موفقیت فعال شد.');
-    }
   } catch (error) {
     console.error('خطا در دستور فعال:', error);
-    await ctx.reply('خطا در پردازش دستور.');
   }
 });
 
@@ -247,16 +225,10 @@ bot.on('text', async (ctx) => {
         
       if (error) {
         console.error('خطا در به‌روزرسانی وضعیت کاربر:', error);
-        await ctx.reply('خطا در پردازش درخواست. لطفاً دوباره تلاش کنید.');
-      } else {
-        await ctx.reply('شما از قرنطینه خارج شدید. اکنون می‌توانید به گروه‌های دیگر بپیوندید.');
-        // حذف کاربر از گروه فعلی
-        await removeUserFromChat(ctx.chat.id, ctx.from.id);
       }
     }
   } catch (error) {
     console.error('خطا در پردازش دستور خروج:', error);
-    await ctx.reply('خطا در پردازش درخواست.');
   }
 });
 
@@ -266,10 +238,7 @@ bot.on('message', async (ctx) => {
     const messageText = ctx.message.text;
     
     if (messageText && messageText.includes('#حذف') && ctx.message.reply_to_message) {
-      if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) {
-        await ctx.reply('فقط ادمین‌ها می‌توانند از این دستور استفاده کنند.');
-        return;
-      }
+      if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
       
       const targetUser = ctx.message.reply_to_message.from;
       
@@ -281,40 +250,9 @@ bot.on('message', async (ctx) => {
           updated_at: new Date().toISOString()
         })
         .eq('user_id', targetUser.id);
-        
-      if (error) {
-        console.error('خطا در به‌روزرسانی وضعیت کاربر:', error);
-        await ctx.reply('خطا در پردازش درخواست. لطفاً دوباره تلاش کنید.');
-      } else {
-        await ctx.reply(`کاربر @${targetUser.username || targetUser.first_name} از قرنطینه خارج شد.`);
-        // حذف کاربر از گروه فعلی
-        await removeUserFromChat(ctx.chat.id, targetUser.id);
-      }
     }
   } catch (error) {
     console.error('خطا در پردازش دستور حذف:', error);
-    await ctx.reply('خطا در پردازش درخواست.');
-  }
-});
-
-// دستور #وضعیت برای بررسی وضعیت کاربر
-bot.hears('#وضعیت', async (ctx) => {
-  try {
-    const { data: user, error } = await supabase
-      .from('quarantine_users')
-      .select('*')
-      .eq('user_id', ctx.from.id)
-      .single();
-    
-    if (error || !user) {
-      await ctx.reply('شما در قرنطینه نیستید.');
-    } else {
-      const status = user.is_quarantined ? 'در قرنطینه' : 'آزاد';
-      await ctx.reply(`وضعیت شما: ${status}`);
-    }
-  } catch (error) {
-    console.error('خطا در بررسی وضعیت:', error);
-    await ctx.reply('خطا در بررسی وضعیت.');
   }
 });
 
