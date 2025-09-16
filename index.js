@@ -24,6 +24,22 @@ async function isChatAdmin(chatId, userId) {
   }
 }
 
+// تابع بررسی مالک بودن
+async function isOwner(userId) {
+  try {
+    const { data, error } = await supabase
+      .from('allowed_owners')
+      .select('owner_id')
+      .eq('owner_id', userId)
+      .single();
+    
+    return data !== null;
+  } catch (error) {
+    console.error('خطا در بررسی مالک:', error);
+    return false;
+  }
+}
+
 // تابع بررسی اینکه آیا ربات ادمین است
 async function isBotAdmin(chatId) {
   try {
@@ -159,6 +175,11 @@ async function handleNewUser(ctx, user) {
   }
 }
 
+// دستور /start
+bot.start((ctx) => {
+  ctx.reply('ناظر اکلیس در خدمت شماست 🥷🏻');
+});
+
 // مدیریت اضافه شدن ربات به گروه
 bot.on('new_chat_members', async (ctx) => {
   try {
@@ -203,8 +224,26 @@ bot.hears('#فعال', async (ctx) => {
         chat_title: ctx.chat.title,
         created_at: new Date().toISOString()
       }, { onConflict: 'chat_id' });
+    
+    ctx.reply('منطقه فعال شد ✅');
   } catch (error) {
     console.error('خطا در دستور فعال:', error);
+  }
+});
+
+// دستور #غیرفعال برای حذف گروه
+bot.hears('#غیرفعال', async (ctx) => {
+  try {
+    if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
+    
+    const { error } = await supabase
+      .from('allowed_chats')
+      .delete()
+      .eq('chat_id', ctx.chat.id);
+    
+    ctx.reply('منطقه غیرفعال شد ❌');
+  } catch (error) {
+    console.error('خطا در دستور غیرفعال:', error);
   }
 });
 
@@ -222,10 +261,6 @@ bot.on('text', async (ctx) => {
           updated_at: new Date().toISOString()
         })
         .eq('user_id', ctx.from.id);
-        
-      if (error) {
-        console.error('خطا در به‌روزرسانی وضعیت کاربر:', error);
-      }
     }
   } catch (error) {
     console.error('خطا در پردازش دستور خروج:', error);
@@ -253,6 +288,31 @@ bot.on('message', async (ctx) => {
     }
   } catch (error) {
     console.error('خطا در پردازش دستور حذف:', error);
+  }
+});
+
+// دستور #حذف برای مالک‌ها (با آیدی کاربر)
+bot.on('text', async (ctx) => {
+  try {
+    const messageText = ctx.message.text;
+    
+    // بررسی آیا پیام با #حذف شروع می‌شود و بعد از آن یک عدد (آیدی) وجود دارد
+    const match = messageText.match(/^#حذف\s+(\d+)$/);
+    
+    if (match && (await isOwner(ctx.from.id))) {
+      const targetUserId = match[1];
+      
+      const { error } = await supabase
+        .from('quarantine_users')
+        .update({ 
+          is_quarantined: false,
+          current_chat_id: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', targetUserId);
+    }
+  } catch (error) {
+    console.error('خطا در پردازش دستور حذف با آیدی:', error);
   }
 });
 
