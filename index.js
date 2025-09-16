@@ -69,6 +69,35 @@ async function removeUserFromChat(chatId, userId) {
   }
 }
 
+// تابع بررسی و حذف کاربر از تمام گروه‌های دیگر
+async function removeUserFromAllOtherChats(currentChatId, userId) {
+  try {
+    // دریافت تمام گروه‌های مجاز
+    const { data: allChats, error: chatsError } = await supabase
+      .from('allowed_chats')
+      .select('chat_id');
+    
+    if (chatsError) {
+      console.error('خطا در دریافت گروه‌ها:', chatsError);
+      return;
+    }
+    
+    if (allChats) {
+      for (const chat of allChats) {
+        if (chat.chat_id !== currentChatId) {
+          try {
+            await removeUserFromChat(chat.chat_id, userId);
+          } catch (error) {
+            console.error(`حذف از گروه ${chat.chat_id} ناموفق بود:`, error);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('خطا در حذف کاربر از گروه‌های دیگر:', error);
+  }
+}
+
 // تابع پردازش کاربر جدید (قرنطینه اتوماتیک)
 async function handleNewUser(ctx, user) {
   try {
@@ -95,26 +124,7 @@ async function handleNewUser(ctx, user) {
       }
       
       // کاربر از تمام گروه‌های دیگر حذف شود
-      const { data: allChats, error: chatsError } = await supabase
-        .from('allowed_chats')
-        .select('chat_id');
-      
-      if (chatsError) {
-        console.error('خطا در دریافت گروه‌ها:', chatsError);
-        return;
-      }
-      
-      if (allChats) {
-        for (const chat of allChats) {
-          if (chat.chat_id !== existingUser.current_chat_id) {
-            try {
-              await removeUserFromChat(chat.chat_id, user.id);
-            } catch (error) {
-              console.error(`حذف از گروه ${chat.chat_id} ناموفق بود:`, error);
-            }
-          }
-        }
-      }
+      await removeUserFromAllOtherChats(existingUser.current_chat_id, user.id);
       
       // به روز رسانی گروه فعلی کاربر
       const { error: updateError } = await supabase
@@ -149,26 +159,7 @@ async function handleNewUser(ctx, user) {
       }
       
       // کاربر از تمام گروه‌های دیگر حذف شود
-      const { data: allChats, error: chatsError } = await supabase
-        .from('allowed_chats')
-        .select('chat_id');
-      
-      if (chatsError) {
-        console.error('خطا در دریافت گروه‌ها:', chatsError);
-        return;
-      }
-      
-      if (allChats) {
-        for (const chat of allChats) {
-          if (chat.chat_id !== ctx.chat.id) {
-            try {
-              await removeUserFromChat(chat.chat_id, user.id);
-            } catch (error) {
-              console.error(`حذف از گروه ${chat.chat_id} ناموفق بود:`, error);
-            }
-          }
-        }
-      }
+      await removeUserFromAllOtherChats(ctx.chat.id, user.id);
     }
   } catch (error) {
     console.error('خطا در پردازش کاربر جدید:', error);
