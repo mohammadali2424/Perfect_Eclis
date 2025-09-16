@@ -1,6 +1,7 @@
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 const express = require('express');
+const cron = require('node-cron');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,6 +13,9 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 // توکن ربات
 const bot = new Telegraf(process.env.BOT_TOKEN);
+
+// آیدی مالک برای ارسال گزارش‌ها
+const OWNER_ID = process.env.OWNER_ID;
 
 // ================= توابع کمکی =================
 
@@ -39,10 +43,10 @@ async function isChatAdmin(chatId, userId) {
  */
 async function removeUserFromChat(chatId, userId) {
   try {
-    // ابتدا کاربر رو از گروه حذف می‌کنیم
+    // ابتدا کاربر را از گروه حذف می‌کنیم
     await bot.telegram.kickChatMember(chatId, userId);
     
-    // سپس کاربر رو آنبن می‌کنیم تا بتواند در آینده再加入 شود
+    // سپس کاربر را آنبن می‌کنیم تا بتواند در آینده再加入 شود
     setTimeout(async () => {
       try {
         await bot.telegram.unbanChatMember(chatId, userId);
@@ -75,6 +79,26 @@ async function isUserQuarantined(userId) {
   } catch (error) {
     console.error('خطا در بررسی وضعیت قرنطینه:', error);
     return false;
+  }
+}
+
+/**
+ * دریافت اطلاعات کاربر از جدول قرنطینه
+ * @param {number} userId - آیدی کاربر
+ * @returns {Object} - اطلاعات کاربر
+ */
+async function getQuarantineUser(userId) {
+  try {
+    const { data, error } = await supabase
+      .from('quarantine_users')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    return data;
+  } catch (error) {
+    console.error('خطا در دریافت اطلاعات کاربر:', error);
+    return null;
   }
 }
 
@@ -162,6 +186,59 @@ async function removeUserFromOtherChats(userId, currentChatId) {
   }
 }
 
+/**
+ * بررسی کاربرانی که بیش از ۳ روز در یک گروه هستند و حذف آنها از قرنطینه
+ * همچنین ارسال گزارش به مالک
+ */
+async function checkLongTermUsers() {
+  try {
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+
+    // یافتن کاربرانی که بیش از ۳ روز در قرنطینه هستند
+    const { data: longTermUsers, error } = await supabase
+      .from('quarantine_users')
+      .select('*')
+      .eq('is_quarantined', true)
+      .lt('updated_at', threeDaysAgo.toISOString());
+
+    if (error) {
+      console.error('خطا در دریافت کاربران قدیمی:', error);
+      return;
+    }
+
+    if (longTermUsers.length === 0) {
+      return;
+    }
+
+    let reportMessage = "کاربران حذف شده از قرنطینه پس از ۳ روز:\n";
+    for (const user of longTermUsers) {
+      // حذف کاربر از قرنطینه
+      await removeUserFromQuarantine(user.user_id);
+
+      // افزودن به گزارش
+      reportMessage += `کاربر: ${user.first_name} (آیدی: ${user.user_id}) از گروه: ${user.current_chat_id}\n`;
+    }
+
+    // ارسال گزارش به مالک
+    if (OWNER_ID) {
+      try {
+        await bot.telegram.sendMessage(OWNER_ID, reportMessage);
+      } catch (sendError) {
+        console.error('خطا در ارسال گزارش به مالک:', sendError);
+      }
+    }
+  } catch (error) {
+    console.error('خطا در بررسی کاربران قدیمی:', error);
+  }
+}
+
+// زمان‌بندی بر��سی روزانه کاربران قدیمی
+cron.schedule('0 0 * * *', () => {
+  console.log('بررسی کاربران قدیمی...');
+  checkLongTermUsers();
+});
+
 // ================= مدیریت رویدادها =================
 
 // مدیریت اضافه شدن ربات به گروه
@@ -195,15 +272,10 @@ bot.on('new_chat_members', async (ctx) => {
         
         if (isQuarantined) {
           // کاربر در قرنطینه است - حذف از گروه فعلی اگر گروه مجاز نیست
-          const { data: userData } = await supabase
-            .from('quarantine_users')
-            .select('current_chat_id')
-            .eq('user_id', member.id)
-            .single();
-            
+          const userData = await getQuarantineUser(member.id);
+          
           if (userData && userData.current_chat_id !== ctx.chat.id) {
             await removeUserFromChat(ctx.chat.id, member.id);
-            await removeUserFromOtherChats(member.id, userData.current_chat_id);
           }
         } else {
           // کاربر جدید - افزودن به قرنطینه
