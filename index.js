@@ -1,7 +1,6 @@
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 const express = require('express');
-const cron = require('node-cron');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,13 +16,46 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 // آیدی مالک برای ارسال گزارش‌ها
 const OWNER_ID = process.env.OWNER_ID;
 
+// کش برای ذخیره گروه‌های مجاز (برای کاهش درخواست به دیتابیس)
+let allowedChatsCache = [];
+let cacheLastUpdated = null;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 دقیقه
+
 // ================= توابع کمکی =================
 
 /**
+ * دریافت گروه‌های مجاز از کش یا دیتابیس
+ */
+async function getAllowedChats() {
+  const now = Date.now();
+  
+  // اگر کش معتبر است، از کش استفاده کن
+  if (cacheLastUpdated && (now - cacheLastUpdated) < CACHE_DURATION) {
+    return allowedChatsCache;
+  }
+  
+  // در غیر این صورت از دیتابیس بگیر و کش را بروز کن
+  try {
+    const { data, error } = await supabase
+      .from('allowed_chats')
+      .select('chat_id');
+    
+    if (error) {
+      console.error('خطا در دریافت گروه‌های مجاز:', error);
+      return allowedChatsCache; // بازگشت کش قدیمی در صورت خطا
+    }
+    
+    allowedChatsCache = data.map(chat => chat.chat_id);
+    cacheLastUpdated = now;
+    return allowedChatsCache;
+  } catch (error) {
+    console.error('خطا در دریافت گروه‌های مجاز:', error);
+    return allowedChatsCache; // بازگشت کش قدیمی در صورت خطا
+  }
+}
+
+/**
  * بررسی آیا کاربر ادمین گروه هست یا نه
- * @param {number} chatId - آیدی گروه
- * @param {number} userId - آیدی کاربر
- * @returns {boolean} - true اگر ادمین باشد
  */
 async function isChatAdmin(chatId, userId) {
   try {
@@ -36,25 +68,16 @@ async function isChatAdmin(chatId, userId) {
 }
 
 /**
- * حذف کاربر از گروه (بدون بن کردن)
- * @param {number} chatId - آیدی گروه
- * @param {number} userId - آیدی کاربر
- * @returns {boolean} - true اگر موفقیت‌آمیز باشد
+ * حذف کاربر از گروه (بدون بن کردن) - بهینه‌شده
  */
 async function removeUserFromChat(chatId, userId) {
   try {
-    // ابتدا کاربر را از گروه حذف می‌کنیم
-    await bot.telegram.kickChatMember(chatId, userId);
+    // استفاده از kickChatMember با زمان بسیار کوتاه (1 ثانیه)
+    await bot.telegram.kickChatMember(chatId, userId, { 
+      until_date: Math.floor(Date.now() / 1000) + 1 // فقط 1 ثانیه
+    });
     
-    // سپس کاربر را آنبن می‌کنیم تا بتواند در آینده再加入 شود
-    setTimeout(async () => {
-      try {
-        await bot.telegram.unbanChatMember(chatId, userId);
-      } catch (unbanError) {
-        console.error('خطا در آنبن کردن کاربر:', unbanError);
-      }
-    }, 1000);
-    
+    console.log(`کاربر ${userId} از گروه ${chatId} حذف شد`);
     return true;
   } catch (error) {
     console.error('خطا در حذف کاربر از گروه:', error);
@@ -64,48 +87,24 @@ async function removeUserFromChat(chatId, userId) {
 
 /**
  * بررسی آیا کاربر در قرنطینه هست یا نه
- * @param {number} userId - آیدی کاربر
- * @returns {boolean} - true اگر در قرنطینه باشد
  */
 async function isUserQuarantined(userId) {
   try {
     const { data, error } = await supabase
       .from('quarantine_users')
-      .select('is_quarantined')
+      .select('is_quarantined, current_chat_id')
       .eq('user_id', userId)
       .single();
 
-    return data ? data.is_quarantined : false;
+    return data ? { isQuarantined: data.is_quarantined, currentChatId: data.current_chat_id } : { isQuarantined: false, currentChatId: null };
   } catch (error) {
     console.error('خطا در بررسی وضعیت قرنطینه:', error);
-    return false;
-  }
-}
-
-/**
- * دریافت اطلاعات کاربر از جدول قرنطینه
- * @param {number} userId - آیدی کاربر
- * @returns {Object} - اطلاعات کاربر
- */
-async function getQuarantineUser(userId) {
-  try {
-    const { data, error } = await supabase
-      .from('quarantine_users')
-      .select('*')
-      .eq('user_id', userId)
-      .single();
-
-    return data;
-  } catch (error) {
-    console.error('خطا در دریافت اطلاعات کاربر:', error);
-    return null;
+    return { isQuarantined: false, currentChatId: null };
   }
 }
 
 /**
  * اضافه کردن کاربر به قرنطینه
- * @param {Object} user - اطلاعات کاربر
- * @param {number} chatId - آیدی گروه فعلی
  */
 async function addUserToQuarantine(user, chatId) {
   try {
@@ -125,15 +124,18 @@ async function addUserToQuarantine(user, chatId) {
 
     if (error) {
       console.error('خطا در ذخیره کاربر در قرنطینه:', error);
+      return false;
     }
+    
+    return true;
   } catch (error) {
     console.error('خطا در افزودن کاربر به قرنطینه:', error);
+    return false;
   }
 }
 
 /**
  * حذف کاربر از قرنطینه
- * @param {number} userId - آیدی کاربر
  */
 async function removeUserFromQuarantine(userId) {
   try {
@@ -148,47 +150,44 @@ async function removeUserFromQuarantine(userId) {
 
     if (error) {
       console.error('خطا در به‌روزرسانی وضعیت کاربر:', error);
+      return false;
     }
+    
+    return true;
   } catch (error) {
     console.error('خطا در حذف کاربر از قرنطینه:', error);
+    return false;
   }
 }
 
 /**
- * حذف کاربر از تمام گروه‌ها به جز گروه فعلی
- * @param {number} userId - آیدی کاربر
- * @param {number} currentChatId - آیدی گروه فعلی
+ * حذف کاربر از تمام گروه‌ها به جز گروه فعلی - بهینه‌شده
  */
 async function removeUserFromOtherChats(userId, currentChatId) {
   try {
-    // دریافت تمام گروه‌های مجاز
-    const { data: allChats, error } = await supabase
-      .from('allowed_chats')
-      .select('chat_id');
-
-    if (error) {
-      console.error('خطا در دریافت گروه‌های مجاز:', error);
-      return;
-    }
-
+    // دریافت گروه‌های مجاز از کش
+    const allowedChats = await getAllowedChats();
+    
     // حذف کاربر از تمام گروه‌ها به جز گروه فعلی
-    for (const chat of allChats) {
-      if (chat.chat_id !== currentChatId) {
-        try {
-          await removeUserFromChat(chat.chat_id, userId);
-        } catch (error) {
-          console.error(`حذف از گروه ${chat.chat_id} ناموفق بود:`, error);
-        }
-      }
-    }
+    const removalPromises = allowedChats
+      .filter(chatId => chatId !== currentChatId)
+      .map(chatId => removeUserFromChat(chatId, userId).catch(error => {
+        console.error(`حذف از گروه ${chatId} ناموفق بود:`, error);
+        return false;
+      }));
+    
+    // اجرای همزمان حذف کاربران
+    await Promise.all(removalPromises);
+    
+    return true;
   } catch (error) {
     console.error('خطا در حذف کاربر از گروه‌های دیگر:', error);
+    return false;
   }
 }
 
 /**
  * بررسی کاربرانی که بیش از ۳ روز در یک گروه هستند و حذف آنها از قرنطینه
- * همچنین ارسال گزارش به مالک
  */
 async function checkLongTermUsers() {
   try {
@@ -207,7 +206,7 @@ async function checkLongTermUsers() {
       return;
     }
 
-    if (longTermUsers.length === 0) {
+    if (!longTermUsers || longTermUsers.length === 0) {
       return;
     }
 
@@ -233,11 +232,16 @@ async function checkLongTermUsers() {
   }
 }
 
-// زمان‌بندی بر��سی روزانه کاربران قدیمی
-cron.schedule('0 0 * * *', () => {
+// زمان‌بندی بررسی روزانه کاربران قدیمی (هر 24 ساعت)
+setInterval(() => {
   console.log('بررسی کاربران قدیمی...');
   checkLongTermUsers();
-});
+}, 24 * 60 * 60 * 1000); // هر 24 ساعت
+
+// همچنین یک بار در ابتدا اجرا شود
+setTimeout(() => {
+  checkLongTermUsers();
+}, 10000); // 10 ثانیه پس از راه‌اندازی
 
 // ================= مدیریت رویدادها =================
 
@@ -254,7 +258,7 @@ bot.on('new_chat_members', async (ctx) => {
           return;
         }
         
-        // ذخیره گروه در دیتابیس
+        // ذخیره گروه در دیتابیس و بروزرسانی کش
         const { error } = await supabase
           .from('allowed_chats')
           .upsert({
@@ -262,36 +266,46 @@ bot.on('new_chat_members', async (ctx) => {
             chat_title: ctx.chat.title,
             created_at: new Date().toISOString()
           }, { onConflict: 'chat_id' });
+        
+        // بروزرسانی کش
+        cacheLastUpdated = null;
+        await getAllowedChats();
           
         if (!error) {
           await ctx.reply('ربات با موفقیت فعال شد! این گروه اکنون تحت نظارت قرنطینه است.');
         }
       } else {
         // کاربر عادی به گروه اضافه شده
-        const isQuarantined = await isUserQuarantined(member.id);
+        const quarantineStatus = await isUserQuarantined(member.id);
         
-        if (isQuarantined) {
+        if (quarantineStatus.isQuarantined) {
           // کاربر در قرنطینه است - حذف از گروه فعلی اگر گروه مجاز نیست
-          const userData = await getQuarantineUser(member.id);
-          
-          if (userData && userData.current_chat_id !== ctx.chat.id) {
+          if (quarantineStatus.currentChatId !== ctx.chat.id) {
             await removeUserFromChat(ctx.chat.id, member.id);
           }
         } else {
           // کاربر جدید - افزودن به قرنطینه
-          await addUserToQuarantine(member, ctx.chat.id);
-          await removeUserFromOtherChats(member.id, ctx.chat.id);
+          const added = await addUserToQuarantine(member, ctx.chat.id);
           
-          // ارسال پیام خوشامدگویی و راهنما
-          try {
-            await ctx.reply(
-              `کاربر ${member.first_name} به گروه خوش آمدید!\n` +
-              'شما در حال حاضر در حالت قرنطینه قرار دارید.\n' +
-              'برای خروج از قرنطینه و آزاد شدن در تمام گروه‌ها از دستور #خروج استفاده کنید.',
-              { reply_to_message_id: ctx.message.message_id }
-            );
-          } catch (messageError) {
-            console.error('خطا در ارسال پیام خوشامدگویی:', messageError);
+          if (added) {
+            // حذف از سایر گروه‌ها (به صورت غیرهمزمان)
+            removeUserFromOtherChats(member.id, ctx.chat.id).then(() => {
+              console.log(`کاربر ${member.id} از سایر گروه‌ها حذف شد`);
+            }).catch(error => {
+              console.error('خطا در حذف کاربر از سایر گروه‌ها:', error);
+            });
+            
+            // ارسال پیام خوشامدگویی و راهنما
+            try {
+              await ctx.reply(
+                `کاربر ${member.first_name} به گروه خوش آمدید!\n` +
+                'شما در حال حاضر در حالت قرنطینه قرار دارید.\n' +
+                'برای خروج از قرنطینه و آزاد شدن در تمام گروه‌ها از دستور #خروج استفاده کنید.',
+                { reply_to_message_id: ctx.message.message_id }
+              );
+            } catch (messageError) {
+              console.error('خطا در ارسال پیام خوشامدگویی:', messageError);
+            }
           }
         }
       }
@@ -317,6 +331,10 @@ bot.hears('#فعال', async (ctx) => {
         created_at: new Date().toISOString()
       }, { onConflict: 'chat_id' });
     
+    // بروزرسانی کش
+    cacheLastUpdated = null;
+    await getAllowedChats();
+    
     if (error) {
       await ctx.reply('خطا در فعال کردن ربات در این گروه.');
       console.error('خطا در دستور فعال:', error);
@@ -331,8 +349,13 @@ bot.hears('#فعال', async (ctx) => {
 // دستور #خروج برای خروج از قرنطینه
 bot.hears('#خروج', async (ctx) => {
   try {
-    await removeUserFromQuarantine(ctx.from.id);
-    await ctx.reply('شما از قرنطینه خارج شدید. اکنون می‌توانید به تمام گروه‌ها ملحق شوید.');
+    const removed = await removeUserFromQuarantine(ctx.from.id);
+    
+    if (removed) {
+      await ctx.reply('شما از قرنطینه خارج شدید. اکنون می‌توانید به تمام گروه‌ها ملحق شوید.');
+    } else {
+      await ctx.reply('خطایی در خروج از قرنطینه رخ داده است.');
+    }
   } catch (error) {
     console.error('خطا در پردازش دستور خروج:', error);
   }
@@ -352,8 +375,13 @@ bot.hears('#حذف', async (ctx) => {
     }
     
     const targetUser = ctx.message.reply_to_message.from;
-    await removeUserFromQuarantine(targetUser.id);
-    await ctx.reply(`کاربر ${targetUser.first_name} از قرنطینه خارج شد.`);
+    const removed = await removeUserFromQuarantine(targetUser.id);
+    
+    if (removed) {
+      await ctx.reply(`کاربر ${targetUser.first_name} از قرنطینه خارج شد.`);
+    } else {
+      await ctx.reply('خطایی در حذف کاربر از قرنطینه رخ داده است.');
+    }
   } catch (error) {
     console.error('خطا در پردازش دستور حذف:', error);
   }
@@ -362,9 +390,9 @@ bot.hears('#حذف', async (ctx) => {
 // دستور #وضعیت برای بررسی وضعیت کاربر
 bot.hears('#وضعیت', async (ctx) => {
   try {
-    const isQuarantined = await isUserQuarantined(ctx.from.id);
+    const quarantineStatus = await isUserQuarantined(ctx.from.id);
     
-    if (isQuarantined) {
+    if (quarantineStatus.isQuarantined) {
       await ctx.reply('شما در حال حاضر در قرنطینه هستید.');
     } else {
       await ctx.reply('شما در قرنطینه نیستید و می‌توانید آزادانه به گروه‌ها ملحق شوید.');
