@@ -577,3 +577,4 @@ cron.schedule('0 */6 * * *', () => {
 
 // فعال سازی وب هوک (یک بار اجرا شود)
 // bot.telegram.setWebhook('https://your-render-url.onrender.com/webhook');
+
