@@ -173,7 +173,7 @@ async function removeUserFromAllOtherChats(currentChatId, userId) {
             logger.info(`تلاش برای حذف کاربر از گروه ${chat.chat_id}`);
             await removeUserFromChat(chat.chat_id, userId);
           } catch (error) {
-            logger.error(`حذف از گروه ${chat.chat_id} نامو��ق بود:`, error);
+            logger.error(`حذف از گروه ${chat.chat_id} ناموفق بود:`, error);
           }
         }
       }
@@ -392,34 +392,6 @@ bot.hears('#غیرفعال', async (ctx) => {
   }
 });
 
-// دستور #ورود - نمایش پیام تاخیری مربوط به تریگر
-bot.hears('#ورود', async (ctx) => {
-  try {
-    // دریافت پیام تاخیری از دیتابیس (به جای پیام ثابت)
-    const { data: triggerMessage, error } = await supabase
-      .from('trigger_messages')
-      .select('message_text')
-      .eq('trigger_type', 'ورود')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    let messageToSend = "پیام پیش فرض برای ورود"; // پیام پیش فرض
-    
-    if (!error && triggerMessage) {
-      messageToSend = triggerMessage.message_text;
-    }
-
-    // ارسال پیام تاخیری به کاربر
-    ctx.reply(messageToSend);
-    await logAction('user_entered', ctx.from.id, ctx.chat.id, {
-      message_sent: messageToSend
-    });
-  } catch (error) {
-    logger.error('خطا در پردازش دستور ورود:', error);
-  }
-});
-
 // دستور #لیست - فقط برای ربات مجاز
 bot.on('text', async (ctx) => {
   try {
@@ -458,9 +430,10 @@ bot.on('text', async (ctx) => {
         }
       }
     } else if (isListCommand && !isFromAllowedBot) {
-      // اگر کاربر عادی سعی در استفاده از #لیست دارد
+      // اگر کاربر عادی سعی در استفاده از #لیست دارد - فقط پیام بده و هیچ کاری نکن
       logger.warn(`کاربر ${ctx.from.id} سعی در استفاده از دستور #لیست بدون مجوز دارد`);
       ctx.reply('شما مجوز استفاده از این دستور را ندارید.');
+      // اینجا هیچ عملی برای خارج کردن کاربر از قرنطینه انجام نمی‌شود
     }
   } catch (error) {
     logger.error('خطا در پردازش دستور لیست:', error);
@@ -565,7 +538,6 @@ bot.hears('#راهنما', (ctx) => {
 
 #فعال - فعال کردن ربات در گروه
 #غیرفعال - غیرفعال کردن ربات در گروه
-#ورود - دریافت پیام تاخیری (برای کاربران)
 #حذف (ریپلای) - حذف کاربر از قرنطینه (ادمین‌ها)
 #وضعیت - مشاهده آمار ربات (فقط مالک)
 #راهنما - نمایش این راهنما
