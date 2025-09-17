@@ -397,43 +397,46 @@ bot.on('text', async (ctx) => {
   try {
     const messageText = ctx.message.text;
     
-    // بررسی آیا پیام از ربات مجاز است و حاوی #لیست است
-    const isFromAllowedBot = ctx.from.id.toString() === ALLOWED_BOT_ID;
-    const isListCommand = messageText && messageText.includes('#لیست');
-    
-    if (isFromAllowedBot && isListCommand) {
-      // بررسی آیا پیام ریپلای است
-      if (ctx.message.reply_to_message) {
-        const targetUser = ctx.message.reply_to_message.from;
-        
-        const { error } = await supabase
-          .from('quarantine_users')
-          .update({ 
-            is_quarantined: false,
-            current_chat_id: null,
-            updated_at: new Date().toISOString()
-          })
-          .eq('user_id', targetUser.id);
+    // بررسی آیا پیام حاوی #لیست است
+    if (messageText && messageText.includes('#لیست')) {
+      // بررسی آیا پیام از ربات مجاز است
+      const isFromAllowedBot = ctx.from.id.toString() === ALLOWED_BOT_ID;
+      
+      if (isFromAllowedBot) {
+        // بررسی آیا پیام ریپلای است
+        if (ctx.message.reply_to_message) {
+          const targetUser = ctx.message.reply_to_message.from;
           
-        if (!error) {
-          logger.info(`کاربر ${targetUser.id} توسط ربات مجاز از قرنطینه خارج شد`);
-          await logAction('user_released_by_bot', ctx.from.id, null, {
-            target_user_id: targetUser.id,
-            target_username: targetUser.username,
-            target_first_name: targetUser.first_name
-          });
-          
-          // پاسخ به ربات مجاز
-          ctx.reply(`کاربر ${targetUser.first_name} با موفقیت از قرنطینه خارج شد.`);
-        } else {
-          ctx.reply('خطا در خارج کردن کاربر از قرنطینه.');
+          const { error } = await supabase
+            .from('quarantine_users')
+            .update({ 
+              is_quarantined: false,
+              current_chat_id: null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', targetUser.id);
+            
+          if (!error) {
+            logger.info(`کاربر ${targetUser.id} توسط ربات مجاز از قرنطینه خارج شد`);
+            await logAction('user_released_by_bot', ctx.from.id, null, {
+              target_user_id: targetUser.id,
+              target_username: targetUser.username,
+              target_first_name: targetUser.first_name
+            });
+            
+            // پاسخ به ربات مجاز
+            ctx.reply(`کاربر ${targetUser.first_name} با موفقیت از قرنطینه خارج شد.`);
+          } else {
+            ctx.reply('خطا در خارج کردن کاربر از قرنطینه.');
+          }
         }
+      } else {
+        // اگر کاربر عادی سعی در استفاده از #لیست دارد - فقط پیام بده و هیچ کاری نکن
+        logger.warn(`کاربر ${ctx.from.id} سعی در استفاده از دستور #لیست بدون مجوز دارد`);
+        ctx.reply('شما مجوز استفاده از این دستور را ندارید.');
+        // اینجا هیچ عملی برای خارج کردن کاربر از قرنطینه انجام نمی‌شود
+        return; // اضافه کردن return برای اطمینان از خروج
       }
-    } else if (isListCommand && !isFromAllowedBot) {
-      // اگر کاربر عادی سعی در استفاده از #لیست دارد - فقط پیام بده و هیچ کاری نکن
-      logger.warn(`کاربر ${ctx.from.id} سعی در استفاده از دستور #لیست بدون مجوز دارد`);
-      ctx.reply('شما مجوز استفاده از این دستور را ندارید.');
-      // اینجا هیچ عملی برای خارج کردن کاربر از قرنطینه انجام نمی‌شود
     }
   } catch (error) {
     logger.error('خطا در پردازش دستور لیست:', error);
