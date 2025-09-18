@@ -224,6 +224,34 @@ async function removeUserFromAllOtherChats(currentChatId, userId) {
   }
 }
 
+// تابع جدید برای حذف کاربر از تمام گروه‌ها
+async function removeUserFromAllGroups(userId) {
+  try {
+    const { data: allChats, error: chatsError } = await supabase
+      .from('allowed_chats')
+      .select('chat_id');
+    
+    if (chatsError) {
+      logger.error('خطا در دریافت گروه‌ها:', chatsError);
+      return;
+    }
+    
+    if (allChats && allChats.length > 0) {
+      logger.info(`حذف کاربر ${userId} از ${allChats.length} گروه`);
+      
+      for (const chat of allChats) {
+        try {
+          await removeUserFromChat(chat.chat_id, userId);
+        } catch (error) {
+          logger.error(`حذف از گروه ${chat.chat_id} ناموفق بود:`, error);
+        }
+      }
+    }
+  } catch (error) {
+    logger.error('خطا در حذف کاربر از گروه‌ها:', error);
+  }
+}
+
 // تابع پردازش کاربر جدید (قرنطینه اتوماتیک) - بهبود یافته
 async function handleNewUser(ctx, user) {
   try {
@@ -446,7 +474,7 @@ bot.hears('#غیرفعال', async (ctx) => {
   }
 });
 
-// دستور #لیست - فقط برای ربات مجاز (بهبود یافته)
+// دستور #لیست - فقط برای ربات مجاز (اصلاح شده)
 bot.on('message', async (ctx) => {
   try {
     const messageText = ctx.message.text;
@@ -483,7 +511,7 @@ bot.on('message', async (ctx) => {
         .single();
       
       if (queryError || !quarantinedUser) {
-        ctx.reply('این کاربر در قرنطینه نیست.');
+        ctx.reply('این کاربر در قرنطینه نیست یا قبلاً آزاد شده است.');
         return;
       }
       
@@ -499,6 +527,8 @@ bot.on('message', async (ctx) => {
         
       if (!error) {
         logger.info(`کاربر ${targetUser.id} توسط ربات مجاز از قرنطینه خارج شد`);
+        
+        // ثبت فعالیت
         await logAction('user_released_by_bot', ctx.from.id, null, {
           target_user_id: targetUser.id,
           target_username: targetUser.username,
@@ -506,14 +536,18 @@ bot.on('message', async (ctx) => {
         });
         
         // پاسخ به ربات مجاز
-        ctx.reply(`کاربر ${targetUser.first_name} با موفقیت از قرنطینه خارج شد.`);
+        await ctx.reply(`✅ کاربر ${targetUser.first_name} (@${targetUser.username || 'بدون یوزرنیم'}) با موفقیت از قرنطینه خارج شد.`);
+        
+        // حذف کاربر از تمام گروه‌ها
+        await removeUserFromAllGroups(targetUser.id);
       } else {
         logger.error('خطا در خارج کردن کاربر از قرنطینه:', error);
-        ctx.reply('خطا در خارج کردن کاربر از قرنطینه.');
+        await ctx.reply('❌ خطا در خارج کردن کاربر از قرنطینه. لطفاً لاگ‌ها را بررسی کنید.');
       }
     }
   } catch (error) {
     logger.error('خطا در پردازش دستور لیست:', error);
+    ctx.reply('خطایی در پردازش دستور رخ داده است.');
   }
 });
 
