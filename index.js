@@ -119,7 +119,7 @@ async function isOwner(userId) {
   }
 }
 
-// تابع بررسی ��دمین مجاز
+// تابع بررسی ادمین مجاز
 async function isAllowedAdmin(userId) {
   try {
     const cacheKey = `allowed_admin:${userId}`;
@@ -308,7 +308,7 @@ async function handleNewUser(ctx, user) {
         }, { onConflict: 'user_id' });
       
       if (insertError) {
-        logger.error('خطا ��ر ذخیره کاربر در قرنطینه:', insertError);
+        logger.error('خطا در ذخیره کاربر در قرنطینه:', insertError);
         return;
       }
       
@@ -400,7 +400,7 @@ bot.on('new_chat_members', async (ctx) => {
             created_at: new Date().toISOString()
           }, { onConflict: 'chat_id' });
           
-        logger.info(`گروه ${ctx.chat.id} در دیتابیس ثبت شد`);
+        logger.info(`گroup ${ctx.chat.id} در دیتابیس ثبت شد`);
         await logAction('chat_activated', ctx.message.from.id, ctx.chat.id, {
           chat_title: ctx.chat.title
         });
@@ -797,7 +797,8 @@ app.get('/', (req, res) => {
   res.send('ربات قرنطینه فعال است!');
 });
 
-app.get('/health', (req, res) {
+// اصلاح شده: اضافه کردن پرانتز بسته ) بعد از پارامترهای تابع
+app.get('/health', (req, res) => {
   const memoryUsage = process.memoryUsage();
   res.status(200).json({ 
     status: 'OK', 
