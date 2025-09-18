@@ -683,10 +683,12 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
+  const memoryUsage = process.memoryUsage();
   res.status(200).json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    memory: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`
   });
 });
 
@@ -706,7 +708,11 @@ cron.schedule('0 */6 * * *', () => {
 
 // فعال سازی وب هوک
 if (process.env.RENDER_EXTERNAL_URL) {
-  bot.telegram.setWebhook(`https://${process.env.RENDER_EXTERNAL_URL}/webhook`);
+  // حذف https:// تکراری از آدرس
+  const webhookUrl = `https://${process.env.RENDER_EXTERNAL_URL.replace(/^https?:\/\//, '')}/webhook`;
+  bot.telegram.setWebhook(webhookUrl)
+    .then(() => logger.info(`Webhook set to: ${webhookUrl}`))
+    .catch(error => logger.error('Error setting webhook:', error));
 } else {
   logger.warn('آدرس Render تعریف نشده است، از حالت polling استفاده می‌شود');
   bot.launch();
