@@ -40,9 +40,8 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// توکن ربات و ربات مجاز
+// توکن ربات
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const ALLOWED_BOT_ID = process.env.ALLOWED_BOT_ID;
 
 // محدودیت نرخ درخواست
 const rateLimit = new Map();
@@ -116,6 +115,28 @@ async function isOwner(userId) {
     return isOwner;
   } catch (error) {
     logger.error('خطا در بررسی مالک:', error);
+    return false;
+  }
+}
+
+// تابع بررسی ادمین مجاز (جدید)
+async function isAllowedAdmin(userId) {
+  try {
+    const cacheKey = `allowed_admin:${userId}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    
+    const { data, error } = await supabase
+      .from('allowed_admins')
+      .select('admin_id')
+      .eq('admin_id', userId)
+      .single();
+    
+    const isAllowed = data !== null;
+    cache.set(cacheKey, isAllowed, 600);
+    return isAllowed;
+  } catch (error) {
+    logger.error('خطا در بررسی ادمین مجاز:', error);
     return false;
   }
 }
@@ -474,7 +495,86 @@ bot.hears('#غیرفعال', async (ctx) => {
   }
 });
 
-// دستور #لیست - فقط برای ربات مجاز (اصلاح شده)
+// دستور #ادمین - اضافه کردن ادمین جدید (فقط برای مالک‌ها)
+bot.hears(/^#ادمین\s+(\d+)$/, async (ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'add_admin')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+  
+  try {
+    if (!(await isOwner(ctx.from.id))) return;
+    
+    const targetUserId = ctx.match[1];
+    const now = new Date().toISOString();
+    
+    // اضافه کردن کاربر به لیست ادمین‌های مجاز
+    const { error } = await supabase
+      .from('allowed_admins')
+      .upsert({
+        admin_id: targetUserId,
+        added_by: ctx.from.id,
+        created_at: now,
+        updated_at: now
+      }, { onConflict: 'admin_id' });
+    
+    if (error) {
+      logger.error('خطا در اضافه کردن ادمین:', error);
+      ctx.reply('❌ خطا در اضافه کردن ادمین. لطفاً لاگ‌ها را بررسی کنید.');
+      return;
+    }
+    
+    // پاک کردن کش برای اطمینان از به روز رسانی
+    cache.del(`allowed_admin:${targetUserId}`);
+    
+    ctx.reply(`✅ کاربر با آیدی ${targetUserId} به لیست ادمین‌های مجاز اضافه شد.`);
+    await logAction('admin_added', ctx.from.id, null, {
+      target_user_id: targetUserId
+    });
+  } catch (error) {
+    logger.error('خطا در پردازش دستور ادمین:', error);
+    ctx.reply('خطایی در پردازش دستور رخ داده است.');
+  }
+});
+
+// دستور #حذف_ادمین - حذف ادمین (فقط برای مالک‌ها)
+bot.hears(/^#حذف_ادمین\s+(\d+)$/, async (ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'remove_admin')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+  
+  try {
+    if (!(await isOwner(ctx.from.id))) return;
+    
+    const targetUserId = ctx.match[1];
+    
+    // حذف کاربر از لیست ادمین‌های مجاز
+    const { error } = await supabase
+      .from('allowed_admins')
+      .delete()
+      .eq('admin_id', targetUserId);
+    
+    if (error) {
+      logger.error('خطا در حذف ادمین:', error);
+      ctx.reply('❌ خطا در حذف ادمین. لطفاً لاگ‌ها را بررسی کنید.');
+      return;
+    }
+    
+    // پاک کردن کش برای اطمینان از به روز رسانی
+    cache.del(`allowed_admin:${targetUserId}`);
+    
+    ctx.reply(`✅ کاربر با آیدی ${targetUserId} از لیست ادمین‌های مجاز حذف شد.`);
+    await logAction('admin_removed', ctx.from.id, null, {
+      target_user_id: targetUserId
+    });
+  } catch (error) {
+    logger.error('خطا در پردازش دستور حذف ادمین:', error);
+    ctx.reply('خطایی در پردازش دستور رخ داده است.');
+  }
+});
+
+// دستور #لیست - فقط برای ادمین‌های مجاز (اصلاح شده)
 bot.on('message', async (ctx) => {
   try {
     // بررسی اینکه پیام متنی است
@@ -486,22 +586,18 @@ bot.on('message', async (ctx) => {
     if (messageText.includes('#لیست')) {
       logger.info(`دریافت دستور #لیست از کاربر ${ctx.from.id} با متن: ${messageText}`);
       
-      // بررسی آیا پیام از ربات مجاز است
-      const isFromAllowedBot = ctx.from.id.toString() === ALLOWED_BOT_ID;
+      // بررسی آیا کاربر ادمین مجاز است
+      const isAdmin = await isAllowedAdmin(ctx.from.id);
       
-      if (!isFromAllowedBot) {
+      if (!isAdmin) {
         logger.warn(`کاربر ${ctx.from.id} سعی در استفاده از دستور #لیست بدون مجوز دارد`);
-        
-        if (await isChatAdmin(ctx.chat.id, ctx.from.id) || await isOwner(ctx.from.id)) {
-          await ctx.reply('شما مجوز استفاده از این دستور را ندارید. این دستور فقط برای ربات مجاز قابل استفاده است.');
-        }
-        
+        ctx.reply('شما مجوز استفاده از این دستور را ندارید. فقط ادمین‌های مجاز می‌توانند از #لیست استفاده کنند.');
         return;
       }
       
       // بررسی آیا پیام ریپلای است
       if (!ctx.message.reply_to_message) {
-        await ctx.reply('لطفاً روی پیام کاربر مورد نظر ریپلای کنید.');
+        ctx.reply('لطفاً روی پیام کاربر مورد نظر ریپلای کنید.');
         return;
       }
       
@@ -518,12 +614,12 @@ bot.on('message', async (ctx) => {
       
       if (queryError && queryError.code !== 'PGRST116') {
         logger.error('خطا در بررسی کاربر قرنطینه:', queryError);
-        await ctx.reply('خطا در بررسی وضعیت کاربر. لطفاً لاگ‌ها را بررسی کنید.');
+        ctx.reply('خطا در بررسی وضعیت کاربر. لطفاً لاگ‌ها را بررسی کنید.');
         return;
       }
       
       if (!quarantinedUser) {
-        await ctx.reply('این کاربر در قرنطینه نیست یا قبلاً آزاد شده است.');
+        ctx.reply('این کاربر در قرنطینه نیست یا قبلاً آزاد شده است.');
         return;
       }
       
@@ -539,14 +635,14 @@ bot.on('message', async (ctx) => {
         
       if (error) {
         logger.error('خطا در خارج کردن کاربر از قرنطینه:', error);
-        await ctx.reply('❌ خطا در خارج کردن کاربر از قرنطینه. لطفاً لاگ‌ها را بررسی کنید.');
+        ctx.reply('❌ خطا در خارج کردن کاربر از قرنطینه. لطفاً لاگ‌ها را بررسی کنید.');
         return;
       }
       
-      logger.info(`کاربر ${targetUser.id} توسط ربات مجاز از قرنطینه خارج شد`);
+      logger.info(`کاربر ${targetUser.id} توسط ادمین مجاز از قرنطینه خارج شد`);
       
       // ثبت فعالیت
-      await logAction('user_released_by_bot', ctx.from.id, null, {
+      await logAction('user_released_by_admin', ctx.from.id, null, {
         target_user_id: targetUser.id,
         target_username: targetUser.username,
         target_first_name: targetUser.first_name
@@ -555,27 +651,19 @@ bot.on('message', async (ctx) => {
       // حذف کاربر از تمام گروه‌ها
       await removeUserFromAllGroups(targetUser.id);
       
-      // پاسخ به ربات مجاز
-      await ctx.reply(`✅ کاربر ${targetUser.first_name} (@${targetUser.username || 'بدون یوزرنیم'}) با موفقیت از قرنطینه خارج شد.`);
+      // پاسخ به ادمین مجاز
+      ctx.reply(`✅ کاربر ${targetUser.first_name} (@${targetUser.username || 'بدون یوزرنیم'}) با موفقیت از قرنطینه خارج شد.`);
     }
   } catch (error) {
     logger.error('خطا در پردازش دستور لیست:', error);
-    try {
-      await ctx.reply('خطایی در پردازش دستور رخ داده است.');
-    } catch (e) {
-      logger.error('خطا در ارسال پیام خطا:', e);
-    }
+    ctx.reply('خطایی در پردازش دستور رخ داده است.');
   }
 });
 
 // دستور #حذف برای ادمین‌ها (ریپلای روی کاربر)
 bot.on('message', async (ctx) => {
   if (!checkRateLimit(ctx.from.id, 'remove')) {
-    try {
-      await ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
-    } catch (e) {
-      logger.error('خطا در ارسال پیام محدودیت نرخ:', e);
-    }
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
     return;
   }
   
@@ -596,7 +684,7 @@ bot.on('message', async (ctx) => {
         .single();
       
       if (queryError || !quarantinedUser) {
-        await ctx.reply('این کاربر در قرنطینه نیست.');
+        ctx.reply('این کاربر در قرنطینه نیست.');
         return;
       }
       
@@ -610,14 +698,14 @@ bot.on('message', async (ctx) => {
         .eq('user_id', targetUser.id);
         
       if (!error) {
-        await ctx.reply(`کاربر ${targetUser.first_name} از قرنطینه خارج شد.`);
+        ctx.reply(`کاربر ${targetUser.first_name} از قرنطینه خارج شد.`);
         await logAction('user_released_by_admin', ctx.from.id, ctx.chat.id, {
           target_user_id: targetUser.id,
           target_username: targetUser.username,
           target_first_name: targetUser.first_name
         });
       } else {
-        await ctx.reply('خطا در خارج کردن کاربر از قرنطینه.');
+        ctx.reply('خطا در خارج کردن کاربر از قرنطینه.');
       }
     }
   } catch (error) {
@@ -628,11 +716,7 @@ bot.on('message', async (ctx) => {
 // دستور #حذف برای مالک‌ها (با آیدی کاربر)
 bot.on('text', async (ctx) => {
   if (!checkRateLimit(ctx.from.id, 'remove_by_id')) {
-    try {
-      await ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
-    } catch (e) {
-      logger.error('خطا در ارسال پیام محدودیت نرخ:', e);
-    }
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
     return;
   }
   
@@ -653,7 +737,7 @@ bot.on('text', async (ctx) => {
         .single();
       
       if (queryError || !quarantinedUser) {
-        await ctx.reply('این کاربر در قرنطینه نیست.');
+        ctx.reply('این کاربر در قرنطینه نیست.');
         return;
       }
       
@@ -667,12 +751,12 @@ bot.on('text', async (ctx) => {
         .eq('user_id', targetUserId);
         
       if (!error) {
-        await ctx.reply(`کاربر با آیدی ${targetUserId} از قرنطینه خارج شد.`);
+        ctx.reply(`کاربر با آیدی ${targetUserId} از قرنطینه خارج شد.`);
         await logAction('user_released_by_owner', ctx.from.id, null, {
           target_user_id: targetUserId
         });
       } else {
-        await ctx.reply('خطا در خارج کردن کاربر از قرنطینه.');
+        ctx.reply('خطا در خارج کردن کاربر از قرنطینه.');
       }
     }
   } catch (error) {
@@ -683,11 +767,7 @@ bot.on('text', async (ctx) => {
 // دستور #وضعیت برای مالک‌ها
 bot.hears('#وضعیت', async (ctx) => {
   if (!checkRateLimit(ctx.from.id, 'status')) {
-    try {
-      await ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
-    } catch (e) {
-      logger.error('خطا در ارسال پیام محدودیت نرخ:', e);
-    }
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
     return;
   }
   
@@ -703,10 +783,15 @@ bot.hears('#وضعیت', async (ctx) => {
       .select('*')
       .eq('is_quarantined', true);
     
-    await ctx.reply(`
+    const { data: admins, error: adminsError } = await supabase
+      .from('allowed_admins')
+      .select('*');
+    
+    ctx.reply(`
 📊 آمار ربات:
 👥 گروه های فعال: ${chats?.length || 0}
 🔒 کاربران قرنطینه: ${users?.length || 0}
+👨‍💼 ادمین‌های مجاز: ${admins?.length || 0}
     `);
     
     await logAction('status_check', ctx.from.id);
@@ -716,13 +801,9 @@ bot.hears('#وضعیت', async (ctx) => {
 });
 
 // دستور #راهنما
-bot.hears('#راهنما', async (ctx) => {
+bot.hears('#راهنما', (ctx) => {
   if (!checkRateLimit(ctx.from.id, 'help')) {
-    try {
-      await ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
-    } catch (e) {
-      logger.error('خطا در ارسال پیام محدودیت نرخ:', e);
-    }
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
     return;
   }
   
@@ -732,18 +813,15 @@ bot.hears('#راهنما', async (ctx) => {
 #فعال - فعال کردن ربات در گروه
 #غیرفعال - غیرفعال کردن ربات در گروه
 #حذف (ریپلای) - حذف کاربر از قرنطینه (ادمین‌ها)
+#لیست (ریپلای) - حذف کاربر از قرنطینه (فقط ادمین‌های مجاز)
+#ادمین [آیدی] - اضافه کردن ادمین مجاز (فقط مالک)
+#حذف_ادمین [آیدی] - حذف ادمین مجاز (فقط مالک)
 #وضعیت - مشاهده آمار ربات (فقط مالک)
 #راهنما - نمایش این راهنما
-
-ربات مجاز می‌تواند با دستور #لیست کاربران را از قرنطینه خارج کند.
   `;
   
-  try {
-    await ctx.reply(helpText);
-    await logAction('help_requested', ctx.from.id);
-  } catch (error) {
-    logger.error('خطا در ارسال راهنما:', error);
-  }
+  ctx.reply(helpText);
+  logAction('help_requested', ctx.from.id);
 });
 
 // وب سرور برای Render
