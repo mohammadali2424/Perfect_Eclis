@@ -3,9 +3,18 @@ const { createClient } = require('@supabase/supabase-js');
 const express = require('express');
 const winston = require('winston');
 const cron = require('node-cron');
+const NodeCache = require('node-cache');
+const helmet = require('helmet');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Middleware امنیتی
+app.use(helmet());
+app.use(express.json());
+
+// تنظیمات کش
+const cache = new NodeCache({ stdTTL: 300, checkperiod: 600 });
 
 // تنظیمات لاگینگ
 const logger = winston.createLogger({
@@ -33,7 +42,26 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 // توکن ربات و ربات مجاز
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const ALLOWED_BOT_ID = process.env.ALLOWED_BOT_ID; // آیدی ربات مجاز برای دستور #لیست
+const ALLOWED_BOT_ID = process.env.ALLOWED_BOT_ID;
+
+// محدودیت نرخ درخواست
+const rateLimit = new Map();
+
+function checkRateLimit(userId, action, limit = 5, windowMs = 60000) {
+  const key = `${userId}:${action}`;
+  const now = Date.now();
+  const userLimits = rateLimit.get(key) || [];
+  
+  const recentLimits = userLimits.filter(time => now - time < windowMs);
+  
+  if (recentLimits.length >= limit) {
+    return false;
+  }
+  
+  recentLimits.push(now);
+  rateLimit.set(key, recentLimits);
+  return true;
+}
 
 // تابع ثبت فعالیت
 async function logAction(action, userId, chatId = null, details = {}) {
@@ -52,11 +80,18 @@ async function logAction(action, userId, chatId = null, details = {}) {
   }
 }
 
-// تابع بررسی ادمین بودن
+// تابع بررسی ادمین بودن با کش
 async function isChatAdmin(chatId, userId) {
   try {
+    const cacheKey = `admin:${chatId}:${userId}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    
     const member = await bot.telegram.getChatMember(chatId, userId);
-    return ['administrator', 'creator'].includes(member.status);
+    const isAdmin = ['administrator', 'creator'].includes(member.status);
+    
+    cache.set(cacheKey, isAdmin, 300);
+    return isAdmin;
   } catch (error) {
     logger.error('خطا در بررسی ادمین:', error);
     return false;
@@ -66,13 +101,19 @@ async function isChatAdmin(chatId, userId) {
 // تابع بررسی مالک بودن
 async function isOwner(userId) {
   try {
+    const cacheKey = `owner:${userId}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    
     const { data, error } = await supabase
       .from('allowed_owners')
       .select('owner_id')
       .eq('owner_id', userId)
       .single();
     
-    return data !== null;
+    const isOwner = data !== null;
+    cache.set(cacheKey, isOwner, 600);
+    return isOwner;
   } catch (error) {
     logger.error('خطا در بررسی مالک:', error);
     return false;
@@ -82,8 +123,15 @@ async function isOwner(userId) {
 // تابع بررسی اینکه آیا ربات ادمین است
 async function isBotAdmin(chatId) {
   try {
+    const cacheKey = `botadmin:${chatId}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    
     const self = await bot.telegram.getChatMember(chatId, bot.botInfo.id);
-    return ['administrator', 'creator'].includes(self.status);
+    const isAdmin = ['administrator', 'creator'].includes(self.status);
+    
+    cache.set(cacheKey, isAdmin, 300);
+    return isAdmin;
   } catch (error) {
     logger.error('خطا در بررسی ادمین بودن ربات:', error);
     return false;
@@ -96,7 +144,6 @@ async function getUserStatus(chatId, userId) {
     const member = await bot.telegram.getChatMember(chatId, userId);
     return member.status;
   } catch (error) {
-    // اگر کاربر در گروه نیست یا خطای دیگری رخ داد
     if (error.response && error.response.error_code === 400) {
       return 'not_member';
     }
@@ -108,39 +155,32 @@ async function getUserStatus(chatId, userId) {
 // تابع حذف کاربر از گروه (بدون بن)
 async function removeUserFromChat(chatId, userId) {
   try {
-    // ابتدا مطمئن شویم ربات ادمین است
     if (!(await isBotAdmin(chatId))) {
       logger.error('ربات در گروه ادمین نیست');
       return false;
     }
     
-    // بررسی وضعیت کاربر در گروه
     const userStatus = await getUserStatus(chatId, userId);
     
-    // اگر کاربر در گروه نیست یا قبلاً حذف شده
     if (userStatus === 'not_member' || userStatus === 'left' || userStatus === 'kicked') {
       logger.info(`کاربر ${userId} از قبل در گروه ${chatId} نیست`);
       return true;
     }
     
-    // اگر کاربر مالک گروه است، نمی‌توانیم حذفش کنیم
     if (userStatus === 'creator') {
       logger.warn(`کاربر ${userId} مالک گروه است و نمی‌توان حذف کرد`);
       return false;
     }
     
-    // حذف کاربر بدون بن کردن
     await bot.telegram.unbanChatMember(chatId, userId);
     logger.info(`کاربر ${userId} از گروه ${chatId} حذف شد`);
     return true;
   } catch (error) {
-    // اگر خطا مربوط به مالک گروه بودن کاربر است، آن را نادیده بگیر
     if (error.response && error.response.description && error.response.description.includes("can't remove chat owner")) {
       logger.warn(`کاربر ${userId} مالک گروه است و نمی‌توان حذف کرد`);
       return false;
     }
     
-    // اگر خطا مربوط به عدم وجود کاربر در گروه است
     if (error.response && error.response.error_code === 400 && error.response.description.includes("user not found")) {
       logger.info(`کاربر ${userId} در گروه ${chatId} پیدا نشد`);
       return true;
@@ -154,7 +194,6 @@ async function removeUserFromChat(chatId, userId) {
 // تابع بررسی و حذف کاربر از تمام گروه‌های دیگر
 async function removeUserFromAllOtherChats(currentChatId, userId) {
   try {
-    // دریافت تمام گروه‌های مجاز
     const { data: allChats, error: chatsError } = await supabase
       .from('allowed_chats')
       .select('chat_id');
@@ -185,7 +224,7 @@ async function removeUserFromAllOtherChats(currentChatId, userId) {
   }
 }
 
-// تابع پردازش کاربر جدید (قرنطینه اتوماتیک)
+// تابع پردازش کاربر جدید (قرنطینه اتوماتیک) - بهبود یافته
 async function handleNewUser(ctx, user) {
   try {
     const now = new Date().toISOString();
@@ -207,22 +246,22 @@ async function handleNewUser(ctx, user) {
     if (existingUser) {
       logger.info(`کاربر ${user.id} از قبل در قرنطینه است`);
       
-      // کاربر از قبل در قرنطینه است
-      if (existingUser.current_chat_id !== ctx.chat.id) {
-        // کاربر از گروه فعلی حذف شود
-        logger.info(`حذف کاربر از گروه فعلی ${ctx.chat.id}`);
+      // کاربر از قبل در قرنطینه است - حذف از گروه فعلی اگر گروه فعلی با گروه قرنطینه متفاوت است
+      if (existingUser.current_chat_id && existingUser.current_chat_id !== ctx.chat.id.toString()) {
+        logger.info(`حذف کاربر از گروه فعلی ${ctx.chat.id} زیرا قبلاً در گروه ${existingUser.current_chat_id} قرنطینه شده`);
         await removeUserFromChat(ctx.chat.id, user.id);
+        
+        // حذف کاربر از تمام گروه‌های دیگر به جز گروه قرنطینه اصلی
+        await removeUserFromAllOtherChats(existingUser.current_chat_id, user.id);
+        return;
       }
       
-      // کاربر از تمام گروه‌های دیگر حذف شود
-      logger.info(`حذف کاربر از سایر گروه‌ها به جز ${existingUser.current_chat_id}`);
-      await removeUserFromAllOtherChats(existingUser.current_chat_id, user.id);
-      
-      // به روز رسانی گروه فعلی کاربر
+      // کاربر در همان گروه قرنطینه است - به روز رسانی اطلاعات
       const { error: updateError } = await supabase
         .from('quarantine_users')
         .update({ 
-          current_chat_id: ctx.chat.id,
+          username: user.username,
+          first_name: user.first_name,
           updated_at: now
         })
         .eq('user_id', user.id);
@@ -242,7 +281,7 @@ async function handleNewUser(ctx, user) {
           username: user.username,
           first_name: user.first_name,
           is_quarantined: true,
-          current_chat_id: ctx.chat.id,
+          current_chat_id: ctx.chat.id.toString(),
           created_at: now,
           updated_at: now
         }, { onConflict: 'user_id' });
@@ -305,6 +344,11 @@ async function checkQuarantineExpiry() {
 
 // دستور /start
 bot.start((ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'start')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+  
   ctx.reply('ناظر اکلیس در خدمت شماست 🥷🏻');
   logAction('bot_started', ctx.from.id);
 });
@@ -330,7 +374,7 @@ bot.on('new_chat_members', async (ctx) => {
         const { error } = await supabase
           .from('allowed_chats')
           .upsert({
-            chat_id: ctx.chat.id,
+            chat_id: ctx.chat.id.toString(),
             chat_title: ctx.chat.title,
             created_at: new Date().toISOString()
           }, { onConflict: 'chat_id' });
@@ -353,13 +397,18 @@ bot.on('new_chat_members', async (ctx) => {
 
 // دستور #فعال برای ثبت گروه
 bot.hears('#فعال', async (ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'activate')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+  
   try {
     if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
     
     const { error } = await supabase
       .from('allowed_chats')
       .upsert({
-        chat_id: ctx.chat.id,
+        chat_id: ctx.chat.id.toString(),
         chat_title: ctx.chat.title,
         created_at: new Date().toISOString()
       }, { onConflict: 'chat_id' });
@@ -375,13 +424,18 @@ bot.hears('#فعال', async (ctx) => {
 
 // دستور #غیرفعال برای حذف گروه
 bot.hears('#غیرفعال', async (ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'deactivate')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+  
   try {
     if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
     
     const { error } = await supabase
       .from('allowed_chats')
       .delete()
-      .eq('chat_id', ctx.chat.id);
+      .eq('chat_id', ctx.chat.id.toString());
     
     ctx.reply('منطقه غیرفعال شد ❌');
     await logAction('chat_deactivated', ctx.from.id, ctx.chat.id, {
@@ -393,7 +447,7 @@ bot.hears('#غیرفعال', async (ctx) => {
 });
 
 // دستور #لیست - فقط برای ربات مجاز (بهبود یافته)
-bot.on('text', async (ctx) => {
+bot.on('message', async (ctx) => {
   try {
     const messageText = ctx.message.text;
     
@@ -404,39 +458,58 @@ bot.on('text', async (ctx) => {
       
       if (!isFromAllowedBot) {
         logger.warn(`کاربر ${ctx.from.id} سعی در استفاده از دستور #لیست بدون مجوز دارد`);
-        return; // بدون پاسخ به کاربران غیرمجاز
+        
+        if (await isChatAdmin(ctx.chat.id, ctx.from.id) || await isOwner(ctx.from.id)) {
+          ctx.reply('شما مجوز استفاده از این دستور را ندارید. این دستور فقط برای ربات مجاز قابل استفاده است.');
+        }
+        
+        return;
       }
       
-      // از اینجا به بعد فقط ربات مجاز
       // بررسی آیا پیام ریپلای است
-      if (ctx.message.reply_to_message) {
-        const targetUser = ctx.message.reply_to_message.from;
+      if (!ctx.message.reply_to_message) {
+        ctx.reply('لطفاً روی پیام کاربر مورد نظر ریپلای کنید.');
+        return;
+      }
+      
+      const targetUser = ctx.message.reply_to_message.from;
+      
+      // بررسی آیا کاربر در قرنطینه است
+      const { data: quarantinedUser, error: queryError } = await supabase
+        .from('quarantine_users')
+        .select('*')
+        .eq('user_id', targetUser.id)
+        .eq('is_quarantined', true)
+        .single();
+      
+      if (queryError || !quarantinedUser) {
+        ctx.reply('این کاربر در قرنطینه نیست.');
+        return;
+      }
+      
+      // خارج کردن کاربر از قرنطینه
+      const { error } = await supabase
+        .from('quarantine_users')
+        .update({ 
+          is_quarantined: false,
+          current_chat_id: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', targetUser.id);
         
-        const { error } = await supabase
-          .from('quarantine_users')
-          .update({ 
-            is_quarantined: false,
-            current_chat_id: null,
-            updated_at: new Date().toISOString()
-          })
-          .eq('user_id', targetUser.id);
-          
-        if (!error) {
-          logger.info(`کاربر ${targetUser.id} توسط ربات مجاز از قرنطینه خارج شد`);
-          await logAction('user_released_by_bot', ctx.from.id, null, {
-            target_user_id: targetUser.id,
-            target_username: targetUser.username,
-            target_first_name: targetUser.first_name
-          });
-          
-          // پاسخ به ربات مجاز
-          ctx.reply(`کاربر ${targetUser.first_name} با موفقیت از قرنطینه خارج شد.`);
-        } else {
-          ctx.reply('خطا در خارج کردن کاربر از قرنطینه.');
-        }
+      if (!error) {
+        logger.info(`کاربر ${targetUser.id} توسط ربات مجاز از قرنطینه خارج شد`);
+        await logAction('user_released_by_bot', ctx.from.id, null, {
+          target_user_id: targetUser.id,
+          target_username: targetUser.username,
+          target_first_name: targetUser.first_name
+        });
+        
+        // پاسخ به ربات مجاز
+        ctx.reply(`کاربر ${targetUser.first_name} با موفقیت از قرنطینه خارج شد.`);
       } else {
-        // اگر ریپلای نکرده بود
-        ctx.reply('لطفاً روی پیام کاربر مورد نظر ریپلای ک��ید.');
+        logger.error('خطا در خارج کردن کاربر از قرنطینه:', error);
+        ctx.reply('خطا در خارج کردن کاربر از قرنطینه.');
       }
     }
   } catch (error) {
@@ -446,6 +519,11 @@ bot.on('text', async (ctx) => {
 
 // دستور #حذف برای ادمین‌ها (ریپلای روی کاربر)
 bot.on('message', async (ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'remove')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+  
   try {
     const messageText = ctx.message.text;
     
@@ -453,6 +531,19 @@ bot.on('message', async (ctx) => {
       if (!(await isChatAdmin(ctx.chat.id, ctx.from.id))) return;
       
       const targetUser = ctx.message.reply_to_message.from;
+      
+      // بررسی آیا کاربر در قرنطینه است
+      const { data: quarantinedUser, error: queryError } = await supabase
+        .from('quarantine_users')
+        .select('*')
+        .eq('user_id', targetUser.id)
+        .eq('is_quarantined', true)
+        .single();
+      
+      if (queryError || !quarantinedUser) {
+        ctx.reply('این کاربر در قرنطینه نیست.');
+        return;
+      }
       
       const { error } = await supabase
         .from('quarantine_users')
@@ -470,6 +561,8 @@ bot.on('message', async (ctx) => {
           target_username: targetUser.username,
           target_first_name: targetUser.first_name
         });
+      } else {
+        ctx.reply('خطا در خارج کردن کاربر از قرنطینه.');
       }
     }
   } catch (error) {
@@ -479,14 +572,31 @@ bot.on('message', async (ctx) => {
 
 // دستور #حذف برای مالک‌ها (با آیدی کاربر)
 bot.on('text', async (ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'remove_by_id')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+  
   try {
     const messageText = ctx.message.text;
     
-    // بررسی آیا پیام با #حذف شروع می‌شود و بعد از آن یک عدد (آیدی) وجود دارد
     const match = messageText.match(/^#حذف\s+(\d+)$/);
     
     if (match && (await isOwner(ctx.from.id))) {
       const targetUserId = match[1];
+      
+      // بررسی آیا کاربر در قرنطینه است
+      const { data: quarantinedUser, error: queryError } = await supabase
+        .from('quarantine_users')
+        .select('*')
+        .eq('user_id', targetUserId)
+        .eq('is_quarantined', true)
+        .single();
+      
+      if (queryError || !quarantinedUser) {
+        ctx.reply('این کاربر در قرنطینه نیست.');
+        return;
+      }
       
       const { error } = await supabase
         .from('quarantine_users')
@@ -502,6 +612,8 @@ bot.on('text', async (ctx) => {
         await logAction('user_released_by_owner', ctx.from.id, null, {
           target_user_id: targetUserId
         });
+      } else {
+        ctx.reply('خطا در خارج کردن کاربر از قرنطینه.');
       }
     }
   } catch (error) {
@@ -511,6 +623,11 @@ bot.on('text', async (ctx) => {
 
 // دستور #وضعیت برای مالک‌ها
 bot.hears('#وضعیت', async (ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'status')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+  
   try {
     if (!(await isOwner(ctx.from.id))) return;
     
@@ -537,6 +654,11 @@ bot.hears('#وضعیت', async (ctx) => {
 
 // دستور #راهنما
 bot.hears('#راهنما', (ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'help')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+  
   const helpText = `
 🤖 راهنمای ربات قرنطینه:
 
@@ -554,11 +676,18 @@ bot.hears('#راهنما', (ctx) => {
 });
 
 // وب سرور برای Render
-app.use(express.json());
 app.use(bot.webhookCallback('/webhook'));
 
 app.get('/', (req, res) => {
   res.send('ربات قرنطینه فعال است!');
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
 });
 
 app.post('/webhook', (req, res) => {
@@ -575,6 +704,16 @@ cron.schedule('0 */6 * * *', () => {
   checkQuarantineExpiry();
 });
 
-// فعال سازی وب هوک (یک بار اجرا شود)
-// bot.telegram.setWebhook('https://your-render-url.onrender.com/webhook');
+// فعال سازی وب هوک
+if (process.env.RENDER_EXTERNAL_URL) {
+  bot.telegram.setWebhook(`https://${process.env.RENDER_EXTERNAL_URL}/webhook`);
+} else {
+  logger.warn('آدرس Render تعریف نشده است، از حالت polling استفاده می‌شود');
+  bot.launch();
+}
 
+// Graceful shutdown
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
+
+module.exports = app;
