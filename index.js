@@ -119,7 +119,7 @@ async function isOwner(userId) {
   }
 }
 
-// تابع بررسی ادمین مجاز (جدید)
+// تابع بررسی ��دمین مجاز
 async function isAllowedAdmin(userId) {
   try {
     const cacheKey = `allowed_admin:${userId}`;
@@ -245,34 +245,6 @@ async function removeUserFromAllOtherChats(currentChatId, userId) {
   }
 }
 
-// تابع جدید برای حذف کاربر از تمام گروه‌ها
-async function removeUserFromAllGroups(userId) {
-  try {
-    const { data: allChats, error: chatsError } = await supabase
-      .from('allowed_chats')
-      .select('chat_id');
-    
-    if (chatsError) {
-      logger.error('خطا در دریافت گروه‌ها:', chatsError);
-      return;
-    }
-    
-    if (allChats && allChats.length > 0) {
-      logger.info(`حذف کاربر ${userId} از ${allChats.length} گروه`);
-      
-      for (const chat of allChats) {
-        try {
-          await removeUserFromChat(chat.chat_id, userId);
-        } catch (error) {
-          logger.error(`حذف از گروه ${chat.chat_id} ناموفق بود:`, error);
-        }
-      }
-    }
-  } catch (error) {
-    logger.error('خطا در حذف کاربر از گروه‌ها:', error);
-  }
-}
-
 // تابع پردازش کاربر جدید (قرنطینه اتوماتیک) - بهبود یافته
 async function handleNewUser(ctx, user) {
   try {
@@ -336,7 +308,7 @@ async function handleNewUser(ctx, user) {
         }, { onConflict: 'user_id' });
       
       if (insertError) {
-        logger.error('خطا در ذخیره کاربر در قرنطینه:', insertError);
+        logger.error('خطا ��ر ذخیره کاربر در قرنطینه:', insertError);
         return;
       }
       
@@ -623,12 +595,11 @@ bot.on('message', async (ctx) => {
         return;
       }
       
-      // خارج کردن کاربر از قرنطینه
+      // خارج کردن کاربر از قرنطینه (بدون حذف از گروه)
       const { error } = await supabase
         .from('quarantine_users')
         .update({ 
           is_quarantined: false,
-          current_chat_id: null,
           updated_at: new Date().toISOString()
         })
         .eq('user_id', targetUser.id);
@@ -647,9 +618,6 @@ bot.on('message', async (ctx) => {
         target_username: targetUser.username,
         target_first_name: targetUser.first_name
       });
-      
-      // حذف کاربر از تمام گروه‌ها
-      await removeUserFromAllGroups(targetUser.id);
       
       // پاسخ به ادمین مجاز
       ctx.reply(`✅ کاربر ${targetUser.first_name} (@${targetUser.username || 'بدون یوزرنیم'}) با موفقیت از قرنطینه خارج شد.`);
@@ -692,7 +660,6 @@ bot.on('message', async (ctx) => {
         .from('quarantine_users')
         .update({ 
           is_quarantined: false,
-          current_chat_id: null,
           updated_at: new Date().toISOString()
         })
         .eq('user_id', targetUser.id);
@@ -745,7 +712,6 @@ bot.on('text', async (ctx) => {
         .from('quarantine_users')
         .update({ 
           is_quarantined: false,
-          current_chat_id: null,
           updated_at: new Date().toISOString()
         })
         .eq('user_id', targetUserId);
@@ -831,7 +797,7 @@ app.get('/', (req, res) => {
   res.send('ربات قرنطینه فعال است!');
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', (req, res) {
   const memoryUsage = process.memoryUsage();
   res.status(200).json({ 
     status: 'OK', 
