@@ -325,7 +325,7 @@ async function handleNewUser(ctx, user) {
       }
       
       // کاربر از تمام گروه‌های دیگر حذف شود
-      logger.info(`حذف کاربر ${user.id} از سایر گروه‌ها به جز ${ctx.chat.id}`);
+      logger.info(`حذف کاربر ${user.id} از سایر گرو��‌ها به جز ${ctx.chat.id}`);
       await removeUserFromAllOtherChats(ctx.chat.id, user.id);
       
       // ثبت فعالیت
