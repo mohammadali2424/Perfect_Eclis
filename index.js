@@ -5,7 +5,6 @@ const winston = require('winston');
 const cron = require('node-cron');
 const NodeCache = require('node-cache');
 const helmet = require('helmet');
-const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -120,7 +119,7 @@ async function isOwner(userId) {
   }
 }
 
-// تابع بررسی ادمین مجاز
+// تابع بررسی ادمین مجاز - بهبود یافته
 async function isAllowedAdmin(userId) {
   try {
     const cacheKey = `allowed_admin:${userId}`;
@@ -147,46 +146,6 @@ async function isAllowedAdmin(userId) {
   }
 }
 
-// تابع جدید برای بررسی ربات مجاز
-async function isAllowedBot(botId) {
-  try {
-    const cacheKey = `allowed_bot:${botId}`;
-    const cached = cache.get(cacheKey);
-    if (cached !== undefined) return cached;
-    
-    const { data, error } = await supabase
-      .from('allowed_admins')
-      .select('admin_id')
-      .eq('admin_id', botId)
-      .single();
-    
-    if (error && error.code !== 'PGRST116') {
-      logger.error('خطا در بررسی ربات مجاز:', error);
-      return false;
-    }
-    
-    const isAllowed = data !== null;
-    cache.set(cacheKey, isAllowed, 600);
-    return isAllowed;
-  } catch (error) {
-    logger.error('خطا در بررسی ربات مجاز:', error);
-    return false;
-  }
-}
-
-// تابع بهبود یافته برای بررسی ادمین/ربات مجاز
-async function isAllowedAdminOrBot(userId) {
-  // بررسی اینکه آیا کاربر یک ربات است (آیدی ربات‌ها معمولاً عددی بالا هستند)
-  const isProbablyBot = userId > 1000000000;
-  
-  if (isProbablyBot) {
-    return await isAllowedBot(userId);
-  }
-  
-  // اگر کاربر انسانی است
-  return await isAllowedAdmin(userId);
-}
-
 // تابع بررسی اینکه آیا ربات ادمین است
 async function isBotAdmin(chatId) {
   try {
@@ -205,7 +164,7 @@ async function isBotAdmin(chatId) {
   }
 }
 
-// تابع بررسی وضعیت пользова در گروه
+// تابع بررسی وضعیت کاربر در گروه
 async function getUserStatus(chatId, userId) {
   try {
     const member = await bot.telegram.getChatMember(chatId, userId);
@@ -416,6 +375,71 @@ async function checkQuarantineExpiry() {
   }
 }
 
+// API برای آزاد کردن کاربر از قرنطینه توسط ربات دیگر
+const API_SECRET = process.env.API_SECRET_KEY;
+
+// میدلور برای بررسی احراز هویت API
+const authenticateAPI = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (authHeader && authHeader === `Bearer ${API_SECRET}`) {
+    next();
+  } else {
+    res.status(401).json({ error: 'دسترسی غیرمجاز' });
+  }
+};
+
+// endpoint برای آزاد کردن کاربر از قرنطینه
+app.post('/api/release-user', authenticateAPI, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'شناسه کاربر ضروری است' });
+    }
+
+    // بررسی وجود کاربر در قرنطینه
+    const { data: quarantinedUser, error: queryError } = await supabase
+      .from('quarantine_users')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_quarantined', true)
+      .single();
+
+    if (queryError || !quarantinedUser) {
+      return res.status(404).json({ error: 'کاربر در قرنطینه نیست' });
+    }
+
+    // آزاد کردن کاربر از قرنطینه
+    const { error } = await supabase
+      .from('quarantine_users')
+      .update({ 
+        is_quarantined: false,
+        current_chat_id: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId);
+
+    if (error) {
+      return res.status(500).json({ error: 'خطا در آزاد کردن کاربر' });
+    }
+
+    // پاک کردن کش کاربر
+    cache.del(`quarantine:${userId}`);
+
+    // ثبت لاگ
+    await logAction('user_released_by_trigger_bot', null, null, {
+      target_user_id: userId,
+      released_by: 'trigger_bot'
+    });
+
+    res.json({ success: true, message: 'کاربر آزاد شد' });
+  } catch (error) {
+    logger.error('خطا در API آزاد کردن کاربر:', error);
+    res.status(500).json({ error: 'خطای سرور' });
+  }
+});
+
 // دستور /start
 bot.start((ctx) => {
   if (!checkRateLimit(ctx.from.id, 'start')) {
@@ -551,7 +575,6 @@ bot.hears(/^#ادمین\s+(\d+)$/, async (ctx) => {
     
     // پاک کردن کش برای اطمینان از به روز رسانی
     cache.del(`allowed_admin:${targetUserId}`);
-    cache.del(`allowed_bot:${targetUserId}`);
     
     ctx.reply(`✅ کاربر با آیدی ${targetUserId} به لیست ادمین‌های مجاز اضافه شد.`);
     await logAction('admin_added', ctx.from.id, null, {
@@ -589,7 +612,6 @@ bot.hears(/^#حذف_ادمین\s+(\d+)$/, async (ctx) => {
     
     // پاک کردن کش برای اطمینان از به روز رسانی
     cache.del(`allowed_admin:${targetUserId}`);
-    cache.del(`allowed_bot:${targetUserId}`);
     
     ctx.reply(`✅ کاربر با آیدی ${targetUserId} از لیست ادمین‌های مجاز حذف شد.`);
     await logAction('admin_removed', ctx.from.id, null, {
@@ -613,15 +635,21 @@ bot.on('text', async (ctx) => {
         return;
       }
       
-      logger.info(`دریافت دستور #لیست از کاربر ${ctx.from.id} (ربات: ${ctx.from.is_bot})`);
+      logger.info(`دریافت دستور #لیست از کاربر ${ctx.from.id}`);
       
-      // بررسی آیا کاربر/ربات مجاز است
-      const isAllowed = await isAllowedAdminOrBot(ctx.from.id);
-      logger.info(`کاربر ${ctx.from.id} isAllowed: ${isAllowed}`);
+      // بررسی آیا کاربر ادمین مجاز است
+      const isAdmin = await isAllowedAdmin(ctx.from.id);
+      logger.info(`کاربر ${ctx.from.id} isAllowedAdmin: ${isAdmin}`);
       
-      if (!isAllowed) {
-        logger.warn(`کاربر/ربات ${ctx.from.id} سعی در استفاده از دستور #لیست بدون مجوز دارد`);
+      if (!isAdmin) {
+        logger.warn(`کاربر ${ctx.from.id} سعی در استفاده از دستور #لیست بدون مجوز دارد`);
         ctx.reply('شما مجوز استفاده از این دستور را ندارید. فقط ادمین‌های مجاز می‌توانند از #لیست استفاده کنند.');
+        return;
+      }
+      
+      // بررسی آیا پیام ریپلای است
+      if (!ctx.message.reply_to_message) {
+        ctx.reply('لطفاً روی پیام کاربر مورد نظر ریپلای کنید.');
         return;
       }
       
@@ -666,7 +694,7 @@ bot.on('text', async (ctx) => {
       // پاک کردن کش کاربر
       cache.del(`quarantine:${targetUser.id}`);
       
-      logger.info(`کاربر ${targetUser.id} توسط ادمین/ربات مجاز از قرنطینه خارج شد`);
+      logger.info(`کاربر ${targetUser.id} توسط ادمین مجاز از قرنطینه خارج شد`);
       
       // ثبت فعالیت
       await logAction('user_released_by_admin', ctx.from.id, null, {
@@ -675,7 +703,7 @@ bot.on('text', async (ctx) => {
         target_first_name: targetUser.first_name
       });
       
-      // پاسخ به ادمین/ربات مجاز
+      // پاسخ به ادمین مجاز
       ctx.reply(`✅ کاربر ${targetUser.first_name} (@${targetUser.username || 'بدون یوزرنیم'}) با موفقیت از قرنطینه خارج شد.`);
       return;
     }
@@ -864,74 +892,6 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     memory: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`
   });
-});
-
-// اضافه کردن endpoint جدید برای ربات‌ها
-app.post('/api/release-user', express.json(), async (req, res) => {
-  try {
-    const { botId, secretKey, targetUserId } = req.body;
-    
-    // احراز هویت ربات
-    if (!botId || !secretKey || secretKey !== process.env.API_SECRET_KEY) {
-      logger.warn('اعتبارسنجی ناموفق برای API');
-      return res.status(401).json({ error: 'اعتبارسنجی ناموفق' });
-    }
-    
-    // بررسی اینکه ربات مجاز است
-    const isAllowed = await isAllowedBot(parseInt(botId));
-    if (!isAllowed) {
-      logger.warn(`ربات ${botId} مجاز نیست`);
-      return res.status(403).json({ error: 'ربات مجاز نیست' });
-    }
-    
-    // بررسی اینکه کاربر در قرنطینه است
-    const { data: quarantinedUser, error: queryError } = await supabase
-      .from('quarantine_users')
-      .select('*')
-      .eq('user_id', targetUserId)
-      .eq('is_quarantined', true)
-      .single();
-    
-    if (queryError && queryError.code !== 'PGRST116') {
-      logger.error('خطا در بررسی کاربر قرنطینه:', queryError);
-      return res.status(500).json({ error: 'خطا در بررسی وضعیت کاربر' });
-    }
-    
-    if (!quarantinedUser) {
-      logger.info(`کاربر ${targetUserId} در قرنطینه نیست`);
-      return res.status(404).json({ error: 'کاربر در قرنطینه نیست' });
-    }
-    
-    // خارج کردن کاربر از قرنطینه
-    const { error } = await supabase
-      .from('quarantine_users')
-      .update({ 
-        is_quarantined: false,
-        current_chat_id: null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('user_id', targetUserId);
-      
-    if (error) {
-      logger.error('خطا در خارج کردن کاربر از قرنطینه:', error);
-      return res.status(500).json({ error: 'خطا در خارج کردن کاربر از قرنطینه' });
-    }
-    
-    // پاک کردن کش کاربر
-    cache.del(`quarantine:${targetUserId}`);
-    
-    logger.info(`کاربر ${targetUserId} توسط ربات ${botId} از قرنطینه خارج شد`);
-    
-    // ثبت فعالیت
-    await logAction('user_released_by_bot', botId, null, {
-      target_user_id: targetUserId
-    });
-    
-    res.json({ success: true, message: 'کاربر با موفقیت از قرنطینه خارج شد' });
-  } catch (error) {
-    logger.error('خطا در API آزادسازی کاربر:', error);
-    res.status(500).json({ error: 'خطای سرور' });
-  }
 });
 
 app.post('/webhook', (req, res) => {
