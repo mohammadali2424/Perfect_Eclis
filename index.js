@@ -49,6 +49,39 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// اضافه کردن این endpoint به ربات قرنطینه (index.js)
+app.post('/api/release-user', async (req, res) => {
+  try {
+    const { userId, apiKey } = req.body;
+    
+    // احراز هویت API
+    if (apiKey !== process.env.INTERNAL_API_KEY) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    // خارج کردن کاربر از قرنطینه
+    const { error } = await supabase
+      .from('quarantine_users')
+      .update({ 
+        is_quarantined: false,
+        current_chat_id: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId);
+      
+    if (error) {
+      console.error('خطا در آزادسازی کاربر:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    
+    res.json({ success: true, message: 'User released successfully' });
+    
+  } catch (error) {
+    console.error('خطا در پردازش درخواست API:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // توکن ربات
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
@@ -1007,5 +1040,6 @@ process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 module.exports = app;
+
 
 
