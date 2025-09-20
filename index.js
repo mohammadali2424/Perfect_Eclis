@@ -5,12 +5,14 @@ const winston = require('winston');
 const cron = require('node-cron');
 const NodeCache = require('node-cache');
 const helmet = require('helmet');
+const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware امنیتی
 app.use(helmet());
+app.use(cors());
 app.use(express.json());
 
 // تنظیمات
@@ -148,7 +150,7 @@ const removeUserFromAllOtherChats = async (currentChatId, userId) => {
       }
     }
   } catch (error) {
-    logger.error('خطا در حذف کاربر از گروه‌های دیگر:', error);
+    logger.error('خطا در حذف کاربر از گروه‌ه��ی دیگر:', error);
   }
 };
 
@@ -266,10 +268,17 @@ app.post('/api/release-user', async (req, res) => {
   try {
     const { userId, secretKey } = req.body;
     
-    if (secretKey !== process.env.API_SECRET_KEY) {
+    // بررسی کلید امنیتی
+    if (!secretKey || secretKey !== process.env.API_SECRET_KEY) {
+      logger.warn('درخواست غیرمجاز برای آزادسازی کاربر');
       return res.status(401).json({ error: 'Unauthorized' });
     }
     
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+    
+    // خارج کردن کاربر از قرنطینه
     const { error } = await supabase
       .from('quarantine_users')
       .update({ 
@@ -284,9 +293,14 @@ app.post('/api/release-user', async (req, res) => {
       return res.status(500).json({ error: 'Internal server error' });
     }
     
+    // پاک کردن کش کاربر
     cache.del(`quarantine:${userId}`);
+    
     logger.info(`کاربر ${userId} از طریق API از قرنطینه خارج شد`);
-    res.status(200).json({ success: true });
+    res.status(200).json({ 
+      success: true,
+      message: `User ${userId} released from quarantine`
+    });
   } catch (error) {
     logger.error('خطا در endpoint آزاد کردن کاربر:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -298,6 +312,29 @@ app.use(bot.webhookCallback('/webhook'));
 app.get('/', (req, res) => res.send('ربات قرنطینه فعال است!'));
 app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
 
+// تست endpoint آزادسازی کاربر
+app.get('/test-release', async (req, res) => {
+  try {
+    const testUserId = 123456789; // آیدی تست
+    const { error } = await supabase
+      .from('quarantine_users')
+      .update({ 
+        is_quarantined: false,
+        current_chat_id: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', testUserId);
+      
+    if (error) {
+      return res.status(500).json({ error: 'Error in test query' });
+    }
+    
+    res.status(200).json({ success: true, message: 'Test query executed' });
+  } catch (error) {
+    res.status(500).json({ error: 'Test failed' });
+  }
+});
+
 app.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
 
 // بررسی انقضای قرنطینه هر 6 ساعت
@@ -305,11 +342,12 @@ cron.schedule('0 */6 * * *', () => checkQuarantineExpiry());
 
 // فعال سازی وب هوک
 if (process.env.RENDER_EXTERNAL_URL) {
-  const webhookUrl = `https://${process.env.RENDER_EXTERNAL_URL.replace(/^https?:\/\//, '')}/webhook`;
+  const webhookUrl = `${process.env.RENDER_EXTERNAL_URL}/webhook`;
   bot.telegram.setWebhook(webhookUrl)
     .then(() => logger.info(`Webhook set to: ${webhookUrl}`))
     .catch(error => logger.error('Error setting webhook:', error));
 } else {
+  logger.warn('آدرس Render تعریف نشده است، از حالت polling استفاده می‌شود');
   bot.launch();
 }
 
