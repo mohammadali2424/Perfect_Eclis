@@ -110,6 +110,27 @@ const isChatAdmin = async (chatId, userId) => {
   }
 };
 
+const isAllowedAdmin = async (userId) => {
+  try {
+    const cacheKey = `allowed_admin:${userId}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    
+    const { data, error } = await supabase
+      .from('allowed_admins')
+      .select('admin_id')
+      .eq('admin_id', userId)
+      .single();
+    
+    const isAllowed = data !== null;
+    cache.set(cacheKey, isAllowed, 600);
+    return isAllowed;
+  } catch (error) {
+    logger.error('خطا در بررسی ادمین مجاز:', error);
+    return false;
+  }
+};
+
 const isBotAdmin = async (chatId) => {
   try {
     const cacheKey = `botadmin:${chatId}`;
@@ -338,6 +359,12 @@ bot.hears('#فعال', async (ctx) => {
       return;
     }
     
+    // بررسی اینکه ربات ادمین است
+    if (!(await isBotAdmin(ctx.chat.id))) {
+      ctx.reply('❌ ابتدا باید ربات را ادمین گروه کنید.');
+      return;
+    }
+    
     const { error } = await supabase
       .from('allowed_chats')
       .upsert({
@@ -347,10 +374,14 @@ bot.hears('#فعال', async (ctx) => {
         activated_by: ctx.from.id,
         activated_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
-      }, { onConflict: 'chat_id' });
+      }, { 
+        onConflict: 'chat_id',
+        ignoreDuplicates: false
+      });
     
     if (error) {
-      logger.error('خطا در فعال کردن گروه:', error);
+      console.error('خطای کامل Supabase:', error);
+      logger.error('خطا در فعال کردن گ��وه:', error);
       ctx.reply('❌ خطا در فعال کردن گروه. لطفاً لاگ‌ها را بررسی کنید.');
       return;
     }
@@ -363,6 +394,7 @@ bot.hears('#فعال', async (ctx) => {
       chat_title: ctx.chat.title
     });
   } catch (error) {
+    console.error('خطای کامل در دستور فعال:', error);
     logger.error('خطا در دستور فعال:', error);
     ctx.reply('❌ خطایی در پردازش دستور رخ داده است.');
   }
