@@ -449,6 +449,50 @@ app.post('/api/release-user', authenticateAPI, async (req, res) => {
   }
 });
 
+// تست وضعیت کاربر در قرنطینه
+app.get('/api/test-user/:userId', async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    
+    // بررسی آیا کاربر در قرنطینه است
+    const { data: quarantinedUser, error } = await supabase
+      .from('quarantine_users')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_quarantined', true)
+      .single();
+    
+    if (error) {
+      return res.status(500).json({ 
+        success: false, 
+        error: error.message,
+        message: 'خطا در بررسی وضعیت کاربر'
+      });
+    }
+    
+    if (quarantinedUser) {
+      res.json({
+        success: true,
+        is_quarantined: true,
+        user: quarantinedUser,
+        message: 'کاربر در قرنطینه است'
+      });
+    } else {
+      res.json({
+        success: true,
+        is_quarantined: false,
+        message: 'کاربر در قرنطینه نیست'
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'خطای سرور'
+    });
+  }
+});
+
 // دستور /start
 bot.start((ctx) => {
   if (!checkRateLimit(ctx.from.id, 'start')) {
@@ -963,4 +1007,5 @@ process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 module.exports = app;
+
 
