@@ -819,6 +819,43 @@ bot.hears(/^#حذف\s+(\d+)$/, async (ctx) => {
   }
 });
 
+// بعد از خطوط مربوط به تنظیمات Supabase و قبل از route های موجود
+app.post('/api/release-user', async (req, res) => {
+  try {
+    const { userId, apiKey } = req.body;
+    
+    // احراز هویت API
+    if (apiKey !== process.env.INTERNAL_API_KEY) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    // خارج کردن کاربر از قرنطینه
+    const { error } = await supabase
+      .from('quarantine_users')
+      .update({ 
+        is_quarantined: false,
+        current_chat_id: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId);
+      
+    if (error) {
+      logger.error('خطا در آزادسازی کاربر از طریق API:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    
+    // پاک کردن کش کاربر
+    cache.del(`quarantine:${userId}`);
+    
+    logger.info(`کاربر ${userId} از طریق API آزاد شد`);
+    res.json({ success: true, message: 'User released successfully' });
+    
+  } catch (error) {
+    logger.error('خطا در پردازش درخواست API:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // دستور #وضعیت برای مالک‌ها
 bot.hears('#وضعیت', async (ctx) => {
   if (!checkRateLimit(ctx.from.id, 'status')) {
@@ -926,3 +963,4 @@ process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 module.exports = app;
+
