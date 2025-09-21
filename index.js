@@ -255,7 +255,7 @@ bot.start((ctx) => {
 });
 
 // دستور فعال‌سازی گروه
-bot.command('فعال', async (ctx) => {
+bot.command('on', async (ctx) => {
   if (!ctx.message.chat.type.includes('group')) {
     ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
     return;
@@ -309,7 +309,7 @@ bot.command('فعال', async (ctx) => {
 });
 
 // دستور غیرفعال‌سازی گروه
-bot.command('غیرفعال', async (ctx) => {
+bot.command('off', async (ctx) => {
   if (!ctx.message.chat.type.includes('group')) {
     ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
     return;
@@ -351,7 +351,7 @@ bot.command('غیرفعال', async (ctx) => {
 });
 
 // دستور وضعیت گروه
-bot.command('وضعیت', async (ctx) => {
+bot.command('status', async (ctx) => {
   if (!ctx.message.chat.type.includes('group')) {
     ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
     return;
@@ -523,3 +523,4 @@ process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 module.exports = app;
+
