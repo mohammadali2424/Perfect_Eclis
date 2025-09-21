@@ -61,7 +61,7 @@ const logAction = async (action, userId, chatId = null, details = {}) => {
       action, user_id: userId, chat_id: chatId, details, created_at: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('خط�� در ثبت فعالیت:', error);
+    logger.error('خطا در ثبت فعالیت:', error);
   }
 };
 
@@ -82,19 +82,29 @@ const isChatAdmin = async (chatId, userId) => {
   }
 };
 
+// تابع اصلاح شده برای بررسی ادمین بودن ربات
 const isBotAdmin = async (chatId) => {
   try {
     const cacheKey = `botadmin:${chatId}`;
     const cached = cache.get(cacheKey);
     if (cached !== undefined) return cached;
     
-    const self = await bot.telegram.getChatMember(chatId, bot.botInfo.id);
+    // استفاده از parseInt برای اطمینان از عددی بودن chatId
+    const numericChatId = parseInt(chatId);
+    const self = await bot.telegram.getChatMember(numericChatId, bot.botInfo.id);
     const isAdmin = ['administrator', 'creator'].includes(self.status);
     
     cache.set(cacheKey, isAdmin, 300);
     return isAdmin;
   } catch (error) {
     logger.error('خطا در بررسی ادمین بودن ربات:', error);
+    
+    // اگر خطا مربوط به عدم دسترسی باشد، false برمی‌گردانیم
+    if (error.response && error.response.error_code === 403) {
+      return false;
+    }
+    
+    // برای سایر خطاها نیز false برمی‌گردانیم
     return false;
   }
 };
@@ -245,7 +255,7 @@ bot.start((ctx) => {
 });
 
 // دستور فعال‌سازی گروه
-bot.command('Active', async (ctx) => {
+bot.command('فعال', async (ctx) => {
   if (!ctx.message.chat.type.includes('group')) {
     ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
     return;
@@ -264,7 +274,11 @@ bot.command('Active', async (ctx) => {
     return;
   }
 
-  if (!(await isBotAdmin(chatId))) {
+  // بررسی ادمین بودن ربات با لاگ بیشتر برای دیباگ
+  const botIsAdmin = await isBotAdmin(chatId);
+  logger.info(`بررسی ادمین بودن ربات در گروه ${chatId}: ${botIsAdmin}`);
+  
+  if (!botIsAdmin) {
     ctx.reply('لطفاً ابتدا ربات را ادمین گروه کنید.');
     return;
   }
@@ -295,7 +309,7 @@ bot.command('Active', async (ctx) => {
 });
 
 // دستور غیرفعال‌سازی گروه
-bot.command('Inactive', async (ctx) => {
+bot.command('غیرفعال', async (ctx) => {
   if (!ctx.message.chat.type.includes('group')) {
     ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
     return;
@@ -509,4 +523,3 @@ process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 module.exports = app;
-
