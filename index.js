@@ -6,7 +6,7 @@ const cron = require('node-cron');
 const NodeCache = require('node-cache');
 const helmet = require('helmet');
 const cors = require('cors');
-const redis = require('redis');
+const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,6 +18,15 @@ app.use(express.json());
 
 // تنظیمات
 const cache = new NodeCache({ stdTTL: 300, checkperiod: 600 });
+
+// ==================[ تنظیمات چندرباتی جدید ]==================
+const BOT_INSTANCES = process.env.BOT_INSTANCES ? 
+  JSON.parse(process.env.BOT_INSTANCES) : [];
+  
+const SELF_BOT_ID = process.env.SELF_BOT_ID || 'quarantine_1';
+const SYNC_ENABLED = process.env.SYNC_ENABLED === 'true';
+// ==================[ پایان تنظیمات چندرباتی ]==================
+
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
@@ -40,14 +49,6 @@ if (process.env.NODE_ENV !== 'production') {
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Redis Client
-const redisClient = redis.createClient({
-  url: process.env.REDIS_URL || 'redis://localhost:6379'
-});
-
-redisClient.on('error', (err) => logger.error('Redis Client Error:', err));
-redisClient.connect();
-
 // محدودیت نرخ درخواست
 const rateLimit = new Map();
 const checkRateLimit = (userId, action, limit = 5, windowMs = 60000) => {
@@ -63,60 +64,7 @@ const checkRateLimit = (userId, action, limit = 5, windowMs = 60000) => {
   return true;
 };
 
-// 🔔 تابع جدید: ارسال پیام به مالکان گروه هنگام تخلف
-const notifyOwnersAboutViolation = async (chatId, violatingUser) => {
-  try {
-    const chatAdministrators = await bot.telegram.getChatAdministrators(chatId);
-    const owner = chatAdministrators.find(admin => admin.status === 'creator');
-    
-    const userName = violatingUser.first_name || 'ناشناس';
-    const userUsername = violatingUser.username ? `@${violatingUser.username}` : 'ندارد';
-    
-    const alertMessage = `⚠️ **هشدار تخلف قرنطینه**\n\n` +
-                         `کاربر: ${userName} (آیدی: ${violatingUser.id})\n` +
-                         `نام کاربری: ${userUsername}\n` +
-                         `در حال تلاش برای پیوستن به گروه‌های دیگر است در حالی که هنوز در قرنطینه قرار دارد.`;
-
-    // ارسال پیام به سازنده گروه
-    if (owner) {
-      try {
-        await bot.telegram.sendMessage(owner.user.id, alertMessage, { parse_mode: 'Markdown' });
-        logger.info(`پیام هشدار برای کاربر ${violatingUser.id} به مالک گروه ${chatId} ارسال شد`);
-      } catch (error) {
-        logger.error(`خطا در ارسال پیام به مالک ${owner.user.id}:`, error);
-      }
-    }
-    
-    // ارسال پیام به سایر ادمین‌ها (اختیاری)
-    for (const admin of chatAdministrators) {
-      if (admin.status === 'administrator' && admin.user.id !== owner.user.id) {
-        try {
-          await bot.telegram.sendMessage(admin.user.id, alertMessage, { parse_mode: 'Markdown' });
-        } catch (error) {
-          logger.error(`خطا در ارسال پیام به ادمین ${admin.user.id}:`, error);
-        }
-      }
-    }
-  } catch (error) {
-    logger.error('خطا در ارسال پیام به مالکان:', error);
-  }
-};
-
-// 🗑️ تابع جدید: حذف خودکار پیام‌های سیستم
-const deleteSystemMessage = async (ctx) => {
-  try {
-    await ctx.deleteMessage();
-    logger.info(`پیام سیستم در گروه ${ctx.chat.id} حذف شد`);
-  } catch (error) {
-    if (error.response && error.response.error_code === 400) {
-      logger.warn('پیام قبلاً حذف شده یا دسترسی وجود ندارد');
-    } else {
-      logger.error('خطا در حذف پیام سیستم:', error);
-    }
-  }
-};
-
-// توابع کمکی موجود
+// توابع کمکی
 const logAction = async (action, userId, chatId = null, details = {}) => {
   try {
     await supabase.from('action_logs').insert({
@@ -127,12 +75,31 @@ const logAction = async (action, userId, chatId = null, details = {}) => {
   }
 };
 
+const isChatAdmin = async (chatId, userId) => {
+  try {
+    const cacheKey = `admin:${chatId}:${userId}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    
+    const member = await bot.telegram.getChatMember(chatId, userId);
+    const isAdmin = ['administrator', 'creator'].includes(member.status);
+    
+    cache.set(cacheKey, isAdmin, 300);
+    return isAdmin;
+  } catch (error) {
+    logger.error('خطا در بررسی ادمین:', error);
+    return false;
+  }
+};
+
+// تابع اصلاح شده برای بررسی ادمین بودن ربات
 const isBotAdmin = async (chatId) => {
   try {
     const cacheKey = `botadmin:${chatId}`;
     const cached = cache.get(cacheKey);
     if (cached !== undefined) return cached;
     
+    // استفاده از parseInt برای اطمینان از عددی بودن chatId
     const numericChatId = parseInt(chatId);
     const self = await bot.telegram.getChatMember(numericChatId, bot.botInfo.id);
     const isAdmin = ['administrator', 'creator'].includes(self.status);
@@ -141,45 +108,20 @@ const isBotAdmin = async (chatId) => {
     return isAdmin;
   } catch (error) {
     logger.error('خطا در بررسی ادمین بودن ربات:', error);
-    return false;
-  }
-};
-
-const isChatAdmin = async (chatId, userId) => {
-  try {
-    const cacheKey = `admin:${chatId}:${userId}`;
-    const cached = cache.get(cacheKey);
-    if (cached !== undefined) return cached;
     
-    const redisKey = `admin:${chatId}:${userId}`;
-    const redisCached = await redisClient.get(redisKey);
-    if (redisCached !== null) {
-      const result = redisCached === 'true';
-      cache.set(cacheKey, result, 60);
-      return result;
+    // اگر خطا مربوط به عدم دسترسی باشد، false برمی‌گردانیم
+    if (error.response && error.response.error_code === 403) {
+      return false;
     }
     
-    const member = await bot.telegram.getChatMember(chatId, userId);
-    const isAdmin = ['administrator', 'creator'].includes(member.status);
-    
-    cache.set(cacheKey, isAdmin, 300);
-    await redisClient.setEx(redisKey, 300, isAdmin.toString());
-    
-    return isAdmin;
-  } catch (error) {
-    logger.error('خطا در بررسی ادمین:', error);
+    // برای سایر خطاها نیز false برمی‌گردانیم
     return false;
   }
 };
 
 const getUserStatus = async (chatId, userId) => {
   try {
-    const cacheKey = `userstatus:${chatId}:${userId}`;
-    const cached = cache.get(cacheKey);
-    if (cached !== undefined) return cached;
-    
     const member = await bot.telegram.getChatMember(chatId, userId);
-    cache.set(cacheKey, member.status, 300);
     return member.status;
   } catch (error) {
     if (error.response?.error_code === 400) return 'not_member';
@@ -217,20 +159,10 @@ const removeUserFromChat = async (chatId, userId) => {
 
 const removeUserFromAllOtherChats = async (currentChatId, userId) => {
   try {
-    const cacheKey = 'allowed_chats';
-    let allChats = cache.get(cacheKey);
+    const { data: allChats, error } = await supabase.from('allowed_chats').select('chat_id');
+    if (error) return logger.error('خطا در دریافت گروه‌ها:', error);
     
-    if (!allChats) {
-      const { data, error } = await supabase.from('allowed_chats').select('chat_id');
-      if (error) {
-        logger.error('خطا در دریافت گروه‌ها:', error);
-        return;
-      }
-      allChats = data || [];
-      cache.set(cacheKey, allChats, 600);
-    }
-    
-    if (allChats.length > 0) {
+    if (allChats?.length > 0) {
       for (const chat of allChats) {
         if (chat.chat_id.toString() !== currentChatId.toString()) {
           await removeUserFromChat(chat.chat_id, userId);
@@ -244,44 +176,27 @@ const removeUserFromAllOtherChats = async (currentChatId, userId) => {
 
 const handleNewUser = async (ctx, user) => {
   try {
-    const cacheKey = `allowed_chat:${ctx.chat.id}`;
-    let allowedChat = cache.get(cacheKey);
-    
-    if (!allowedChat) {
-      const { data } = await supabase
-        .from('allowed_chats')
-        .select('chat_id')
-        .eq('chat_id', ctx.chat.id.toString())
-        .single();
-      
-      allowedChat = data;
-      cache.set(cacheKey, data, 600);
-    }
+    // بررسی اینکه گروه فعال است یا نه
+    const { data: allowedChat } = await supabase
+      .from('allowed_chats')
+      .select('chat_id')
+      .eq('chat_id', ctx.chat.id.toString())
+      .single();
 
-    if (!allowedChat) return;
+    if (!allowedChat) {
+      return; // گروه فعال نیست، کاری نکن
+    }
 
     const now = new Date().toISOString();
-    const userCacheKey = `quarantine_user:${user.id}`;
-    let existingUser = cache.get(userCacheKey);
     
-    if (!existingUser) {
-      const { data } = await supabase
-        .from('quarantine_users')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('is_quarantined', true)
-        .single();
-      
-      existingUser = data;
-      if (existingUser) {
-        cache.set(userCacheKey, existingUser, 300);
-      }
-    }
+    const { data: existingUser } = await supabase
+      .from('quarantine_users')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('is_quarantined', true)
+      .single();
 
     if (existingUser) {
-      // 🔔 اطلاع‌رسانی تخلف کاربر
-      await notifyOwnersAboutViolation(ctx.chat.id, user);
-      
       if (existingUser.current_chat_id && existingUser.current_chat_id !== ctx.chat.id.toString()) {
         await removeUserFromChat(ctx.chat.id, user.id);
         await removeUserFromAllOtherChats(existingUser.current_chat_id, user.id);
@@ -302,14 +217,6 @@ const handleNewUser = async (ctx, user) => {
         created_at: now,
         updated_at: now
       }, { onConflict: 'user_id' });
-      
-      cache.set(userCacheKey, {
-        user_id: user.id,
-        username: user.username,
-        first_name: user.first_name,
-        is_quarantined: true,
-        current_chat_id: ctx.chat.id.toString()
-      }, 300);
       
       await removeUserFromAllOtherChats(ctx.chat.id, user.id);
       await logAction('user_quarantined', user.id, ctx.chat.id, {
@@ -335,10 +242,7 @@ const checkQuarantineExpiry = async () => {
           .from('quarantine_users')
           .update({ is_quarantined: false, current_chat_id: null, updated_at: new Date().toISOString() })
           .eq('user_id', user.user_id);
-        
-        cache.del(`quarantine_user:${user.user_id}`);
-        await redisClient.del(`quarantine_user:${user.user_id}`);
-        
+          
         await logAction('quarantine_expired', user.user_id, null, {
           username: user.username, first_name: user.first_name
         });
@@ -348,6 +252,49 @@ const checkQuarantineExpiry = async () => {
     logger.error('خطا در بررسی انقضای قرنطینه:', error);
   }
 };
+
+// ==================[ توابع هماهنگی چندرباتی ]==================
+const syncWithOtherBots = async (userId, sourceBot) => {
+  try {
+    console.log(`🔄 هماهنگی کاربر ${userId} با سایر ربات‌ها...`);
+    
+    const promises = BOT_INSTANCES
+      .filter(bot => bot.id !== SELF_BOT_ID && bot.id !== sourceBot)
+      .map(async (botInstance) => {
+        try {
+          let apiUrl = botInstance.url;
+          if (!apiUrl.startsWith('http')) {
+            apiUrl = `https://${apiUrl}`;
+          }
+          
+          apiUrl = apiUrl.replace(/\/$/, '');
+          const fullUrl = `${apiUrl}/api/sync-release`;
+          
+          const response = await axios.post(fullUrl, {
+            userId: userId,
+            secretKey: botInstance.secretKey,
+            sourceBot: SELF_BOT_ID
+          }, {
+            timeout: 5000
+          });
+          
+          console.log(`✅ هماهنگی با ${botInstance.id} موفق`);
+          return { success: true, botId: botInstance.id };
+        } catch (error) {
+          console.error(`❌ هماهنگی با ${botInstance.id} ناموفق:`, error.message);
+          return { success: false, botId: botInstance.id, error: error.message };
+        }
+      });
+    
+    const results = await Promise.all(promises);
+    const successCount = results.filter(r => r.success).length;
+    
+    console.log(`✅ هماهنگی کاربر ${userId} با ${successCount}/${results.length} ربات انجام شد`);
+  } catch (error) {
+    console.error('❌ خطا در هماهنگی با ربات‌ها:', error);
+  }
+};
+// ==================[ پایان توابع هماهنگی ]==================
 
 // دستورات ربات
 bot.start((ctx) => {
@@ -380,6 +327,7 @@ bot.command('on', async (ctx) => {
     return;
   }
 
+  // بررسی ادمین بودن ربات با لاگ بیشتر برای دیباگ
   const botIsAdmin = await isBotAdmin(chatId);
   logger.info(`بررسی ادمین بودن ربات در گروه ${chatId}: ${botIsAdmin}`);
   
@@ -403,10 +351,6 @@ bot.command('on', async (ctx) => {
       return;
     }
 
-    cache.del('allowed_chats');
-    cache.del(`allowed_chat:${chatId}`);
-    await redisClient.del('allowed_chats');
-    
     ctx.reply('✅ ربات با موفقیت فعال شد! از این پس کاربران جدید قرنطینه خواهند شد.');
     await logAction('chat_activated', userId, chatId, {
       chat_title: ctx.chat.title
@@ -449,10 +393,6 @@ bot.command('off', async (ctx) => {
       return;
     }
 
-    cache.del('allowed_chats');
-    cache.del(`allowed_chat:${chatId}`);
-    await redisClient.del('allowed_chats');
-    
     ctx.reply('❌ ربات با موفقیت غیرفعال شد! از این پس کاربران جدید قرنطینه نخواهند شد.');
     await logAction('chat_deactivated', userId, chatId, {
       chat_title: ctx.chat.title
@@ -463,7 +403,7 @@ bot.command('off', async (ctx) => {
   }
 });
 
-// سایر دستورات موجود...
+// دستور وضعیت گروه
 bot.command('status', async (ctx) => {
   if (!ctx.message.chat.type.includes('group')) {
     ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
@@ -479,24 +419,16 @@ bot.command('status', async (ctx) => {
   }
 
   try {
-    const cacheKey = `allowed_chat:${chatId}`;
-    let allowedChat = cache.get(cacheKey);
-    
-    if (!allowedChat) {
-      const { data } = await supabase
-        .from('allowed_chats')
-        .select('chat_id')
-        .eq('chat_id', chatId)
-        .single();
-      
-      allowedChat = data;
-      cache.set(cacheKey, data, 600);
-    }
+    const { data: allowedChat } = await supabase
+      .from('allowed_chats')
+      .select('chat_id')
+      .eq('chat_id', chatId)
+      .single();
 
     if (allowedChat) {
       ctx.reply('✅ ربات در این گروه فعال است و کاربران جدید را قرنطینه می‌کند.');
     } else {
-      ctx.reply('❌ ربات در این گروه غیرفعال است. برای فعال‌سازی از دستور /on استفاده کنید.');
+      ctx.reply('❌ ربات در این گروه غیرفعال است. برای فعال‌سازی از دستور /فعال استفاده کنید.');
     }
   } catch (error) {
     logger.error('خطا در بررسی وضعیت:', error);
@@ -504,6 +436,7 @@ bot.command('status', async (ctx) => {
   }
 });
 
+// دستور راهنما
 bot.command('راهنما', (ctx) => {
   if (!checkRateLimit(ctx.from.id, 'help')) {
     ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
@@ -513,9 +446,9 @@ bot.command('راهنما', (ctx) => {
   const helpText = `
 🤖 راهنمای ربات قرنطینه:
 
-/on - فعال‌سازی ربات در گروه (فقط ادمین‌ها)
-/off - غیرفعال‌سازی ربات در گروه (فقط ادمین‌ها)  
-/status - نمایش وضعیت ربات در گروه
+/فعال - فعال‌سازی ربات در گروه (فقط ادمین‌ها)
+/غیرفعال - غیرفعال‌سازی ربات در گروه (فقط ادمین‌ها)
+/وضعیت - نمایش وضعیت ربات در گروه
 /راهنما - نمایش این راهنما
 
 پس از فعال‌سازی، کاربران جدید به صورت خودکار قرنطینه می‌شوند و فقط در یک گروه می‌توانند عضو باشند.
@@ -525,7 +458,7 @@ bot.command('راهنما', (ctx) => {
   logAction('help_requested', ctx.from.id);
 });
 
-// 🗑️ پردازش پیام‌های سیستم - حذف خودکار
+// پردازش اعضای جدید
 bot.on('new_chat_members', async (ctx) => {
   try {
     for (const member of ctx.message.new_chat_members) {
@@ -538,36 +471,24 @@ bot.on('new_chat_members', async (ctx) => {
         
         await ctx.reply(
           '🤖 ربات اضافه شد!\n' +
-          'برای فعال‌سازی و شروع قرنطینه کاربران جدید، از دستور /on استفاده کنید.\n' +
-          'برای غیرفعال‌سازی از دستور /off استفاده کنید.'
+          'برای فعال‌سازی و شروع قرنطینه کاربران جدید، از دستور /فعال استفاده کنید.\n' +
+          'برای غیرفعال‌سازی از دستور /غیرفعال استفاده کنید.'
         );
       } else if (!member.is_bot) {
         await handleNewUser(ctx, member);
       }
     }
-    
-    // 🗑️ حذف پیام سیستم پس از پردازش
-    await deleteSystemMessage(ctx);
   } catch (error) {
     logger.error('خطا در پردازش عضو جدید:', error);
   }
 });
 
-// 🗑️ پردازش پیام‌های خروج کاربران
-bot.on('left_chat_member', async (ctx) => {
-  try {
-    // 🗑️ حذف پیام سیستم خروج
-    await deleteSystemMessage(ctx);
-  } catch (error) {
-    logger.error('خطا در پردازش خروج کاربر:', error);
-  }
-});
-
-// endpoint برای آزادسازی کاربر از طریق API
+// ==================[ endpointهای جدید و بهینه شده ]==================
 app.post('/api/release-user', async (req, res) => {
   try {
-    const { userId, secretKey } = req.body;
+    const { userId, secretKey, sourceBot } = req.body;
     
+    // بررسی کلید امنیتی
     if (!secretKey || secretKey !== process.env.API_SECRET_KEY) {
       logger.warn('درخواست غیرمجاز برای آزادسازی کاربر');
       return res.status(401).json({ error: 'Unauthorized' });
@@ -577,6 +498,7 @@ app.post('/api/release-user', async (req, res) => {
       return res.status(400).json({ error: 'User ID is required' });
     }
     
+    // خارج کردن کاربر از قرنطینه
     const { error } = await supabase
       .from('quarantine_users')
       .update({ 
@@ -591,12 +513,18 @@ app.post('/api/release-user', async (req, res) => {
       return res.status(500).json({ error: 'Internal server error' });
     }
     
-    cache.del(`quarantine_user:${userId}`);
-    await redisClient.del(`quarantine_user:${userId}`);
+    // پاک کردن کش کاربر
+    cache.del(`quarantine:${userId}`);
     
-    logger.info(`کاربر ${userId} از طریق API از قرنطینه خارج شد`);
+    // هماهنگی با سایر ربات‌ها (اگر فعال باشد)
+    if (SYNC_ENABLED && sourceBot !== SELF_BOT_ID) {
+      await syncWithOtherBots(userId, sourceBot);
+    }
+    
+    logger.info(`کاربر ${userId} از طریق API از قرنطینه خارج شد (درخواست از: ${sourceBot || 'unknown'})`);
     res.status(200).json({ 
       success: true,
+      botId: SELF_BOT_ID,
       message: `User ${userId} released from quarantine`
     });
   } catch (error) {
@@ -605,12 +533,94 @@ app.post('/api/release-user', async (req, res) => {
   }
 });
 
+app.get('/api/bot-status', (req, res) => {
+  res.status(200).json({
+    status: 'online',
+    botId: SELF_BOT_ID,
+    type: 'quarantine',
+    timestamp: new Date().toISOString(),
+    connectedBots: BOT_INSTANCES.length,
+    version: '3.3.0'
+  });
+});
+
+app.post('/api/sync-release', async (req, res) => {
+  try {
+    const { userId, secretKey, sourceBot } = req.body;
+    
+    // بررسی کلید امنیتی
+    if (!secretKey || secretKey !== process.env.API_SECRET_KEY) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    console.log(`🔄 درخواست هماهنگی از ${sourceBot} برای کاربر ${userId}`);
+    
+    // آزاد کردن کاربر در این ربات
+    const { error } = await supabase
+      .from('quarantine_users')
+      .update({ 
+        is_quarantined: false,
+        current_chat_id: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId);
+    
+    if (error) {
+      logger.error('خطا در آزادسازی هماهنگ:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    
+    // پاک کردن کش
+    cache.del(`quarantine:${userId}`);
+    
+    logger.info(`کاربر ${userId} از طریق هماهنگی با ${sourceBot} آزاد شد`);
+    res.status(200).json({
+      success: true,
+      botId: SELF_BOT_ID,
+      processed: true,
+      message: `کاربر ${userId} آزاد شد`
+    });
+  } catch (error) {
+    logger.error('❌ خطا در پردازش هماهنگی:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// ==================[ پایان endpointهای جدید ]==================
+
 // وب سرور
 app.use(bot.webhookCallback('/webhook'));
 app.get('/', (req, res) => res.send('ربات قرنطینه فعال است!'));
 app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
 
-app.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
+// تست endpoint آزادسازی کاربر
+app.get('/test-release', async (req, res) => {
+  try {
+    const testUserId = 123456789; // آیدی تست
+    const { error } = await supabase
+      .from('quarantine_users')
+      .update({ 
+        is_quarantined: false,
+        current_chat_id: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', testUserId);
+      
+    if (error) {
+      return res.status(500).json({ error: 'Error in test query' });
+    }
+    
+    res.status(200).json({ success: true, message: 'Test query executed' });
+  } catch (error) {
+    res.status(500).json({ error: 'Test failed' });
+  }
+});
+
+app.listen(PORT, () => {
+  logger.info(`Server running on port ${PORT}`);
+  console.log(`🤖 شناسه ربات: ${SELF_BOT_ID}`);
+  console.log(`🔗 حالت هماهنگی: ${SYNC_ENABLED ? 'فعال' : 'غیرفعال'}`);
+  console.log(`👥 تعداد ربات‌های متصل: ${BOT_INSTANCES.length}`);
+});
 
 // بررسی انقضای قرنطینه هر 6 ساعت
 cron.schedule('0 */6 * * *', () => checkQuarantineExpiry());
