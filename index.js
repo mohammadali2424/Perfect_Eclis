@@ -70,6 +70,13 @@ const checkRateLimit = (userId, action, limit = 5, windowMs = 60000) => {
   return true;
 };
 
+// ==================[ تابع جدید: بررسی مالک بودن کاربر ]==================
+const isOwner = (userId) => {
+  const ownerIds = OWNER_ID.split(',').map(id => id.trim());
+  return ownerIds.includes(userId.toString());
+};
+// ==================[ پایان تابع بررسی مالک ]==================
+
 // توابع کمکی
 const logAction = async (action, userId, chatId = null, details = {}) => {
   try {
@@ -425,7 +432,7 @@ const handleNewUser = async (ctx, user) => {
       });
       
       // گزارش قرنطینه جدید به مالک
-      const quarantineMessage = `🟢 **کاربر جدید قرنطینه شد**\n\n�� کاربر: ${user.first_name} ${user.username ? `(@${username})` : ''}\n🆔 آیدی: ${user.id}\n\n🏠 گروه: ${currentChatTitle} (${currentChatId})\n\n⏰ زمان: ${new Date().toLocaleString('fa-IR')}\n🤖 ربات: ${SELF_BOT_ID}`;
+      const quarantineMessage = `🟢 **کاربر جدید قرنطینه شد**\n\n👤 کاربر: ${user.first_name} ${user.username ? `(@${user.username})` : ''}\n🆔 آیدی: ${user.id}\n\n🏠 گروه: ${currentChatTitle} (${currentChatId})\n\n⏰ زمان: ${new Date().toLocaleString('fa-IR')}\n🤖 ربات: ${SELF_BOT_ID}`;
       await reportToOwner(quarantineMessage);
     }
     
@@ -701,7 +708,7 @@ app.get('/api/bot-status', (req, res) => {
   });
 });
 
-// بقیه endpointها و کدها بدون تغییر...
+// ==================[ endpoint جدید: هماهنگی آزادسازی ]==================
 app.post('/api/sync-release', async (req, res) => {
   try {
     const { userId, secretKey, sourceBot } = req.body;
@@ -741,7 +748,7 @@ app.post('/api/sync-release', async (req, res) => {
 });
 // ==================[ پایان endpointهای جدید ]==================
 
-// دستورات ربات (بدون تغییر)
+// ==================[ دستورات ربات - کاملاً بازنویسی شده ]==================
 bot.start((ctx) => {
   if (!checkRateLimit(ctx.from.id, 'start')) {
     ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
@@ -751,20 +758,154 @@ bot.start((ctx) => {
   logAction('bot_started', ctx.from.id);
 });
 
+// ==================[ دستور /on - کاملاً پیاده‌سازی شده ]==================
 bot.command('on', async (ctx) => {
   if (!ctx.message.chat.type.includes('group')) {
     ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
     return;
   }
-  // بقیه کد بدون تغییر...
+
+  const chatId = ctx.chat.id.toString();
+  const userId = ctx.message.from.id;
+
+  // بررسی مالک بودن کاربر
+  if (!isOwner(userId.toString())) {
+    ctx.reply('❌ فقط مالک‌های ربات می‌توانند از این دستور استفاده کنند.');
+    return;
+  }
+
+  if (!checkRateLimit(userId, 'on')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+
+  try {
+    // بررسی اینکه آیا ربات ادمین است
+    if (!(await isBotAdmin(chatId))) {
+      ctx.reply('❌ ربات باید در این گروه ادمین باشد تا بتواند فعال شود.');
+      return;
+    }
+
+    // بررسی اینکه گروه قبلاً ثبت شده یا نه
+    const { data: existingChat, error: checkError } = await supabase
+      .from('allowed_chats')
+      .select('chat_id')
+      .eq('chat_id', chatId)
+      .single();
+
+    if (checkError && checkError.code !== 'PGRST116') {
+      logger.error('خطا در بررسی گروه:', checkError);
+      ctx.reply('خطا در بررسی وضعیت گروه.');
+      return;
+    }
+
+    if (existingChat) {
+      ctx.reply('✅ ربات قبلاً در این گروه فعال شده است.');
+      return;
+    }
+
+    // ثبت گروه در دیتابیس
+    const { error: insertError } = await supabase
+      .from('allowed_chats')
+      .insert({
+        chat_id: chatId,
+        chat_title: ctx.chat.title || 'گروه بدون نام',
+        enabled: true,
+        created_at: new Date().toISOString()
+      });
+
+    if (insertError) {
+      logger.error('خطا در فعال‌سازی ربات:', insertError);
+      ctx.reply('خطا در فعال‌سازی ربات.');
+      return;
+    }
+
+    // پاک کردن کش مربوط به گروه
+    cache.del(`allowed_chat:${chatId}`);
+
+    ctx.reply('✅ ربات با موفقیت در این گروه فعال شد!\n\nاز این پس کاربران جدید به صورت خودکار قرنطینه می‌شوند.');
+    await logAction('bot_activated', userId, chatId, {
+      chat_title: ctx.chat.title
+    });
+
+    // گزارش به مالک
+    const activationMessage = `🟢 **ربات در گروه جدید فعال شد**\n\n🏠 گروه: ${ctx.chat.title || 'بدون نام'}\n🆔 آیدی: ${chatId}\n\n👤 فعال‌کننده: ${ctx.message.from.first_name} ${ctx.message.from.username ? `(@${ctx.message.from.username})` : ''}\n🆔 آیدی کاربر: ${userId}\n\n⏰ زمان: ${new Date().toLocaleString('fa-IR')}`;
+    await reportToOwner(activationMessage);
+
+  } catch (error) {
+    logger.error('خطا در اجرای دستور /on:', error);
+    ctx.reply('خطا در فعال‌سازی ربات.');
+  }
 });
 
+// ==================[ دستور /off - کاملاً پیاده‌سازی شده ]==================
 bot.command('off', async (ctx) => {
   if (!ctx.message.chat.type.includes('group')) {
     ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
     return;
   }
-  // بقیه کد بدون تغییر...
+
+  const chatId = ctx.chat.id.toString();
+  const userId = ctx.message.from.id;
+
+  // بررسی مالک بودن کاربر
+  if (!isOwner(userId.toString())) {
+    ctx.reply('❌ فقط مالک‌های ربات می‌توانند از این دستور استفاده کنند.');
+    return;
+  }
+
+  if (!checkRateLimit(userId, 'off')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+
+  try {
+    // بررسی اینکه گروه فعال است یا نه
+    const { data: existingChat, error: checkError } = await supabase
+      .from('allowed_chats')
+      .select('chat_id')
+      .eq('chat_id', chatId)
+      .single();
+
+    if (checkError && checkError.code !== 'PGRST116') {
+      logger.error('خطا در بررسی گروه:', checkError);
+      ctx.reply('خطا در بررسی وضعیت گروه.');
+      return;
+    }
+
+    if (!existingChat) {
+      ctx.reply('❌ ربات در این گروه فعال نیست.');
+      return;
+    }
+
+    // غیرفعال کردن گروه
+    const { error: deleteError } = await supabase
+      .from('allowed_chats')
+      .delete()
+      .eq('chat_id', chatId);
+
+    if (deleteError) {
+      logger.error('خطا در غیرفعال‌سازی ربات:', deleteError);
+      ctx.reply('خطا در غیرفعال‌سازی ربات.');
+      return;
+    }
+
+    // پاک کردن کش مربوط به گروه
+    cache.del(`allowed_chat:${chatId}`);
+
+    ctx.reply('✅ ربات با موفقیت در این گروه غیرفعال شد.\n\nکاربران جدید دیگر قرنطینه نخواهند شد.');
+    await logAction('bot_deactivated', userId, chatId, {
+      chat_title: ctx.chat.title
+    });
+
+    // گزارش به مالک
+    const deactivationMessage = `🔴 **ربات در گروه غیرفعال شد**\n\n🏠 گروه: ${ctx.chat.title || 'بدون نام'}\n🆔 آیدی: ${chatId}\n\n👤 غیرفعال‌کننده: ${ctx.message.from.first_name} ${ctx.message.from.username ? `(@${ctx.message.from.username})` : ''}\n🆔 آیدی کاربر: ${userId}\n\n⏰ زمان: ${new Date().toLocaleString('fa-IR')}`;
+    await reportToOwner(deactivationMessage);
+
+  } catch (error) {
+    logger.error('خطا در اجرای دستور /off:', error);
+    ctx.reply('خطا در غیرفعال‌سازی ربات.');
+  }
 });
 
 bot.command('status', async (ctx) => {
@@ -797,7 +938,7 @@ bot.command('status', async (ctx) => {
     if (allowedChat) {
       ctx.reply(`✅ ربات در این گروه فعال است\n\n📊 آمار سیستم:\n👥 کاربران قرنطینه: ${quarantineStats?.length || 0} نفر\n🤖 ربات‌های متصل: ${BOT_INSTANCES.length} عدد\n💾 کش: ${cacheStats.keys} کلید\n🎯 ضریب hit: ${Math.round((cacheStats.hits / (cacheStats.hits + cacheStats.misses || 1)) * 100)}%`);
     } else {
-      ctx.reply('❌ ربات در این گروه غیرفعال است. برای فعال‌سازی از دستور /فعال استفاده کنید.');
+      ctx.reply('❌ ربات در این گروه غیرفعال است. برای فعال‌سازی از دستور /on استفاده کنید.');
     }
   } catch (error) {
     logger.error('خطا در بررسی وضعیت:', error);
@@ -814,9 +955,9 @@ bot.command('راهنما', (ctx) => {
   const helpText = `
 🤖 راهنمای ربات قرنطینه - نسخه پیشرفته:
 
-/فعال - فعال‌سازی ربات در گروه (فقط ادمین‌ها)
-/غیرفعال - غیرفعال‌سازی ربات در گروه (فقط ادمین‌ها)
-/وضعیت - نمایش وضعیت ربات و آمار سیستم
+/on - فعال‌سازی ربات در گروه (فقط مالک‌ها)
+/off - غیرفعال‌سازی ربات در گروه (فقط مالک‌ها)
+/status - نمایش وضعیت ربات و آمار سیستم
 /راهنما - نمایش این راهنما
 
 ✨ ویژگی‌های جدید:
@@ -843,8 +984,8 @@ bot.on('new_chat_members', async (ctx) => {
         
         await ctx.reply(
           '🤖 ربات اضافه شد!\n' +
-          'برای فعال‌سازی و شروع قرنطینه کاربران جدید، از دستور /فعال استفاده کنید.\n' +
-          'برای غیرفعال‌سازی از دستور /غیرفعال استفاده کنید.'
+          'برای فعال‌سازی و شروع قرنطینه کاربران جدید، از دستور /on استفاده کنید.\n' +
+          'برای غیرفعال‌سازی از دستور /off استفاده کنید.'
         );
       } else if (!member.is_bot) {
         await handleNewUser(ctx, member);
