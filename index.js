@@ -16,7 +16,7 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// ==================[ تنظیمات اولیه - فقط از متغیرهای محیطی ]==================
+// ==================[ تنظیمات اولیه ]==================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -24,20 +24,7 @@ const SELF_BOT_ID = process.env.SELF_BOT_ID || 'quarantine_1';
 const SYNC_ENABLED = process.env.SYNC_ENABLED === 'true';
 const API_SECRET_KEY = process.env.API_SECRET_KEY;
 const BOT_INSTANCES = process.env.BOT_INSTANCES ? JSON.parse(process.env.BOT_INSTANCES) : [];
-const OWNER_ID = process.env.OWNER_ID; // فقط از متغیر محیطی - بدون مقدار پیشفرض
-
-// بررسی وجود متغیرهای ضروری
-if (!OWNER_ID) {
-  console.error('❌ خطا: متغیر محیطی OWNER_ID تنظیم نشده است!');
-  process.exit(1);
-}
-
-if (!BOT_TOKEN) {
-  console.error('❌ خطا: متغیر محیطی BOT_TOKEN تنظیم نشده است!');
-  process.exit(1);
-}
-
-console.log('✅ متغیرهای محیطی بررسی شدند');
+const OWNER_ID = process.env.OWNER_ID; // فقط از متغیر محیطی
 
 // کش برای ذخیره وضعیت
 const cache = new NodeCache({ stdTTL: 300, checkperiod: 600 });
@@ -105,6 +92,23 @@ if (process.env.NODE_ENV !== 'production') {
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const bot = new Telegraf(BOT_TOKEN);
 
+// ==================[ تابع ساده بررسی مالک ]==================
+const isOwner = (userId) => {
+  if (!OWNER_ID) {
+    console.error('❌ OWNER_ID تنظیم نشده است');
+    return false;
+  }
+  
+  const userIdStr = userId.toString().trim();
+  const ownerIdStr = OWNER_ID.toString().trim();
+  
+  console.log(`🔍 بررسی مالک: کاربر '${userIdStr}' - مالک '${ownerIdStr}'`);
+  
+  const result = userIdStr === ownerIdStr;
+  console.log(`✅ نتیجه بررسی مالک: ${result}`);
+  return result;
+};
+
 // ==================[ محدودیت نرخ درخواست ]==================
 const rateLimit = new Map();
 const checkRateLimit = (userId, action, limit = 5, windowMs = 60000) => {
@@ -157,16 +161,6 @@ const formatPersianDate = () => {
   return persianDate;
 };
 
-// تابع بررسی مالک - کاملاً اصلاح شده
-const isOwner = (userId) => {
-  const userIdStr = userId.toString();
-  const ownerIdStr = OWNER_ID.toString();
-  const isOwner = userIdStr === ownerIdStr;
-  
-  console.log(`🔍 بررسی مالک: کاربر ${userIdStr} - مالک ${ownerIdStr} - نتیجه: ${isOwner}`);
-  return isOwner;
-};
-
 const isChatAdmin = async (chatId, userId) => {
   try {
     const cacheKey = `admin:${chatId}:${userId}`;
@@ -190,7 +184,6 @@ const isBotAdmin = async (chatId) => {
     const cached = cache.get(cacheKey);
     if (cached !== undefined) return cached;
     
-    // استفاده مستقیم از chatId بدون تبدیل به عدد
     const self = await bot.telegram.getChatMember(chatId, bot.botInfo.id);
     const isAdmin = ['administrator', 'creator'].includes(self.status);
     
@@ -296,7 +289,7 @@ const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ن
           if (userStatus && !['left', 'kicked', 'not_member'].includes(userStatus)) {
             const removed = await removeUserFromChat(chat.chat_id, userId);
             if (removed) {
-              console.log(`✅ کاربر از گروه ${chatIdStr} حذ�� شد`);
+              console.log(`✅ کاربر از گروه ${chatIdStr} حذف شد`);
               removedCount++;
               
               // ارسال گزارش تخلف قرنطینه
@@ -386,7 +379,7 @@ const checkUserInOtherBots = async (userId) => {
 // ==================[ تابع حذف کاربر از گروه‌های این ربات ]==================
 const removeUserFromLocalChats = async (userId, exceptChatId = null) => {
   try {
-    console.log(`🗑️ در حال حذف کاربر ${userId} از گروه‌های محلی...`);
+    console.log(`🗑️ در ��ال حذف کاربر ${userId} از گروه‌های محلی...`);
     
     const { data: allChats, error } = await supabase.from('allowed_chats').select('chat_id, chat_title');
     if (error) {
@@ -641,25 +634,6 @@ const checkQuarantineExpiry = async () => {
   }
 };
 
-// ==================[ بررسی دسترسی کاربر - فقط مالک ]==================
-const checkUserAccess = async (ctx) => {
-  try {
-    const userId = ctx.from.id;
-    const isUserOwner = isOwner(userId);
-    
-    console.log(`🔍 بررسی دسترسی کاربر ${userId} - مالک: ${isUserOwner}`);
-    
-    if (isUserOwner) {
-      return { hasAccess: true, isOwner: true };
-    }
-
-    return { hasAccess: false, reason: 'شما دسترسی لازم را ندارید' };
-  } catch (error) {
-    console.error('❌ خطا در بررسی دسترسی:', error);
-    return { hasAccess: false, reason: 'خطا در بررسی دسترسی' };
-  }
-};
-
 // ==================[ دستورات ربات - فقط برای مالک ]==================
 bot.start((ctx) => {
   if (!checkRateLimit(ctx.from.id, 'start')) {
@@ -686,10 +660,10 @@ bot.command('on', async (ctx) => {
     return;
   }
 
-  // فقط مالک می‌تواند استفاده کند
-  const userAccess = await checkUserAccess(ctx);
-  if (!userAccess.hasAccess) {
-    ctx.reply(`❌ ${userAccess.reason}`);
+  // فقط مالک می‌تواند استفاده کند - بررسی ساده
+  if (!isOwner(userId)) {
+    console.log(`❌ کاربر ${userId} مالک نیست. مالک واقعی: ${OWNER_ID}`);
+    ctx.reply('❌ شما دسترسی لازم را ندارید.');
     return;
   }
 
@@ -770,10 +744,10 @@ bot.command('off', async (ctx) => {
     return;
   }
 
-  // فقط مالک می‌تواند استفاده کند
-  const userAccess = await checkUserAccess(ctx);
-  if (!userAccess.hasAccess) {
-    ctx.reply(`❌ ${userAccess.reason}`);
+  // فقط مالک می‌تواند استفاده کند - بررسی ساده
+  if (!isOwner(userId)) {
+    console.log(`❌ کاربر ${userId} مالک نیست. مالک واقعی: ${OWNER_ID}`);
+    ctx.reply('❌ شما دسترسی لازم را ندارید.');
     return;
   }
 
@@ -890,8 +864,7 @@ bot.on('new_chat_members', async (ctx) => {
     for (const member of ctx.message.new_chat_members) {
       if (member.is_bot && member.username === ctx.botInfo.username) {
         // اگر ربات خودش اضافه شده
-        const userAccess = await checkUserAccess(ctx);
-        if (!userAccess.hasAccess) {
+        if (!isOwner(ctx.from.id)) {
           await ctx.reply('❌ فقط مالک ربات می‌تواند ربات را اضافه کند.');
           await ctx.leaveChat();
           return;
@@ -1070,11 +1043,11 @@ app.get('/api/bot-status', (req, res) => {
     type: 'quarantine',
     timestamp: new Date().toISOString(),
     connectedBots: BOT_INSTANCES.length,
-    version: '6.0.0'
+    version: '7.0.0'
   });
 });
 
-// ==================[ راه‌انداز�� سرور ]==================
+// ==================[ راه‌اندازی سرور ]==================
 app.use(bot.webhookCallback('/webhook'));
 app.get('/', (req, res) => res.send('ربات قرنطینه فعال است!'));
 app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
