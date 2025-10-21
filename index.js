@@ -379,7 +379,7 @@ const checkUserInOtherBots = async (userId) => {
 // ==================[ تابع حذف کاربر از گروه‌های این ربات ]==================
 const removeUserFromLocalChats = async (userId, exceptChatId = null) => {
   try {
-    console.log(`🗑️ در ��ال حذف کاربر ${userId} از گروه‌های محلی...`);
+    console.log(`🗑️ در حال حذف کاربر ${userId} از گروه‌های محلی...`);
     
     const { data: allChats, error } = await supabase.from('allowed_chats').select('chat_id, chat_title');
     if (error) {
@@ -604,30 +604,70 @@ const syncUserWithOtherBots = async (userId, chatId, action) => {
   }
 };
 
+// ==================[ تابع بررسی انقضای قرنطینه - کاملاً اصلاح شده ]==================
 const checkQuarantineExpiry = async () => {
   try {
-    const { data: expiredUsers } = await supabase
+    console.log('🔍 بررسی انقضای قرنطینه کاربران...');
+    
+    const { data: expiredUsers, error } = await supabase
       .from('quarantine_users')
       .select('*')
       .eq('is_quarantined', true)
       .lt('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
     
-    if (expiredUsers?.length > 0) {
+    if (error) {
+      console.error('❌ خطا در دریافت کاربران منقضی:', error);
+      return;
+    }
+    
+    if (expiredUsers && expiredUsers.length > 0) {
+      console.log(`📅 پیدا شد ${expiredUsers.length} کاربر برای آزادسازی از قرنطینه`);
+      
       for (const user of expiredUsers) {
-        await supabase
+        console.log(`🔄 آزادسازی کاربر ${user.user_id} از قرنطینه...`);
+        
+        // فقط وضعیت کاربر را تغییر می‌دهیم - کاربر از گروه حذف نمی‌شود
+        const { error: updateError } = await supabase
           .from('quarantine_users')
-          .update({ is_quarantined: false, current_chat_id: null, updated_at: new Date().toISOString() })
+          .update({ 
+            is_quarantined: false, 
+            current_chat_id: null, 
+            updated_at: new Date().toISOString() 
+          })
           .eq('user_id', user.user_id);
           
-        // هماهنگی با سایر ربات‌ها
-        if (SYNC_ENABLED) {
-          await syncUserWithOtherBots(user.user_id, null, 'release');
+        if (updateError) {
+          console.error(`❌ خطا در آزادسازی کاربر ${user.user_id}:`, updateError);
+          continue;
         }
-          
+        
+        // پاک کردن کش
+        cache.del(`quarantine:${user.user_id}`);
+        
+        // گزارش به مالک
+        const reportMessage = `
+🟢 **کاربر از قرنطینه خارج شد**
+
+👤 کاربر: ${user.first_name || 'ناشناس'} (${user.user_id})
+📱 یوزرنیم: ${user.username ? `@${user.username}` : 'ندارد'}
+
+⏰ زمان انقضا: ${formatPersianDate()}
+🤖 ربات: ${SELF_BOT_ID}
+
+📝 توضیح: کاربر به صورت خودکار پس از اتمام زمان قرنطینه آزاد شد.
+        `;
+        
+        await sendReportToOwner(reportMessage);
         await logAction('quarantine_expired', user.user_id, null, {
-          username: user.username, first_name: user.first_name
+          username: user.username, 
+          first_name: user.first_name,
+          auto_released: true
         });
+        
+        console.log(`✅ کاربر ${user.user_id} با موفقیت از قرنطینه آزاد شد`);
       }
+    } else {
+      console.log('ℹ️ هیچ کاربری برای آزادسازی از قرنطینه پیدا نشد');
     }
   } catch (error) {
     console.error('❌ خطا در بررسی انقضای قرنطینه:', error);
@@ -954,7 +994,7 @@ app.post('/api/sync-user', async (req, res) => {
       await removeUserFromLocalChats(userId, chatId);
       
     } else if (action === 'release') {
-      // آزاد کردن کاربر
+      // آزاد کردن کاربر - فقط وضعیت تغییر می‌کند، کاربر از گروه حذف نمی‌شود
       await supabase
         .from('quarantine_users')
         .update({ 
@@ -964,8 +1004,8 @@ app.post('/api/sync-user', async (req, res) => {
         })
         .eq('user_id', userId);
         
-      // حذف کاربر از تمام گروه‌های محلی
-      await removeUserFromLocalChats(userId);
+      // توجه: کاربر از گروه‌ها حذف نمی‌شود
+      console.log(`✅ کاربر ${userId} آزاد شد اما از گروه‌ها حذف نشد`);
     }
     
     // پاک کردن کش
@@ -998,7 +1038,7 @@ app.post('/api/release-user', async (req, res) => {
       return res.status(400).json({ error: 'User ID is required' });
     }
     
-    // خارج کردن کاربر از قرنطینه
+    // خارج کردن کاربر از قرنطینه - فقط وضعیت تغییر می‌کند
     const { error } = await supabase
       .from('quarantine_users')
       .update({ 
@@ -1013,8 +1053,8 @@ app.post('/api/release-user', async (req, res) => {
       return res.status(500).json({ error: 'Internal server error' });
     }
     
-    // حذف کاربر از تمام گروه‌های محلی
-    await removeUserFromLocalChats(userId);
+    // توجه: کاربر از گروه‌ها حذف نمی‌شود
+    console.log(`✅ کاربر ${userId} آزاد شد اما از گروه‌ها حذف نشد`);
     
     // پاک کردن کش کاربر
     cache.del(`quarantine:${userId}`);
@@ -1043,7 +1083,7 @@ app.get('/api/bot-status', (req, res) => {
     type: 'quarantine',
     timestamp: new Date().toISOString(),
     connectedBots: BOT_INSTANCES.length,
-    version: '7.0.0'
+    version: '8.0.0'
   });
 });
 
