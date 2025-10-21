@@ -36,7 +36,7 @@ const startAutoPing = () => {
     return;
   }
 
-  const PING_INTERVAL = 13 * 60 * 1000 + 59 * 1000; // هر 13:59 دقیقه
+  const PING_INTERVAL = 13 * 60 * 1000 + 59 * 1000;
   const selfUrl = process.env.RENDER_EXTERNAL_URL;
 
   console.log('🔁 راه‌اندازی پینگ خودکار هر 13:59 دقیقه...');
@@ -50,14 +50,11 @@ const startAutoPing = () => {
       console.log('✅ پینگ موفق - ربات فعال می‌ماند');
     } catch (error) {
       console.error('❌ پینگ ناموفق:', error.message);
-      // اگر پینگ ناموفق بود، بعد از 2 دقیقه دوباره تلاش کن
       setTimeout(performPing, 2 * 60 * 1000);
     }
   };
 
-  // اولین پینگ بعد از 30 ثانیه
   setTimeout(performPing, 30000);
-  // پینگ‌های دوره‌ای
   setInterval(performPing, PING_INTERVAL);
 };
 
@@ -105,10 +102,7 @@ const isOwner = (userId) => {
   const userIdStr = userId.toString().trim();
   const ownerIdStr = OWNER_ID.toString().trim();
   
-  console.log(`🔍 بررسی مالک: کاربر '${userIdStr}' - مالک '${ownerIdStr}'`);
-  
   const result = userIdStr === ownerIdStr;
-  console.log(`✅ نتیجه بررسی مالک: ${result}`);
   return result;
 };
 
@@ -301,10 +295,10 @@ const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ن
 🚨 **گزارش تخلف قرنطینه**
 
 👤 کاربر: ${userName} (${userId})
-📋 نوع تخلف: کاربر قرنطینه شده از گروه خارج نشده و به گروه جدید پیوسته است
+📋 نوع تخلف: کاربر در گروه‌های متعدد شناسایی و حذف شد
 
-📍 گروه مبدا: ${sourceChatTitle} (${currentChatId})
-📍 گروه مقصد: ${chat.chat_title || 'بدون عنوان'} (${chat.chat_id})
+📍 گروه اصلی: ${sourceChatTitle} (${currentChatId})
+📍 گروه حذف شده: ${chat.chat_title || 'بدون عنوان'} (${chat.chat_id})
 
 ⏰ زمان: ${formatPersianDate()}
 🤖 ربات گزارش‌دهنده: ${SELF_BOT_ID}
@@ -445,7 +439,7 @@ const quarantineUser = async (ctx, user, isNewJoin = true) => {
         
         // ارسال گزارش به مالک
         const reportMessage = `
-🚨 **کاربر قرنطینه شده به گروه دیگر پیوس��**
+🚨 **کاربر قرنطینه شده به گروه دیگر پیوست**
 
 👤 کاربر: ${userName} (${user.id})
 📱 یوزرنیم: ${userUsername}
@@ -542,6 +536,96 @@ const quarantineUser = async (ctx, user, isNewJoin = true) => {
   }
 };
 
+// ==================[ تابع جدید: بررسی و حذف کاربر از گروه‌های دیگر بدون در نظر گرفتن قرنطینه ]==================
+const ensureUserInSingleChat = async (ctx, user) => {
+  try {
+    console.log(`🔍 بررسی حضور کاربر ${user.id} در گروه‌های دیگر...`);
+    
+    const currentChatId = ctx.chat.id.toString();
+    const userName = user.first_name || 'ناشناس';
+    
+    // بررسی وضعیت کاربر در دیتابیس
+    const { data: existingUser, error: userError } = await supabase
+      .from('quarantine_users')
+      .select('*')
+      .eq('user_id', user.id)
+      .single();
+
+    // اگر کاربر قرنطینه نیست، باز هم بررسی کن که در گروه‌های دیگر نباشد
+    if (!userError && existingUser && !existingUser.is_quarantined) {
+      console.log(`👤 کاربر ${user.id} قرنطینه نیست - بررسی حضور در گروه‌های دیگر`);
+      
+      const { data: allChats, error } = await supabase.from('allowed_chats').select('chat_id, chat_title');
+      if (error) {
+        console.error('❌ خطا در دریافت گروه‌ها:', error);
+        return;
+      }
+      
+      if (allChats && allChats.length > 0) {
+        let removedCount = 0;
+        
+        for (const chat of allChats) {
+          const chatIdStr = chat.chat_id.toString();
+          const currentChatIdStr = currentChatId.toString();
+          
+          if (chatIdStr === currentChatIdStr) continue;
+          
+          console.log(`🔍 بررسی حضور کاربر در گروه ${chatIdStr}...`);
+          const userStatus = await getUserStatus(chat.chat_id, user.id);
+          
+          if (userStatus && !['left', 'kicked', 'not_member'].includes(userStatus)) {
+            console.log(`🚫 کاربر در گروه ${chatIdStr} حضور دارد - در حال حذف...`);
+            const removed = await removeUserFromChat(chat.chat_id, user.id);
+            if (removed) {
+              console.log(`✅ کاربر از گروه ${chatIdStr} حذف شد`);
+              removedCount++;
+              
+              // ارسال گزارش
+              const reportMessage = `
+⚠️ **کاربر از گروه دیگر حذف شد**
+
+👤 کاربر: ${userName} (${user.id})
+📱 یوزرنیم: ${user.username ? `@${user.username}` : 'ندارد'}
+
+📍 گروه مبدا: ${chat.chat_title || 'بدون عنوان'} (${chat.chat_id})
+📍 گروه مقصد: ${ctx.chat.title} (${ctx.chat.id})
+
+⏰ زمان: ${formatPersianDate()}
+🤖 ربات: ${SELF_BOT_ID}
+
+📝 توضیح: کاربر در گروه‌های متعدد شناسایی و از گروه‌های دیگر حذف شد
+              `;
+              
+              await sendReportToOwner(reportMessage);
+            }
+          }
+        }
+        
+        if (removedCount > 0) {
+          console.log(`✅ کاربر ${user.id} از ${removedCount} گروه دیگر حذف شد`);
+          
+          // آپدیت وضعیت کاربر به قرنطینه در گروه جدید
+          await supabase
+            .from('quarantine_users')
+            .update({
+              is_quarantined: true,
+              current_chat_id: currentChatId,
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', user.id);
+          
+          // هماهنگی با سایر ربات‌ها
+          if (SYNC_ENABLED) {
+            await syncUserWithOtherBots(user.id, currentChatId, 'quarantine');
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('❌ خطا در بررسی تک گروهی کاربر:', error);
+  }
+};
+
 // ==================[ پردازش اعضای جدید - کاملاً بازنویسی شده ]==================
 const handleNewUser = async (ctx, user) => {
   try {
@@ -559,7 +643,10 @@ const handleNewUser = async (ctx, user) => {
       return;
     }
 
-    // اجرای فرآیند قرنطینه
+    // 🔍 اول: بررسی حضور کاربر در گروه‌های دیگر (حتی اگر قرنطینه نباشد)
+    await ensureUserInSingleChat(ctx, user);
+    
+    // 🔒 دوم: اجرای فرآیند قرنطینه معمول
     await quarantineUser(ctx, user, true);
   } catch (error) {
     console.error('❌ خطا در پردازش کاربر جدید:', error);
@@ -727,7 +814,7 @@ bot.command('on', async (ctx) => {
     return;
   }
 
-  // فقط مالک می‌تواند استفاده کند
+  // فقط مالک می��تواند استفاده کند
   if (!isOwner(userId)) {
     ctx.reply('❌ فقط مالک ربات می‌تواند از این دستور استفاده کند.');
     return;
