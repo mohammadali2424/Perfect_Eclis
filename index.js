@@ -16,7 +16,7 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// ==================[ تنظیمات اولیه ]==================
+// ==================[ تنظیمات اولیه - فقط از متغیرهای محیطی ]==================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -24,7 +24,20 @@ const SELF_BOT_ID = process.env.SELF_BOT_ID || 'quarantine_1';
 const SYNC_ENABLED = process.env.SYNC_ENABLED === 'true';
 const API_SECRET_KEY = process.env.API_SECRET_KEY;
 const BOT_INSTANCES = process.env.BOT_INSTANCES ? JSON.parse(process.env.BOT_INSTANCES) : [];
-const OWNER_ID = process.env.OWNER_ID || '123456789'; // مالک ربات
+const OWNER_ID = process.env.OWNER_ID; // فقط از متغیر محیطی - بدون مقدار پیشفرض
+
+// بررسی وجود متغیرهای ضروری
+if (!OWNER_ID) {
+  console.error('❌ خطا: متغیر محیطی OWNER_ID تنظیم نشده است!');
+  process.exit(1);
+}
+
+if (!BOT_TOKEN) {
+  console.error('❌ خطا: متغیر محیطی BOT_TOKEN تنظیم نشده است!');
+  process.exit(1);
+}
+
+console.log('✅ متغیرهای محیطی بررسی شدند');
 
 // کش برای ذخیره وضعیت
 const cache = new NodeCache({ stdTTL: 300, checkperiod: 600 });
@@ -142,6 +155,16 @@ const formatPersianDate = () => {
     second: '2-digit'
   }).format(now);
   return persianDate;
+};
+
+// تابع بررسی مالک - کاملاً اصلاح شده
+const isOwner = (userId) => {
+  const userIdStr = userId.toString();
+  const ownerIdStr = OWNER_ID.toString();
+  const isOwner = userIdStr === ownerIdStr;
+  
+  console.log(`🔍 بررسی مالک: کاربر ${userIdStr} - مالک ${ownerIdStr} - نتیجه: ${isOwner}`);
+  return isOwner;
 };
 
 const isChatAdmin = async (chatId, userId) => {
@@ -273,7 +296,7 @@ const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ن
           if (userStatus && !['left', 'kicked', 'not_member'].includes(userStatus)) {
             const removed = await removeUserFromChat(chat.chat_id, userId);
             if (removed) {
-              console.log(`✅ کاربر از گروه ${chatIdStr} حذف شد`);
+              console.log(`✅ کاربر از گروه ${chatIdStr} حذ�� شد`);
               removedCount++;
               
               // ارسال گزارش تخلف قرنطینه
@@ -306,7 +329,7 @@ const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ن
   }
 };
 
-// ==================[ تابع جدید: بررسی کاربر در سایر ربات‌ها - کاملاً اصلاح شده ]==================
+// ==================[ تابع بررسی کاربر در سایر ربات‌ها ]==================
 const checkUserInOtherBots = async (userId) => {
   try {
     console.log(`🔍 بررسی کاربر ${userId} در سایر ربات‌ها...`);
@@ -332,7 +355,7 @@ const checkUserInOtherBots = async (userId) => {
         
         const response = await axios.post(fullUrl, {
           userId: userId,
-          secretKey: API_SECRET_KEY, // استفاده از کلید اصلی
+          secretKey: API_SECRET_KEY,
           sourceBot: SELF_BOT_ID
         }, {
           timeout: 8000
@@ -360,7 +383,7 @@ const checkUserInOtherBots = async (userId) => {
   }
 };
 
-// ==================[ تابع جدید: حذف کاربر از گروه‌های این ربات ]==================
+// ==================[ تابع حذف کاربر از گروه‌های این ربات ]==================
 const removeUserFromLocalChats = async (userId, exceptChatId = null) => {
   try {
     console.log(`🗑️ در حال حذف کاربر ${userId} از گروه‌های محلی...`);
@@ -399,7 +422,7 @@ const removeUserFromLocalChats = async (userId, exceptChatId = null) => {
   }
 };
 
-// ==================[ تابع بررسی و ثبت کاربر جدید - کاملاً اصلاح شده ]==================
+// ==================[ تابع بررسی و ثبت کاربر جدید ]==================
 const handleNewUser = async (ctx, user) => {
   try {
     console.log(`👤 پردازش کاربر جدید: ${user.first_name} (${user.id}) در گروه ${ctx.chat.id}`);
@@ -544,7 +567,7 @@ const handleNewUser = async (ctx, user) => {
   }
 };
 
-// ==================[ توابع هماهنگی چندرباتی - بهبود یافته ]==================
+// ==================[ توابع هماهنگی چندرباتی ]==================
 const syncUserWithOtherBots = async (userId, chatId, action) => {
   try {
     if (!SYNC_ENABLED || BOT_INSTANCES.length === 0) {
@@ -621,8 +644,12 @@ const checkQuarantineExpiry = async () => {
 // ==================[ بررسی دسترسی کاربر - فقط مالک ]==================
 const checkUserAccess = async (ctx) => {
   try {
-    // فقط مالک ربات دسترسی دارد
-    if (ctx.from.id.toString() === OWNER_ID) {
+    const userId = ctx.from.id;
+    const isUserOwner = isOwner(userId);
+    
+    console.log(`🔍 بررسی دسترسی کاربر ${userId} - مالک: ${isUserOwner}`);
+    
+    if (isUserOwner) {
       return { hasAccess: true, isOwner: true };
     }
 
@@ -886,8 +913,7 @@ bot.on('new_chat_members', async (ctx) => {
   }
 });
 
-// ==================[ endpointهای API جدید و بهبود یافته ]==================
-// endpoint بررسی قرنطینه کاربر
+// ==================[ endpointهای API ]==================
 app.post('/api/check-quarantine', async (req, res) => {
   try {
     const { userId, secretKey, sourceBot } = req.body;
@@ -929,7 +955,6 @@ app.post('/api/check-quarantine', async (req, res) => {
   }
 });
 
-// endpoint هماهنگی کاربر
 app.post('/api/sync-user', async (req, res) => {
   try {
     const { userId, chatId, action, secretKey, sourceBot } = req.body;
@@ -986,7 +1011,6 @@ app.post('/api/sync-user', async (req, res) => {
   }
 });
 
-// endpointهای موجود
 app.post('/api/release-user', async (req, res) => {
   try {
     const { userId, secretKey, sourceBot } = req.body;
@@ -1046,11 +1070,11 @@ app.get('/api/bot-status', (req, res) => {
     type: 'quarantine',
     timestamp: new Date().toISOString(),
     connectedBots: BOT_INSTANCES.length,
-    version: '5.0.0'
+    version: '6.0.0'
   });
 });
 
-// ==================[ راه‌اندازی سرور ]==================
+// ==================[ راه‌انداز�� سرور ]==================
 app.use(bot.webhookCallback('/webhook'));
 app.get('/', (req, res) => res.send('ربات قرنطینه فعال است!'));
 app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
