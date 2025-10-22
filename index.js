@@ -102,11 +102,7 @@ const isOwner = (userId) => {
   const userIdStr = userId.toString().trim();
   const ownerIdStr = OWNER_ID.toString().trim();
   
-  console.log(`🔍 بررسی مالک: کاربر '${userIdStr}' - مالک '${ownerIdStr}'`);
-  
-  const result = userIdStr === ownerIdStr;
-  console.log(`✅ نتیجه بررسی مالک: ${result}`);
-  return result;
+  return userIdStr === ownerIdStr;
 };
 
 // ==================[ محدودیت نرخ درخواست ]==================
@@ -419,14 +415,14 @@ const removeUserFromLocalChats = async (userId, exceptChatId = null) => {
           }
         }
       }
-      console.log(`✅ کاربر ${userId} از ${removedCount} گر��ه محلی حذف شد`);
+      console.log(`✅ کاربر ${userId} از ${removedCount} گروه محلی حذف شد`);
     }
   } catch (error) {
     console.error('❌ خطا در حذف کاربر از گروه‌های محلی:', error);
   }
 };
 
-// ==================[ تابع اصلی قرنطینه - منطق کاملاً جدید برای حل هر دو مشکل ]==================
+// ==================[ تابع اصلی قرنطینه - منطق کاملاً جدید برای حل مشکل ]==================
 const quarantineUser = async (ctx, user, isNewJoin = true) => {
   try {
     console.log(`🔒 شروع فرآیند قرنطینه برای کاربر: ${user.first_name} (${user.id})`);
@@ -446,27 +442,23 @@ const quarantineUser = async (ctx, user, isNewJoin = true) => {
       if (userInOtherBot.found) {
         console.log(`🚫 کاربر ${user.id} در ربات ${userInOtherBot.botId} قرنطینه است - گروه: ${userInOtherBot.chatId}`);
         
-        // حذف فوری کاربر از گروه فعلی
-        await removeUserFromChat(currentChatId, user.id);
+        // 🔥 تغییر مهم: کاربر را از گروه قبلی حذف کن و در گروه جدید قرنطینه کن
+        console.log(`🔄 حذف کاربر از گروه قبلی و قرنطینه در گروه جدید...`);
         
-        // ارسال گزارش به مالک
-        const reportMessage = `
-🚨 **کاربر قرنطینه شده به گروه دیگر پیوست**
-
-👤 کاربر: ${userName} (${user.id})
-📱 یوزرنیم: ${userUsername}
-
-📍 گروه مبدا (قرنطینه): ${userInOtherBot.chatId}
-🤖 ربات مبدا: ${userInOtherBot.botId}
-
-📍 گروه مقصد: ${currentChatTitle} (${currentChatId})
-🤖 ربات مقصد: ${SELF_BOT_ID}
-
-⏰ زمان: ${formatPersianDate()}
-        `;
+        // به ربات قبلی اطلاع بده که کاربر را آزاد کند
+        await notifyBotToReleaseUser(userInOtherBot.botId, user.id, userInOtherBot.chatId);
         
-        await sendReportToOwner(reportMessage);
-        return false; // کاربر قرنطینه شده، اجازه ورود ندارد
+        // کاربر را در گروه جدید قرنطینه کن
+        await registerUserInQuarantine(user, currentChatId, now);
+        
+        // کاربر را از تمام گروه‌های دیگر حذف کن (به جز گروه جدید)
+        await removeUserFromAllOtherChats(currentChatId, user.id, userName);
+        
+        // با سایر ربات‌ها هماهنگ شو
+        await syncWithAllBots(user.id, currentChatId, 'quarantine');
+        
+        console.log(`✅ کاربر ${user.id} از ربات ${userInOtherBot.botId} به ربات ${SELF_BOT_ID} منتقل شد`);
+        return true;
       }
     }
 
@@ -479,71 +471,31 @@ const quarantineUser = async (ctx, user, isNewJoin = true) => {
 
     // اگر کاربر در دیتابیس وجود دارد و در گروه دیگری قرنطینه است
     if (!userError && existingUser && existingUser.is_quarantined && existingUser.current_chat_id !== currentChatId) {
-      console.log(`🚫 کاربر در گروه ${existingUser.current_chat_id} قرنطینه است - حذف از گروه فعلی`);
-      await removeUserFromChat(currentChatId, user.id);
-      return false;
+      console.log(`🚫 کاربر در گروه ${existingUser.current_chat_id} قرنطینه است - انتقال به گروه جدید`);
+      
+      // کاربر را در گروه جدید قرنطینه کن
+      await registerUserInQuarantine(user, currentChatId, now);
+      
+      // کاربر را از تمام گروه‌های دیگر حذف کن (شامل گروه قبلی)
+      await removeUserFromAllOtherChats(currentChatId, user.id, userName);
+      
+      // با سایر ربات‌ها هماهنگ شو
+      await syncWithAllBots(user.id, currentChatId, 'quarantine');
+      
+      return true;
     }
 
-    // 🔒 مرحله 3: ثبت/آپدیت کاربر در قرنطینه
+    // 🔒 مرحله 3: کاربر جدید یا در همین گروه است
     console.log(`🔄 ثبت/آپدیت کاربر ${user.id} در قرنطینه...`);
     
-    const { error: upsertError } = await supabase.from('quarantine_users').upsert({
-      user_id: user.id,
-      username: user.username,
-      first_name: user.first_name,
-      is_quarantined: true,
-      current_chat_id: currentChatId,
-      created_at: existingUser?.created_at || now,
-      updated_at: now
-    }, { 
-      onConflict: 'user_id'
-    });
+    await registerUserInQuarantine(user, currentChatId, now, existingUser);
 
-    if (upsertError) {
-      console.error('❌ خطا در ثبت کاربر در قرنطینه:', upsertError);
-      return false;
-    }
-
-    // 🗑️ مرحله 4: حذف کاربر از تمام گروه‌های دیگر (هم محلی و هم در ربات‌های دیگر)
+    // 🗑️ مرحله 4: حذف کاربر از تمام گروه‌های دیگر
     console.log(`🔄 در حال حذف کاربر از گروه‌های دیگر...`);
-    
-    // حذف از گروه‌های محلی دیگر
     await removeUserFromAllOtherChats(currentChatId, user.id, userName);
     
-    // 🔄 مرحل�� 5: هماهنگی با سایر ربات‌ها - اینجا مشکل قبلی رو حل کردم
-    if (SYNC_ENABLED) {
-      console.log(`🔄 هماهنگی کاربر با سایر ربات‌ها...`);
-      
-      // فقط با ربات‌های قرنطینه هماهنگ شو
-      const quarantineBots = BOT_INSTANCES.filter(bot => bot.type === 'quarantine' && bot.id !== SELF_BOT_ID);
-      
-      for (const botInstance of quarantineBots) {
-        try {
-          let apiUrl = botInstance.url;
-          if (!apiUrl.startsWith('http')) apiUrl = `https://${apiUrl}`;
-          apiUrl = apiUrl.replace(/\/$/, '');
-          
-          console.log(`🔗 ارسال درخواست هماهنگی به ${botInstance.id}...`);
-          
-          await axios.post(`${apiUrl}/api/sync-user`, {
-            userId: user.id,
-            chatId: currentChatId,
-            action: 'quarantine',
-            secretKey: botInstance.secretKey || API_SECRET_KEY,
-            sourceBot: SELF_BOT_ID
-          }, { 
-            timeout: 8000,
-            headers: {
-              'Content-Type': 'application/json'
-            }
-          });
-          
-          console.log(`✅ هماهنگی با ${botInstance.id} موفق`);
-        } catch (error) {
-          console.error(`❌ خطا در هماهنگی با ${botInstance.id}:`, error.message);
-        }
-      }
-    }
+    // 🔄 مرحله 5: هماهنگی با سایر ربات‌ها
+    await syncWithAllBots(user.id, currentChatId, 'quarantine');
     
     await logAction('user_quarantined', user.id, currentChatId, {
       username: user.username, 
@@ -558,6 +510,114 @@ const quarantineUser = async (ctx, user, isNewJoin = true) => {
   } catch (error) {
     console.error('❌ خطا در فرآیند قرنطینه:', error);
     return false;
+  }
+};
+
+// ==================[ تابع جدید: ثبت کاربر در قرنطینه ]==================
+const registerUserInQuarantine = async (user, chatId, now, existingUser = null) => {
+  const { error: upsertError } = await supabase.from('quarantine_users').upsert({
+    user_id: user.id,
+    username: user.username,
+    first_name: user.first_name,
+    is_quarantined: true,
+    current_chat_id: chatId,
+    created_at: existingUser?.created_at || now,
+    updated_at: now
+  }, { 
+    onConflict: 'user_id'
+  });
+
+  if (upsertError) {
+    console.error('❌ خطا در ثبت کاربر در قرنطینه:', upsertError);
+    throw new Error('خطا در ثبت قرنطینه');
+  }
+};
+
+// ==================[ تابع جدید: اطلاع به ربات برای آزادسازی کاربر ]==================
+const notifyBotToReleaseUser = async (botId, userId, chatId) => {
+  try {
+    const botInstance = BOT_INSTANCES.find(bot => bot.id === botId);
+    if (!botInstance) {
+      console.log(`❌ ربات ${botId} در تنظیمات پیدا نشد`);
+      return false;
+    }
+
+    let apiUrl = botInstance.url;
+    if (!apiUrl.startsWith('http')) apiUrl = `https://${apiUrl}`;
+    apiUrl = apiUrl.replace(/\/$/, '');
+    
+    console.log(`🔗 اطلاع به ربات ${botId} برای آزادسازی کاربر ${userId}...`);
+    
+    const response = await axios.post(`${apiUrl}/api/release-user`, {
+      userId: userId,
+      secretKey: botInstance.secretKey || API_SECRET_KEY,
+      sourceBot: SELF_BOT_ID,
+      reason: 'user_moved_to_another_bot'
+    }, { 
+      timeout: 8000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    console.log(`✅ ربات ${botId} کاربر ${userId} را آزاد کرد`);
+    return true;
+  } catch (error) {
+    console.error(`❌ خطا در اطلاع به ربات ${botId}:`, error.message);
+    return false;
+  }
+};
+
+// ==================[ تابع جدید: هماهنگی با همه ربات‌ها ]==================
+const syncWithAllBots = async (userId, chatId, action) => {
+  try {
+    if (!SYNC_ENABLED || BOT_INSTANCES.length === 0) {
+      console.log('🔕 حالت هماهنگی غیرفعال است');
+      return;
+    }
+
+    console.log(`🔄 هماهنگی کاربر ${userId} با تمام ربات‌ها برای عمل: ${action}...`);
+    
+    const promises = BOT_INSTANCES
+      .filter(botInstance => botInstance.id !== SELF_BOT_ID)
+      .map(async (botInstance) => {
+        try {
+          let apiUrl = botInstance.url;
+          if (!apiUrl.startsWith('http')) {
+            apiUrl = `https://${apiUrl}`;
+          }
+          
+          apiUrl = apiUrl.replace(/\/$/, '');
+          const fullUrl = `${apiUrl}/api/sync-user`;
+          
+          console.log(`🔗 ارسال درخواست به ${botInstance.id}...`);
+          
+          const response = await axios.post(fullUrl, {
+            userId: userId,
+            chatId: chatId,
+            action: action,
+            secretKey: botInstance.secretKey || API_SECRET_KEY,
+            sourceBot: SELF_BOT_ID
+          }, {
+            timeout: 10000
+          });
+          
+          console.log(`✅ هماهنگی با ${botInstance.id} موفق`);
+        } catch (error) {
+          if (error.code === 'ECONNREFUSED') {
+            console.error(`❌ ارتباط با ${botInstance.id} برقرار نشد: سرور در دسترس نیست`);
+          } else if (error.response) {
+            console.error(`❌ هماهنگی با ${botInstance.id} ناموفق:`, error.response.status, error.response.data);
+          } else {
+            console.error(`❌ هماهنگی با ${botInstance.id} ناموفق:`, error.message);
+          }
+        }
+      });
+
+    await Promise.all(promises);
+    console.log(`✅ هماهنگی کاربر ${userId} برای عمل ${action} تکمیل شد`);
+  } catch (error) {
+    console.error('❌ خطا در هماهنگی با ربات‌ها:', error);
   }
 };
 
@@ -640,9 +700,7 @@ const ensureUserInSingleChat = async (ctx, user) => {
             .eq('user_id', user.id);
           
           // هماهنگی با سایر ربات‌ها
-          if (SYNC_ENABLED) {
-            await syncUserWithOtherBots(user.id, currentChatId, 'quarantine');
-          }
+          await syncWithAllBots(user.id, currentChatId, 'quarantine');
         }
       }
     }
@@ -675,59 +733,6 @@ const handleNewUser = async (ctx, user) => {
     await quarantineUser(ctx, user, true);
   } catch (error) {
     console.error('❌ خطا در پردازش کاربر جدید:', error);
-  }
-};
-
-// ==================[ توابع هماهنگی چندرباتی - کاملاً بازنویسی شده ]==================
-const syncUserWithOtherBots = async (userId, chatId, action) => {
-  try {
-    if (!SYNC_ENABLED || BOT_INSTANCES.length === 0) {
-      console.log('🔕 حالت هماهنگی غیرفعال است');
-      return;
-    }
-
-    console.log(`🔄 هماهنگی کاربر ${userId} با سایر ربات‌ها برای عمل: ${action}...`);
-    
-    const promises = BOT_INSTANCES
-      .filter(botInstance => botInstance.id !== SELF_BOT_ID && botInstance.type === 'quarantine')
-      .map(async (botInstance) => {
-        try {
-          let apiUrl = botInstance.url;
-          if (!apiUrl.startsWith('http')) {
-            apiUrl = `https://${apiUrl}`;
-          }
-          
-          apiUrl = apiUrl.replace(/\/$/, '');
-          const fullUrl = `${apiUrl}/api/sync-user`;
-          
-          console.log(`🔗 ارسال درخواست به ${botInstance.id}...`);
-          
-          const response = await axios.post(fullUrl, {
-            userId: userId,
-            chatId: chatId,
-            action: action,
-            secretKey: botInstance.secretKey || API_SECRET_KEY,
-            sourceBot: SELF_BOT_ID
-          }, {
-            timeout: 10000
-          });
-          
-          console.log(`✅ هماهنگی با ${botInstance.id} موفق:`, response.data);
-        } catch (error) {
-          if (error.code === 'ECONNREFUSED') {
-            console.error(`❌ ارتباط با ${botInstance.id} برقرار نشد: سرور در دسترس نیست`);
-          } else if (error.response) {
-            console.error(`❌ هماهنگی با ${botInstance.id} ناموفق:`, error.response.status, error.response.data);
-          } else {
-            console.error(`❌ هماهنگی با ${botInstance.id} ناموفق:`, error.message);
-          }
-        }
-      });
-
-    await Promise.all(promises);
-    console.log(`✅ هماهنگی کاربر ${userId} برای عمل ${action} تکمیل شد`);
-  } catch (error) {
-    console.error('❌ خطا در هماهنگی با ربات‌ها:', error);
   }
 };
 
@@ -767,9 +772,7 @@ const releaseUserFromQuarantine = async (userId) => {
     cache.del(`quarantine:${userId}`);
     
     // هماهنگی با سایر ربات‌ها
-    if (SYNC_ENABLED) {
-      await syncUserWithOtherBots(userId, null, 'release');
-    }
+    await syncWithAllBots(userId, null, 'release');
     
     console.log(`✅ کاربر ${userId} با موفقیت از قرنطینه خارج شد`);
     return true;
@@ -1152,7 +1155,6 @@ bot.on('new_chat_members', async (ctx) => {
       if (member.is_bot && member.username === ctx.botInfo.username) {
         // اگر ربات خودش اضافه شده
         console.log(`🤖 ربات توسط کاربر ${ctx.from.id} اضافه شد`);
-        console.log(`🔍 بررسی مالک: ${ctx.from.id} == ${OWNER_ID}`);
         
         // بررسی مستقیم مالک بودن
         if (!isOwner(ctx.from.id)) {
@@ -1250,6 +1252,9 @@ app.post('/api/sync-user', async (req, res) => {
         
       console.log(`✅ کاربر ${userId} در این ربات قرنطینه شد (هماهنگی از ${sourceBot})`);
       
+      // 🔥 تغییر مهم: کاربر را از گروه‌های دیگر این ربات حذف کن
+      await removeUserFromLocalChats(userId, chatId);
+      
     } else if (action === 'release') {
       // آزاد کردن کاربر
       await releaseUserFromQuarantine(userId);
@@ -1270,7 +1275,7 @@ app.post('/api/sync-user', async (req, res) => {
 
 app.post('/api/release-user', async (req, res) => {
   try {
-    const { userId, secretKey, sourceBot } = req.body;
+    const { userId, secretKey, sourceBot, reason } = req.body;
     
     // بررسی کلید امنیتی
     if (!secretKey || secretKey !== API_SECRET_KEY) {
@@ -1282,7 +1287,7 @@ app.post('/api/release-user', async (req, res) => {
       return res.status(400).json({ error: 'User ID is required' });
     }
     
-    console.log(`🔓 درخواست API آزادسازی کاربر ${userId} از ${sourceBot || 'unknown'}`);
+    console.log(`🔓 درخواست API آزادسازی کاربر ${userId} از ${sourceBot || 'unknown'} - دلیل: ${reason || 'نامشخص'}`);
     
     const success = await releaseUserFromQuarantine(userId);
     
