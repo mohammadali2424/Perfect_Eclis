@@ -98,24 +98,12 @@ const isOwner = (userId) => {
   return userId.toString().trim() === OWNER_ID.toString().trim();
 };
 
-const formatPersianDate = () => {
-  const now = new Date();
-  return new Intl.DateTimeFormat('fa-IR', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  }).format(now);
-};
-
 const isBotAdmin = async (chatId) => {
   try {
     const self = await bot.telegram.getChatMember(chatId, bot.botInfo.id);
     return ['administrator', 'creator'].includes(self.status);
   } catch (error) {
-    console.log(`خطا در بررسی ادمین بودن ربات در ${chatId}:`, error.message);
+    console.log(`خطا در بررسی ادمی�� بودن ربات در ${chatId}:`, error.message);
     return false;
   }
 };
@@ -153,7 +141,7 @@ const removeUserFromChat = async (chatId, userId) => {
       return true;
     }
     
-    console.log(`شروع فرآیند حذف کاربر ${userId} از گروه ${chatId}...`);
+    console.log(`شروع فرآیند حذف ک��ربر ${userId} از گروه ${chatId}...`);
     
     // ابتدا کاربر را بن می‌کنیم
     await bot.telegram.banChatMember(chatId, userId, {
@@ -186,7 +174,7 @@ const removeUserFromChat = async (chatId, userId) => {
 // ==================[ تابع اصلی حذف از گروه‌های دیگر ]==================
 const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ناشناس') => {
   try {
-    console.log(`شروع بررسی حذف کاربر ${userName} (${userId}) از سایر گروه ها...`);
+    console.log(`شروع بررسی حذف کاربر ${userName} (${userId}) ��ز سایر گروه ها...`);
     
     // دریافت تمام گروه‌های مجاز از دیتابیس
     const { data: allChats, error } = await supabase 
@@ -340,7 +328,7 @@ const syncWithOtherBots = async (userId, chatId, action) => {
   }
 };
 
-// ==================[ تابع اصلی قرنطینه ]==================
+// ==================[ تابع اصلی قرنطینه - اصلاح شده ]==================
 const quarantineUser = async (ctx, user) => {
   try {
     console.log(`شروع فرآیند قرنطینه کاربر: ${user.first_name} (${user.id})`);
@@ -357,7 +345,7 @@ const quarantineUser = async (ctx, user) => {
       // حذف کاربر از گروه فعلی
       await removeUserFromChat(currentChatId, user.id);
       
-      await ctx.reply(`کاربر ${user.first_name} در گروه دیگری قرنطینه است و نمی تواند به این گروه بپیوندد.`);
+      // پیام حذف نشود - فقط کاربر حذف شود
       return false;
     }
 
@@ -374,7 +362,7 @@ const quarantineUser = async (ctx, user) => {
       console.log(`کاربر در گروه ${existingUser.current_chat_id} قرنطینه است - حذف از گروه فعلی`);
       await removeUserFromChat(currentChatId, user.id);
       
-      await ctx.reply(`کاربر ${user.first_name} در گروه دیگری قرنطینه است و نمی تواند به این گروه بپیوندد.`);
+      // پیام حذف نشود - فقط کاربر حذف شود
       return false;
     }
 
@@ -394,7 +382,7 @@ const quarantineUser = async (ctx, user) => {
       return false;
     }
 
-    // 4. حذف کاربر از گروه‌های دیگر
+    // 4. حذف کاربر از گروه‌های دیگر - این مهمترین بخش است
     console.log(`مرحله 4: حذف کاربر از سایر گروه ها...`);
     const removalResult = await removeUserFromAllOtherChats(currentChatId, user.id, user.first_name);
     
@@ -402,27 +390,18 @@ const quarantineUser = async (ctx, user) => {
       console.log(`کاربر از ${removalResult.successfullyRemoved} گروه دیگر حذف شد`);
     }
 
-    // 5. هماهنگی با سایر ربات‌ها
-    console.log(`مرحله 5: هماهنگی با سایر ربات ها...`);
-    await syncWithOtherBots(user.id, currentChatId, 'quarantine');
+    // 5. هماهنگی با سایر ربات‌ها - اینجا باید به ربات‌های دیگر بگوید کاربر را حذف کنند
+    console.log(`مرحله 5: هماهنگی با سایر ربات ها برای حذف کاربر...`);
+    await syncWithOtherBots(user.id, currentChatId, 'remove_from_other_chats');
 
     console.log(`کاربر ${user.id} با موفقیت قرنطینه شد`);
     
-    // اطلاع‌رسانی در گروه - خطا اصلاح شده
-    const usernameDisplay = user.username ? `@${user.username}` : 'بدون یوزرنیم';
-    await ctx.reply(`کاربر ${user.first_name} (${usernameDisplay}) با موفقیت قرنطینه شد.\n\nاین کاربر از تمام گروه های دیگر حذف شد و فقط می تواند در این گروه فعالیت کند.`);
+    // پیام قرنطینه حذف شده - هیچ پیامی ارسال نمی‌شود
     
     return true;
     
   } catch (error) {
     console.error('خطای کلی در قرنطینه:', error);
-    
-    try {
-      await ctx.reply(`خطا در قرنطینه کاربر: ${error.message}`);
-    } catch (replyError) {
-      console.error('خطا در ارسال پیام خطا:', replyError);
-    }
-    
     return false;
   }
 };
@@ -432,7 +411,7 @@ const releaseUserFromQuarantine = async (userId) => {
   try {
     console.log(`شروع آزادسازی کاربر ${userId}...`);
     
-    // بررسی وضعیت کاربر
+    // بررسی ��ضعیت کاربر
     const { data: existingUser } = await supabase
       .from('quarantine_users')
       .select('*')
@@ -476,7 +455,7 @@ const releaseUserFromQuarantine = async (userId) => {
 // ==================[ پردازش کاربران جدید ]==================
 bot.on('new_chat_members', async (ctx) => {
   try {
-    console.log(`دریافت کاربر جدید در گروه ${ctx.chat.title} (${ctx.chat.id})`);
+    console.log(`دریافت کاربر ��دید در گروه ${ctx.chat.title} (${ctx.chat.id})`);
     
     // بررسی فعال بودن گروه
     const { data: allowedChat } = await supabase
@@ -503,7 +482,7 @@ bot.on('new_chat_members', async (ctx) => {
   }
 });
 
-// ==================[ endpointهای API ]==================
+// ==================[ endpointهای API - اصلاح شده ]==================
 app.post('/api/check-quarantine', async (req, res) => {
   try {
     const { userId, secretKey } = req.body;
@@ -553,6 +532,12 @@ app.post('/api/sync-user', async (req, res) => {
           current_chat_id: null
         })
         .eq('user_id', userId);
+    } else if (action === 'remove_from_other_chats') {
+      // وقتی از ربات دیگر درخواست حذف کاربر می‌رسد
+      console.log(`درخواست حذف کاربر ${userId} از گروه های این ربات`);
+      
+      // کاربر را از تمام گروه‌های این ربات به جز گروه فعلی حذف کن
+      await removeUserFromAllOtherChats(chatId, userId, 'کاربر از ربات دیگر');
     }
     
     res.status(200).json({ success: true });
@@ -721,4 +706,4 @@ if (process.env.RENDER_EXTERNAL_URL) {
     });
 } else {
   bot.launch().then(() => console.log('ربات با پولینگ راه اندازی شد'));
-                             }
+}
