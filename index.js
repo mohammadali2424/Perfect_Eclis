@@ -32,24 +32,24 @@ const cache = new NodeCache({ stdTTL: 300, checkperiod: 600 });
 // ==================[ پینگ خودکار ]==================
 const startAutoPing = () => {
   if (!process.env.RENDER_EXTERNAL_URL) {
-    console.log('پینگ خودکار غيرفعال (محلي)');
+    console.log('پینگ خودکار غیرفعال (محلی)');
     return;
   }
 
   const PING_INTERVAL = 13 * 60 * 1000 + 59 * 1000;
   const selfUrl = process.env.RENDER_EXTERNAL_URL;
 
-  console.log('راه اندازي پينگ خودکار هر 13:59 دقيقه...');
+  console.log('راه اندازی پینگ خودکار هر 13:59 دقیقه...');
 
   const performPing = async () => {
     try {
-      console.log('ارسال پينگ خودکار...');
+      console.log('ارسال پینگ خودکار...');
       const response = await axios.get(`${selfUrl}/ping`, { 
         timeout: 10000 
       });
-      console.log('پينگ موفق - ربات فعال');
+      console.log('پینگ موفق - ربات فعال');
     } catch (error) {
-      console.error('پينگ ناموفق:', error.message);
+      console.error('پینگ ناموفق:', error.message);
       setTimeout(performPing, 2 * 60 * 1000);
     }
   };
@@ -115,7 +115,7 @@ const isBotAdmin = async (chatId) => {
     const self = await bot.telegram.getChatMember(chatId, bot.botInfo.id);
     return ['administrator', 'creator'].includes(self.status);
   } catch (error) {
-    console.log(`خطا در بررسي ادمين بودن ربات در ${chatId}:`, error.message);
+    console.log(`خطا در بررسی ادمین بودن ربات در ${chatId}:`, error.message);
     return false;
   }
 };
@@ -125,23 +125,23 @@ const getUserStatus = async (chatId, userId) => {
     const member = await bot.telegram.getChatMember(chatId, userId);
     return member.status;
   } catch (error) {
-    console.log(`خطا در دريافت وضعيت کاربر ${userId} در ${chatId}:`, error.message);
+    console.log(`خطا در دریافت وضعیت کاربر ${userId} در ${chatId}:`, error.message);
     return 'not_member';
   }
 };
 
 const removeUserFromChat = async (chatId, userId) => {
   try {
-    console.log(`بررسي ادمين بودن ربات در گروه ${chatId}...`);
+    console.log(`بررسی ادمین بودن ربات در گروه ${chatId}...`);
     
     if (!(await isBotAdmin(chatId))) {
-      console.log(`ربات در گروه ${chatId} ادمين نيست`);
+      console.log(`ربات در گروه ${chatId} ادمین نیست`);
       return false;
     }
     
-    console.log(`بررسي وضعيت کاربر ${userId} در گروه ${chatId}...`);
+    console.log(`بررسی وضعیت کاربر ${userId} در گروه ${chatId}...`);
     const userStatus = await getUserStatus(chatId, userId);
-    console.log(`وضعيت کاربر ${userId} در ${chatId}: ${userStatus}`);
+    console.log(`وضعیت کاربر ${userId} در ${chatId}: ${userStatus}`);
     
     if (['left', 'kicked', 'not_member'].includes(userStatus)) {
       console.log(`کاربر ${userId} از قبل از گروه ${chatId} خارج شده است`);
@@ -149,11 +149,11 @@ const removeUserFromChat = async (chatId, userId) => {
     }
     
     if (!['member', 'administrator', 'creator'].includes(userStatus)) {
-      console.log(`کاربر ${userId} در گروه ${chatId} وضعيت غيرعادي دارد: ${userStatus}`);
+      console.log(`کاربر ${userId} در گروه ${chatId} وضعیت غیرعادی دارد: ${userStatus}`);
       return true;
     }
     
-    console.log(`شروع فرآيند حذف کاربر ${userId} از گروه ${chatId}...`);
+    console.log(`شروع فرآیند حذف کاربر ${userId} از گروه ${chatId}...`);
     
     // ابتدا کاربر را بن می‌کنیم
     await bot.telegram.banChatMember(chatId, userId, {
@@ -163,19 +163,19 @@ const removeUserFromChat = async (chatId, userId) => {
     // سپس آنبن می‌کنیم تا بتواند دوباره جوین شود (فقط از گروه حذف شود)
     await bot.telegram.unbanChatMember(chatId, userId, { only_if_banned: true });
     
-    console.log(`کاربر ${userId} با موفقيت از گروه ${chatId} حذف شد`);
+    console.log(`کاربر ${userId} با موفقیت از گروه ${chatId} حذف شد`);
     return true;
   } catch (error) {
     console.error(`خطا در حذف کاربر ${userId} از گروه ${chatId}:`, error.message);
     
     // بررسی نوع خطا
     if (error.response && error.response.error_code === 400) {
-      console.log(`خطاي 400: احتمالا کاربر در گروه نيست يا از قبل حذف شده`);
+      console.log(`خطای 400: احتمالاً کاربر در گروه نیست یا از قبل حذف شده`);
       return true;
     }
     
     if (error.response && error.response.error_code === 403) {
-      console.log(`خطاي 403: ربات دسترسي لازم را ندارد`);
+      console.log(`خطای 403: ربات دسترسی لازم را ندارد`);
       return false;
     }
     
@@ -183,10 +183,10 @@ const removeUserFromChat = async (chatId, userId) => {
   }
 };
 
-// ==================[ ت��بع اصلی حذف از گروه‌های دیگر ]==================
+// ==================[ تابع اصلی حذف از گروه‌های دیگر ]==================
 const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ناشناس') => {
   try {
-    console.log(`شروع بررسي حذف کاربر ${userName} (${userId}) از ساير گروه ها...`);
+    console.log(`شروع بررسی حذف کاربر ${userName} (${userId}) از سایر گروه ها...`);
     
     // دریافت تمام گروه‌های مجاز از دیتابیس
     const { data: allChats, error } = await supabase 
@@ -194,16 +194,16 @@ const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ن
       .select('chat_id, chat_title');
     
     if (error) {
-      console.error('خطا در دريافت ليست گروه ها از ديتابيس:', error);
+      console.error('خطا در دریافت لیست گروه ها از دیتابیس:', error);
       return;
     }
     
     if (!allChats || allChats.length === 0) {
-      console.log('هيچ گروه فعال ديگري براي بررسي وجود ندارد');
+      console.log('هیچ گروه فعال دیگری برای بررسی وجود ندارد');
       return;
     }
     
-    console.log(`تعداد گروه هاي فعال: ${allChats.length}`);
+    console.log(`تعداد گروه های فعال: ${allChats.length}`);
     
     let removedCount = 0;
     let totalChecks = 0;
@@ -218,12 +218,12 @@ const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ن
       }
       
       totalChecks++;
-      console.log(`بررسي گروه ${chat.chat_title} (${chatId})...`);
+      console.log(`بررسی گروه ${chat.chat_title} (${chatId})...`);
       
       try {
         // بررسی وضعیت کاربر در این گروه
         const userStatus = await getUserStatus(chatId, userId);
-        console.log(`وضعيت کاربر در ${chat.chat_title}: ${userStatus}`);
+        console.log(`وضعیت کاربر در ${chat.chat_title}: ${userStatus}`);
         
         // اگر کاربر در گروه است و می‌تواند حذف شود
         if (['member', 'administrator', 'restricted'].includes(userStatus)) {
@@ -239,11 +239,11 @@ const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ن
             return { success: false, reason: 'removal_failed', chatId, chatTitle: chat.chat_title };
           }
         } else {
-          console.log(`کاربر در گروه ${chat.chat_title} نيست (وضعيت: ${userStatus})`);
+          console.log(`کاربر در گروه ${chat.chat_title} نیست (وضعیت: ${userStatus})`);
           return { success: false, reason: 'not_member', chatId, chatTitle: chat.chat_title };
         }
       } catch (error) {
-        console.error(`خطا در بررسي گروه ${chat.chat_title}:`, error.message);
+        console.error(`خطا در بررسی گروه ${chat.chat_title}:`, error.message);
         return { success: false, reason: 'error', chatId, chatTitle: chat.chat_title, error: error.message };
       }
     });
@@ -251,7 +251,7 @@ const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ن
     // منتظر بمان تا تمام عملیات‌ها تمام شوند
     const results = await Promise.allSettled(removalPromises);
     
-    console.log(`نتيجه نهايي: ${removedCount} کاربر از ${totalChecks} گروه بررسي شده حذف شد`);
+    console.log(`نتیجه نهایی: ${removedCount} کاربر از ${totalChecks} گروه بررسی شده حذف شد`);
     
     return {
       totalChecked: totalChecks,
@@ -260,7 +260,7 @@ const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ن
     };
     
   } catch (error) {
-    console.error('خطاي کلي در حذف از گروه هاي ديگر:', error);
+    console.error('خطای کلی در حذف از گروه های دیگر:', error);
     return {
       totalChecked: 0,
       successfullyRemoved: 0,
@@ -274,13 +274,13 @@ const checkUserInOtherBots = async (userId) => {
   try {
     if (!SYNC_ENABLED) return { found: false };
 
-    console.log(`بررسي کاربر ${userId} در ساير ربات ها...`);
+    console.log(`بررسی کاربر ${userId} در سایر ربات ها...`);
     
     for (const botInstance of BOT_INSTANCES) {
       if (botInstance.id === SELF_BOT_ID) continue;
       
       try {
-        console.log(`بررسي ربات ${botInstance.id}...`);
+        console.log(`بررسی ربات ${botInstance.id}...`);
         let apiUrl = botInstance.url;
         if (!apiUrl.startsWith('http')) apiUrl = `https://${apiUrl}`;
         
@@ -290,7 +290,7 @@ const checkUserInOtherBots = async (userId) => {
         }, { timeout: 5000 });
 
         if (response.data.isQuarantined) {
-          console.log(`کاربر ${userId} در ربات ${botInstance.id} قرنطينه است`);
+          console.log(`کاربر ${userId} در ربات ${botInstance.id} قرنطینه است`);
           return { 
             found: true, 
             botId: botInstance.id, 
@@ -302,10 +302,10 @@ const checkUserInOtherBots = async (userId) => {
       }
     }
     
-    console.log(`کاربر ${userId} در هيچ ربات ديگري قرنطينه نيست`);
+    console.log(`کاربر ${userId} در هیچ ربات دیگری قرنطینه نیست`);
     return { found: false };
   } catch (error) {
-    console.error('خطا در بررسي ساير ربات ها:', error);
+    console.error('خطا در بررسی سایر ربات ها:', error);
     return { found: false };
   }
 };
@@ -314,7 +314,7 @@ const syncWithOtherBots = async (userId, chatId, action) => {
   try {
     if (!SYNC_ENABLED) return;
 
-    console.log(`هماهنگي کاربر ${userId} با ساير ربات ها (عمليات: ${action})...`);
+    console.log(`هماهنگی کاربر ${userId} با سایر ربات ها (عملیات: ${action})...`);
     
     for (const botInstance of BOT_INSTANCES) {
       if (botInstance.id === SELF_BOT_ID) continue;
@@ -330,39 +330,39 @@ const syncWithOtherBots = async (userId, chatId, action) => {
           secretKey: botInstance.secretKey || API_SECRET_KEY
         }, { timeout: 5000 });
         
-        console.log(`هماهنگي با ربات ${botInstance.id} موفقيت آميز بود`);
+        console.log(`هماهنگی با ربات ${botInstance.id} موفقیت آمیز بود`);
       } catch (error) {
-        console.log(`خطا در هماهنگي با ربات ${botInstance.id}:`, error.message);
+        console.log(`خطا در هماهنگی با ربات ${botInstance.id}:`, error.message);
       }
     }
   } catch (error) {
-    console.error('خطاي کلي در هماهنگي:', error);
+    console.error('خطای کلی در هماهنگی:', error);
   }
 };
 
 // ==================[ تابع اصلی قرنطینه ]==================
 const quarantineUser = async (ctx, user) => {
   try {
-    console.log(`شروع فرآيند قرنطينه کاربر: ${user.first_name} (${user.id})`);
+    console.log(`شروع فرآیند قرنطینه کاربر: ${user.first_name} (${user.id})`);
     
     const currentChatId = ctx.chat.id.toString();
     const currentChatTitle = ctx.chat.title || 'بدون عنوان';
 
     // 1. بررسی کاربر در ربات‌های دیگر
-    console.log(`مرحله 1: بررسي کاربر در ساير ربات ها...`);
+    console.log(`مرحله 1: بررسی کاربر در سایر ربات ها...`);
     const userInOtherBot = await checkUserInOtherBots(user.id);
     if (userInOtherBot.found) {
-      console.log(`کاربر در ربات ${userInOtherBot.botId} قرنطينه است - حذف از گروه فعلي`);
+      console.log(`کاربر در ربات ${userInOtherBot.botId} قرنطینه است - حذف از گروه فعلی`);
       
       // حذف کاربر از گروه فعلی
       await removeUserFromChat(currentChatId, user.id);
       
-      await ctx.reply(`کاربر ${user.first_name} در گروه ديگري قرنطينه است و نمي تواند به اين گروه بپيوندد.`);
+      await ctx.reply(`کاربر ${user.first_name} در گروه دیگری قرنطینه است و نمی تواند به این گروه بپیوندد.`);
       return false;
     }
 
     // 2. بررسی وضعیت کاربر در دیتابیس
-    console.log(`مرحله 2: بررسي وضعيت کاربر در ديتابيس...`);
+    console.log(`مرحله 2: بررسی وضعیت کاربر در دیتابیس...`);
     const { data: existingUser } = await supabase
       .from('quarantine_users')
       .select('*')
@@ -371,15 +371,15 @@ const quarantineUser = async (ctx, user) => {
 
     // اگر کاربر در گروه دیگری قرنطینه است
     if (existingUser && existingUser.is_quarantined && existingUser.current_chat_id !== currentChatId) {
-      console.log(`کاربر در گروه ${existingUser.current_chat_id} قرنطينه است - حذف از گروه فعلي`);
+      console.log(`کاربر در گروه ${existingUser.current_chat_id} قرنطینه است - حذف از گروه فعلی`);
       await removeUserFromChat(currentChatId, user.id);
       
-      await ctx.reply(`کاربر ${user.first_name} در گروه ديگري قرنطينه است و نمي تواند به اين گروه بپيوندد.`);
+      await ctx.reply(`کاربر ${user.first_name} در گروه دیگری قرنطینه است و نمی تواند به این گروه بپیوندد.`);
       return false;
     }
 
     // 3. ثبت کاربر در قرنطینه
-    console.log(`مرحله 3: ثبت کاربر در ديتابيس...`);
+    console.log(`مرحله 3: ثبت کاربر در دیتابیس...`);
     const { error: upsertError } = await supabase.from('quarantine_users').upsert({
       user_id: user.id,
       username: user.username,
@@ -390,36 +390,37 @@ const quarantineUser = async (ctx, user) => {
     }, { onConflict: 'user_id' });
 
     if (upsertError) {
-      console.error('خطا در ثبت کاربر در ديتابيس:', upsertError);
+      console.error('خطا در ثبت کاربر در دیتابیس:', upsertError);
       return false;
     }
 
     // 4. حذف کاربر از گروه‌های دیگر
-    console.log(`مرحله 4: حذف کاربر از ساير گروه ها...`);
+    console.log(`مرحله 4: حذف کاربر از سایر گروه ها...`);
     const removalResult = await removeUserFromAllOtherChats(currentChatId, user.id, user.first_name);
     
     if (removalResult && removalResult.successfullyRemoved > 0) {
-      console.log(`کاربر از ${removalResult.successfullyRemoved} گروه ديگر حذف شد`);
+      console.log(`کاربر از ${removalResult.successfullyRemoved} گروه دیگر حذف شد`);
     }
 
     // 5. هماهنگی با سایر ربات‌ها
-    console.log(`مرحله 5: هماهنگي با ساير ربات ها...`);
+    console.log(`مرحله 5: هماهنگی با سایر ربات ها...`);
     await syncWithOtherBots(user.id, currentChatId, 'quarantine');
 
-    console.log(`کاربر ${user.id} با موفقيت قرنطينه شد`);
+    console.log(`کاربر ${user.id} با موفقیت قرنطینه شد`);
     
-    // اطلاع‌رسانی در گروه - خطای اصلی اینجا بود
-    await ctx.reply(`کاربر ${user.first_name} (${user.username || 'بدون يوزرنيم') با موفقيت قرنطينه شد.\n\nاين کاربر از تمام گروه هاي ديگر حذف شد و فقط مي تواند در اين گروه فعاليت کند.`);
+    // اطلاع‌رسانی در گروه - خطا اصلاح شده
+    const usernameDisplay = user.username ? `@${user.username}` : 'بدون یوزرنیم';
+    await ctx.reply(`کاربر ${user.first_name} (${usernameDisplay}) با موفقیت قرنطینه شد.\n\nاین کاربر از تمام گروه های دیگر حذف شد و فقط می تواند در این گروه فعالیت کند.`);
     
     return true;
     
   } catch (error) {
-    console.error('خطاي کلي در قرنطينه:', error);
+    console.error('خطای کلی در قرنطینه:', error);
     
     try {
-      await ctx.reply(`خطا در قرنطينه کاربر: ${error.message}`);
+      await ctx.reply(`خطا در قرنطینه کاربر: ${error.message}`);
     } catch (replyError) {
-      console.error('خطا در ارسال پيام خطا:', replyError);
+      console.error('خطا در ارسال پیام خطا:', replyError);
     }
     
     return false;
@@ -429,7 +430,7 @@ const quarantineUser = async (ctx, user) => {
 // ==================[ تابع آزادسازی کاربر ]==================
 const releaseUserFromQuarantine = async (userId) => {
   try {
-    console.log(`شروع آزادسازي کاربر ${userId}...`);
+    console.log(`شروع آزادسازی کاربر ${userId}...`);
     
     // بررسی وضعیت کاربر
     const { data: existingUser } = await supabase
@@ -454,7 +455,7 @@ const releaseUserFromQuarantine = async (userId) => {
       .eq('user_id', userId);
       
     if (updateError) {
-      console.error(`خطا در آزادسازي ديتابيس:`, updateError);
+      console.error(`خطا در آزادسازی دیتابیس:`, updateError);
       return false;
     }
     
@@ -464,10 +465,10 @@ const releaseUserFromQuarantine = async (userId) => {
     // هماهنگی با سایر ربات‌ها
     await syncWithOtherBots(userId, null, 'release');
     
-    console.log(`کاربر ${userId} با موفقيت آزاد شد`);
+    console.log(`کاربر ${userId} با موفقیت آزاد شد`);
     return true;
   } catch (error) {
-    console.error(`خطاي کلي در آزادسازي:`, error);
+    console.error(`خطای کلی در آزادسازی:`, error);
     return false;
   }
 };
@@ -485,7 +486,7 @@ bot.on('new_chat_members', async (ctx) => {
       .single();
 
     if (!allowedChat) {
-      console.log(`گروه ${ctx.chat.id} فعال نیست - قرنطينه انجام نمي شود`);
+      console.log(`گروه ${ctx.chat.id} فعال نیست - قرنطینه انجام نمی شود`);
       return;
     }
 
@@ -498,7 +499,7 @@ bot.on('new_chat_members', async (ctx) => {
       }
     }
   } catch (error) {
-    console.error('خطاي کلي در پردازش کاربر جدید:', error);
+    console.error('خطای کلی در پردازش کاربر جدید:', error);
   }
 });
 
@@ -720,4 +721,4 @@ if (process.env.RENDER_EXTERNAL_URL) {
     });
 } else {
   bot.launch().then(() => console.log('ربات با پولینگ راه اندازی شد'));
-}
+                             }
