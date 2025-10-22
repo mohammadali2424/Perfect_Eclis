@@ -105,7 +105,23 @@ const isOwner = (userId) => {
   console.log(`🔍 بررسی مالک: کاربر '${userIdStr}' - مالک '${ownerIdStr}'`);
   
   const result = userIdStr === ownerIdStr;
+  console.log(`✅ نتیجه بررسی مالک: ${result}`);
   return result;
+};
+
+// ==================[ محدودیت نرخ درخواست ]==================
+const rateLimit = new Map();
+const checkRateLimit = (userId, action, limit = 5, windowMs = 60000) => {
+  const key = `${userId}:${action}`;
+  const now = Date.now();
+  const userLimits = rateLimit.get(key) || [];
+  const recentLimits = userLimits.filter(time => now - time < windowMs);
+  
+  if (recentLimits.length >= limit) return false;
+  
+  recentLimits.push(now);
+  rateLimit.set(key, recentLimits);
+  return true;
 };
 
 // ==================[ توابع کمکی ]==================
@@ -241,10 +257,75 @@ const removeUserFromChat = async (chatId, userId) => {
   }
 };
 
-// ==================[ تابع حیاتی: بررسی کاربر در سایر ربات‌های قرنطینه - کاملاً بازنویسی شده ]==================
-const checkUserInOtherQuarantineBots = async (userId) => {
+// ==================[ تابع اصلی و حیاتی: حذف کاربر از تمام گروه‌های دیگر - کاملاً بازنویسی شده ]==================
+const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ناشناس') => {
   try {
-    console.log(`🔍 بررسی کاربر ${userId} در سایر ربات‌های قرنطینه...`);
+    console.log(`🔍 در حال بررسی حذف کاربر ${userId} از گروه‌های دیگر به جز ${currentChatId}...`);
+    
+    const { data: allChats, error } = await supabase.from('allowed_chats').select('chat_id, chat_title');
+    if (error) {
+      console.error('❌ خطا در دریافت گروه‌ها:', error);
+      return;
+    }
+    
+    if (allChats && allChats.length > 0) {
+      console.log(`📋 پیدا شد ${allChats.length} گروه فعال`);
+      
+      let removedCount = 0;
+      let sourceChatTitle = '';
+      
+      for (const chat of allChats) {
+        const chatIdStr = chat.chat_id.toString();
+        const currentChatIdStr = currentChatId.toString();
+        
+        if (chatIdStr === currentChatIdStr) {
+          sourceChatTitle = chat.chat_title || 'بدون عنوان';
+          continue;
+        }
+        
+        console.log(`🔍 بررسی حضور کاربر در گروه ${chatIdStr}...`);
+        const userStatus = await getUserStatus(chat.chat_id, userId);
+        
+        if (userStatus && !['left', 'kicked', 'not_member'].includes(userStatus)) {
+          console.log(`🚫 کاربر در گروه ${chatIdStr} حضور دارد - در حال حذف...`);
+          const removed = await removeUserFromChat(chat.chat_id, userId);
+          if (removed) {
+            console.log(`✅ کاربر از گروه ${chatIdStr} حذف شد`);
+            removedCount++;
+            
+            // ارسال گزارش تخلف قرنطینه
+            const reportMessage = `
+🚨 **گزارش تخلف قرنطینه**
+
+👤 کاربر: ${userName} (${userId})
+📋 نوع تخلف: کاربر قرنطینه شده از گروه خارج نشده و به گروه جدید پیوسته است
+
+📍 گروه مبدا: ${sourceChatTitle} (${currentChatId})
+📍 گروه مقصد: ${chat.chat_title || 'بدون عنوان'} (${chat.chat_id})
+
+⏰ زمان: ${formatPersianDate()}
+🤖 ربات گزارش‌دهنده: ${SELF_BOT_ID}
+            `;
+            
+            await sendReportToOwner(reportMessage);
+          }
+        } else {
+          console.log(`ℹ️ کاربر از قبل در گروه ${chatIdStr} نیست`);
+        }
+      }
+      console.log(`✅ کاربر ${userId} از ${removedCount} گروه دیگر حذف شد`);
+    } else {
+      console.log('ℹ️ هیچ گروه فعالی پیدا نشد');
+    }
+  } catch (error) {
+    console.error('❌ خطا در حذف کاربر از گروه‌های دیگر:', error);
+  }
+};
+
+// ==================[ تابع بررسی کاربر در سایر ربات‌ها - کاملاً بازنویسی شده ]==================
+const checkUserInOtherBots = async (userId) => {
+  try {
+    console.log(`🔍 بررسی کاربر ${userId} در سایر ربات‌ها...`);
     
     if (!SYNC_ENABLED || BOT_INSTANCES.length === 0) {
       console.log('🔕 حالت هماهنگی غیرفعال است');
@@ -252,10 +333,7 @@ const checkUserInOtherQuarantineBots = async (userId) => {
     }
 
     const promises = BOT_INSTANCES
-      .filter(botInstance => 
-        botInstance.id !== SELF_BOT_ID && 
-        botInstance.type === 'quarantine' // فقط ربات‌های قرنطینه
-      )
+      .filter(botInstance => botInstance.id !== SELF_BOT_ID && botInstance.type === 'quarantine')
       .map(async (botInstance) => {
         try {
           let apiUrl = botInstance.url;
@@ -266,17 +344,15 @@ const checkUserInOtherQuarantineBots = async (userId) => {
           apiUrl = apiUrl.replace(/\/$/, '');
           const fullUrl = `${apiUrl}/api/check-quarantine`;
           
-          console.log(`🔍 درخواست بررسی کاربر از ${botInstance.id} (${apiUrl})...`);
+          console.log(`🔍 درخواست بررسی کاربر از ${botInstance.id}...`);
           
           const response = await axios.post(fullUrl, {
             userId: userId,
             secretKey: botInstance.secretKey || API_SECRET_KEY,
             sourceBot: SELF_BOT_ID
           }, {
-            timeout: 10000 // افزایش timeout
+            timeout: 8000
           });
-
-          console.log(`📡 پاسخ از ${botInstance.id}:`, response.data);
 
           if (response.data.isQuarantined) {
             console.log(`⚠️ کاربر ${userId} در ربات ${botInstance.id} قرنطینه است - گروه: ${response.data.currentChatId}`);
@@ -287,16 +363,12 @@ const checkUserInOtherQuarantineBots = async (userId) => {
               username: response.data.username,
               firstName: response.data.firstName
             };
-          } else {
-            console.log(`✅ کاربر ${userId} در ربات ${botInstance.id} قرنطینه نیست`);
           }
         } catch (error) {
           if (error.code === 'ECONNREFUSED') {
             console.error(`❌ ارتباط با ${botInstance.id} برقرار نشد: سرور در دسترس نیست`);
           } else if (error.response) {
             console.error(`❌ خطا در بررسی کاربر از ${botInstance.id}:`, error.response.status, error.response.data);
-          } else if (error.request) {
-            console.error(`❌ خطا در بررسی کاربر از ${botInstance.id}: درخواست ارسال شد اما پاسخی دریافت نشد`);
           } else {
             console.error(`❌ خطا در بررسی کاربر از ${botInstance.id}:`, error.message);
           }
@@ -307,12 +379,6 @@ const checkUserInOtherQuarantineBots = async (userId) => {
     const results = await Promise.all(promises);
     const foundResult = results.find(result => result !== null);
     
-    if (foundResult) {
-      console.log(`🎯 کاربر ${userId} در ربات ${foundResult.botId} پیدا شد`);
-    } else {
-      console.log(`✅ کاربر ${userId} در هیچ ربات قرنطینه دیگری پیدا نشد`);
-    }
-    
     return foundResult || { found: false, botId: null, chatId: null, username: null, firstName: null };
   } catch (error) {
     console.error('❌ خطا در بررسی کاربر در سایر ربات‌ها:', error);
@@ -320,7 +386,7 @@ const checkUserInOtherQuarantineBots = async (userId) => {
   }
 };
 
-// ==================[ تابع حذف کاربر از گروه‌های این ربات ]==================
+// ==================[ تابع حذف کاربر از گروه‌های این ربات - بهبود یافته ]==================
 const removeUserFromLocalChats = async (userId, exceptChatId = null) => {
   try {
     console.log(`🗑️ در حال حذف کاربر ${userId} از گروه‌های محلی...`);
@@ -342,7 +408,7 @@ const removeUserFromLocalChats = async (userId, exceptChatId = null) => {
           const userStatus = await getUserStatus(chat.chat_id, userId);
           
           if (userStatus && !['left', 'kicked', 'not_member'].includes(userStatus)) {
-            console.log(`🚫 کاربر در گروه ${chatIdStr} حضور دارد - در حال حذف...`);
+            console.log(`🗑️ حذف کاربر از گروه محلی ${chatIdStr}...`);
             const removed = await removeUserFromChat(chat.chat_id, userId);
             if (removed) {
               console.log(`✅ کاربر از گروه محلی ${chatIdStr} حذف شد`);
@@ -353,17 +419,17 @@ const removeUserFromLocalChats = async (userId, exceptChatId = null) => {
           }
         }
       }
-      console.log(`✅ کاربر ${userId} از ${removedCount} گروه محلی حذف شد`);
+      console.log(`✅ کاربر ${userId} از ${removedCount} گر��ه محلی حذف شد`);
     }
   } catch (error) {
     console.error('❌ خطا در حذف کاربر از گروه‌های محلی:', error);
   }
 };
 
-// ==================[ تابع اصلی قرنطینه - کاملاً بازنویسی شده ]==================
+// ==================[ تابع اصلی قرنطینه - منطق کاملاً جدید برای حل هر دو مشکل ]==================
 const quarantineUser = async (ctx, user, isNewJoin = true) => {
   try {
-    console.log(`\n🔒 شروع فرآیند قرنطینه برای کاربر: ${user.first_name} (${user.id})`);
+    console.log(`🔒 شروع فرآیند قرنطینه برای کاربر: ${user.first_name} (${user.id})`);
     
     const now = new Date().toISOString();
     const userName = user.first_name || 'ناشناس';
@@ -371,18 +437,20 @@ const quarantineUser = async (ctx, user, isNewJoin = true) => {
     const currentChatId = ctx.chat.id.toString();
     const currentChatTitle = ctx.chat.title || 'بدون عنوان';
 
-    // 🔍 مرحله 1: بررسی اینکه کاربر در سایر ربات‌های قرنطینه هست
-    console.log(`🔍 مرحله 1: بررسی کاربر در سایر ربات‌های قرنطینه...`);
-    const userInOtherBot = await checkUserInOtherQuarantineBots(user.id);
-    
-    if (userInOtherBot.found) {
-      console.log(`🚫 کاربر ${user.id} در ربات ${userInOtherBot.botId} قرنطینه است - حذف از گروه فعلی`);
+    // 🔍 مرحله 1: بررسی اینکه کاربر در سایر ربات‌ها قرنطینه است
+    let userInOtherBot = { found: false };
+    if (SYNC_ENABLED) {
+      console.log(`🔍 بررسی کاربر ${user.id} در سایر ربات‌ها...`);
+      userInOtherBot = await checkUserInOtherBots(user.id);
       
-      // حذف فوری کاربر از گروه فعلی
-      await removeUserFromChat(currentChatId, user.id);
-      
-      // ارسال گزارش به مالک
-      const reportMessage = `
+      if (userInOtherBot.found) {
+        console.log(`🚫 کاربر ${user.id} در ربات ${userInOtherBot.botId} قرنطینه است - گروه: ${userInOtherBot.chatId}`);
+        
+        // حذف فوری کاربر از گروه فعلی
+        await removeUserFromChat(currentChatId, user.id);
+        
+        // ارسال گزارش به مالک
+        const reportMessage = `
 🚨 **کاربر قرنطینه شده به گروه دیگر پیوست**
 
 👤 کاربر: ${userName} (${user.id})
@@ -395,14 +463,14 @@ const quarantineUser = async (ctx, user, isNewJoin = true) => {
 🤖 ربات مقصد: ${SELF_BOT_ID}
 
 ⏰ زمان: ${formatPersianDate()}
-      `;
-      
-      await sendReportToOwner(reportMessage);
-      return false; // کاربر قرنطینه شده، اجازه ورود ندارد
+        `;
+        
+        await sendReportToOwner(reportMessage);
+        return false; // کاربر قرنطینه شده، اجازه ورود ندارد
+      }
     }
 
     // 🔍 مرحله 2: بررسی وضعیت کاربر در دیتابیس محلی
-    console.log(`🔍 مرحله 2: بررسی وضعیت کاربر در دیتابیس محلی...`);
     const { data: existingUser, error: userError } = await supabase
       .from('quarantine_users')
       .select('*')
@@ -417,7 +485,7 @@ const quarantineUser = async (ctx, user, isNewJoin = true) => {
     }
 
     // 🔒 مرحله 3: ثبت/آپدیت کاربر در قرنطینه
-    console.log(`🔒 مرحله 3: ثبت کاربر در قرنطینه...`);
+    console.log(`🔄 ثبت/آپدیت کاربر ${user.id} در قرنطینه...`);
     
     const { error: upsertError } = await supabase.from('quarantine_users').upsert({
       user_id: user.id,
@@ -436,14 +504,45 @@ const quarantineUser = async (ctx, user, isNewJoin = true) => {
       return false;
     }
 
-    // 🗑️ مرحله 4: حذف کاربر از تمام گروه‌های دیگر این ربات
-    console.log(`🗑️ مرحله 4: حذف کاربر از گروه‌های دیگر این ربات...`);
-    await removeUserFromLocalChats(user.id, currentChatId);
+    // 🗑️ مرحله 4: حذف کاربر از تمام گروه‌های دیگر (هم محلی و هم در ربات‌های دیگر)
+    console.log(`🔄 در حال حذف کاربر از گروه‌های دیگر...`);
     
-    // 🔄 مرحله 5: هماهنگی با سایر ربات‌های قرنطینه
+    // حذف از گروه‌های محلی دیگر
+    await removeUserFromAllOtherChats(currentChatId, user.id, userName);
+    
+    // 🔄 مرحل�� 5: هماهنگی با سایر ربات‌ها - اینجا مشکل قبلی رو حل کردم
     if (SYNC_ENABLED) {
-      console.log(`🔄 مرحله 5: هماهنگی با سایر ربات‌های قرنطینه...`);
-      await syncUserWithOtherBots(user.id, currentChatId, 'quarantine');
+      console.log(`🔄 هماهنگی کاربر با سایر ربات‌ها...`);
+      
+      // فقط با ربات‌های قرنطینه هماهنگ شو
+      const quarantineBots = BOT_INSTANCES.filter(bot => bot.type === 'quarantine' && bot.id !== SELF_BOT_ID);
+      
+      for (const botInstance of quarantineBots) {
+        try {
+          let apiUrl = botInstance.url;
+          if (!apiUrl.startsWith('http')) apiUrl = `https://${apiUrl}`;
+          apiUrl = apiUrl.replace(/\/$/, '');
+          
+          console.log(`🔗 ارسال درخواست هماهنگی به ${botInstance.id}...`);
+          
+          await axios.post(`${apiUrl}/api/sync-user`, {
+            userId: user.id,
+            chatId: currentChatId,
+            action: 'quarantine',
+            secretKey: botInstance.secretKey || API_SECRET_KEY,
+            sourceBot: SELF_BOT_ID
+          }, { 
+            timeout: 8000,
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          console.log(`✅ هماهنگی با ${botInstance.id} موفق`);
+        } catch (error) {
+          console.error(`❌ خطا در هماهنگی با ${botInstance.id}:`, error.message);
+        }
+      }
     }
     
     await logAction('user_quarantined', user.id, currentChatId, {
@@ -462,6 +561,123 @@ const quarantineUser = async (ctx, user, isNewJoin = true) => {
   }
 };
 
+// ==================[ تابع جدید: بررسی و حذف کاربر از گروه‌های دیگر - منطق اصلاح شده ]==================
+const ensureUserInSingleChat = async (ctx, user) => {
+  try {
+    console.log(`🔍 بررسی حضور کاربر ${user.id} در گروه‌های دیگر...`);
+    
+    const currentChatId = ctx.chat.id.toString();
+    const userName = user.first_name || 'ناشناس';
+    
+    // بررسی وضعیت کاربر در دیتابیس
+    const { data: existingUser, error: userError } = await supabase
+      .from('quarantine_users')
+      .select('*')
+      .eq('user_id', user.id)
+      .single();
+
+    // اگر کاربر قرنطینه نیست، بررسی کن که در گروه‌های دیگر نباشد
+    if (!userError && existingUser && !existingUser.is_quarantined) {
+      console.log(`👤 کاربر ${user.id} قرنطینه نیست - بررسی حضور در گروه‌های دیگر`);
+      
+      const { data: allChats, error } = await supabase.from('allowed_chats').select('chat_id, chat_title');
+      if (error) {
+        console.error('❌ خطا در دریافت گروه‌ها:', error);
+        return;
+      }
+      
+      if (allChats && allChats.length > 0) {
+        let removedCount = 0;
+        
+        for (const chat of allChats) {
+          const chatIdStr = chat.chat_id.toString();
+          const currentChatIdStr = currentChatId.toString();
+          
+          if (chatIdStr === currentChatIdStr) continue;
+          
+          console.log(`🔍 بررسی حضور کاربر در گروه ${chatIdStr}...`);
+          const userStatus = await getUserStatus(chat.chat_id, user.id);
+          
+          if (userStatus && !['left', 'kicked', 'not_member'].includes(userStatus)) {
+            console.log(`🚫 کاربر در گروه ${chatIdStr} حضور دارد - در حال حذف...`);
+            const removed = await removeUserFromChat(chat.chat_id, user.id);
+            if (removed) {
+              console.log(`✅ کاربر از گروه ${chatIdStr} حذف شد`);
+              removedCount++;
+              
+              // ارسال گزارش
+              const reportMessage = `
+⚠️ **کاربر از گروه دیگر حذف شد**
+
+👤 کاربر: ${userName} (${user.id})
+📱 یوزرنیم: ${user.username ? `@${user.username}` : 'ندارد'}
+
+📍 گروه مبدا: ${chat.chat_title || 'بدون عنوان'} (${chat.chat_id})
+📍 گروه مقصد: ${ctx.chat.title} (${ctx.chat.id})
+
+⏰ زمان: ${formatPersianDate()}
+🤖 ربات: ${SELF_BOT_ID}
+
+📝 توضیح: کاربر در گروه‌های متعدد شناسایی و از گروه‌های دیگر حذف شد
+              `;
+              
+              await sendReportToOwner(reportMessage);
+            }
+          }
+        }
+        
+        if (removedCount > 0) {
+          console.log(`✅ کاربر ${user.id} از ${removedCount} گروه دیگر حذف شد`);
+          
+          // آپدیت وضعیت کاربر به قرنطینه در گروه جدید
+          await supabase
+            .from('quarantine_users')
+            .update({
+              is_quarantined: true,
+              current_chat_id: currentChatId,
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', user.id);
+          
+          // هماهنگی با سایر ربات‌ها
+          if (SYNC_ENABLED) {
+            await syncUserWithOtherBots(user.id, currentChatId, 'quarantine');
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('❌ خطا در بررسی تک گروهی کاربر:', error);
+  }
+};
+
+// ==================[ پردازش اعضای جدید - منطق اصلاح شده ]==================
+const handleNewUser = async (ctx, user) => {
+  try {
+    console.log(`👤 پردازش کاربر جدید: ${user.first_name} (${user.id}) در گروه ${ctx.chat.id}`);
+    
+    // بررسی اینکه گروه فعال است یا نه
+    const { data: allowedChat, error: chatError } = await supabase
+      .from('allowed_chats')
+      .select('chat_id, chat_title')
+      .eq('chat_id', ctx.chat.id.toString())
+      .single();
+
+    if (chatError || !allowedChat) {
+      console.log('ℹ️ گروه فعال نیست، کاربر قرنطینه نمی‌شود');
+      return;
+    }
+
+    // 🔍 اول: بررسی حضور کاربر در گروه‌های دیگر (حتی اگر قرنطینه نباشد)
+    await ensureUserInSingleChat(ctx, user);
+    
+    // 🔒 دوم: اجرای فرآیند قرنطینه معمول
+    await quarantineUser(ctx, user, true);
+  } catch (error) {
+    console.error('❌ خطا در پردازش کاربر جدید:', error);
+  }
+};
+
 // ==================[ توابع هماهنگی چندرباتی - کاملاً بازنویسی شده ]==================
 const syncUserWithOtherBots = async (userId, chatId, action) => {
   try {
@@ -473,10 +689,7 @@ const syncUserWithOtherBots = async (userId, chatId, action) => {
     console.log(`🔄 هماهنگی کاربر ${userId} با سایر ربات‌ها برای عمل: ${action}...`);
     
     const promises = BOT_INSTANCES
-      .filter(botInstance => 
-        botInstance.id !== SELF_BOT_ID && 
-        botInstance.type === 'quarantine' // فقط با ربات‌های قرنطینه هماهنگ شو
-      )
+      .filter(botInstance => botInstance.id !== SELF_BOT_ID && botInstance.type === 'quarantine')
       .map(async (botInstance) => {
         try {
           let apiUrl = botInstance.url;
@@ -487,7 +700,7 @@ const syncUserWithOtherBots = async (userId, chatId, action) => {
           apiUrl = apiUrl.replace(/\/$/, '');
           const fullUrl = `${apiUrl}/api/sync-user`;
           
-          console.log(`🔗 ارسال درخواست به ${botInstance.id} (${apiUrl})...`);
+          console.log(`🔗 ارسال درخواست به ${botInstance.id}...`);
           
           const response = await axios.post(fullUrl, {
             userId: userId,
@@ -505,8 +718,6 @@ const syncUserWithOtherBots = async (userId, chatId, action) => {
             console.error(`❌ ارتباط با ${botInstance.id} برقرار نشد: سرور در دسترس نیست`);
           } else if (error.response) {
             console.error(`❌ هماهنگی با ${botInstance.id} ناموفق:`, error.response.status, error.response.data);
-          } else if (error.request) {
-            console.error(`❌ هماهنگی با ${botInstance.id} ناموفق: درخواست ارسال شد اما پاسخی دریافت نشد`);
           } else {
             console.error(`❌ هماهنگی با ${botInstance.id} ناموفق:`, error.message);
           }
@@ -520,10 +731,22 @@ const syncUserWithOtherBots = async (userId, chatId, action) => {
   }
 };
 
-// ==================[ تابع آزادسازی کاربر از قرنطینه ]==================
+// ==================[ تابع آزادسازی کاربر از قرنطینه - بهبود یافته ]==================
 const releaseUserFromQuarantine = async (userId) => {
   try {
     console.log(`🔄 در حال آزاد کردن کاربر ${userId} از قرنطینه...`);
+    
+    // بررسی اینکه کاربر اصلاً قرنطینه هست یا نه
+    const { data: existingUser } = await supabase
+      .from('quarantine_users')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (!existingUser || !existingUser.is_quarantined) {
+      console.log(`ℹ️ کاربر ${userId} از قبل آزاد است`);
+      return true;
+    }
     
     // آپدیت وضعیت کاربر در دیتابیس
     const { error: updateError } = await supabase
@@ -556,7 +779,7 @@ const releaseUserFromQuarantine = async (userId) => {
   }
 };
 
-// ==================[ تابع بررسی انقضای قرنطینه ]==================
+// ==================[ تابع بررسی انقضای قرنطینه - بهبود یافته ]==================
 const checkQuarantineExpiry = async () => {
   try {
     console.log('🔍 بررسی انقضای قرنطینه کاربران...');
@@ -624,15 +847,332 @@ const checkUserAccess = async (ctx) => {
   }
 };
 
-// ==================[ پردازش اعضای جدید ]==================
+// ==================[ دستورات ربات - فقط برای مالک ]==================
+bot.start((ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'start')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+  
+  ctx.reply('ناظر اکلیس در خدمت شماست 🥷🏻');
+  logAction('bot_started', ctx.from.id);
+});
+
+// دستور فعال‌سازی گروه - فقط برای مالک
+bot.command('on', async (ctx) => {
+  if (!ctx.message.chat.type.includes('group')) {
+    ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
+    return;
+  }
+
+  const chatId = ctx.chat.id.toString();
+  const userId = ctx.message.from.id;
+
+  if (!checkRateLimit(userId, 'activate')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+
+  // فقط مالک می‌تواند استفاده کند
+  const userAccess = await checkUserAccess(ctx);
+  if (!userAccess.hasAccess) {
+    ctx.reply(`❌ ${userAccess.reason}`);
+    return;
+  }
+
+  // بررسی ادمین بودن ربات
+  const botIsAdmin = await isBotAdmin(chatId);
+  console.log(`🔍 بررسی ادمین بودن ربات در گروه ${chatId}: ${botIsAdmin}`);
+  
+  if (!botIsAdmin) {
+    ctx.reply('❌ لطفاً ابتدا ربات را ادمین گروه کنید.');
+    return;
+  }
+
+  try {
+    // بررسی اینکه گروه قبلاً فعال شده یا نه
+    const { data: existingChat, error: checkError } = await supabase
+      .from('allowed_chats')
+      .select('chat_id')
+      .eq('chat_id', chatId)
+      .single();
+
+    if (existingChat) {
+      ctx.reply('✅ ربات قبلاً در این گروه فعال شده است.');
+      return;
+    }
+
+    // فعال‌سازی گروه
+    const { error } = await supabase
+      .from('allowed_chats')
+      .insert({
+        chat_id: chatId,
+        chat_title: ctx.chat.title,
+        created_at: new Date().toISOString()
+      });
+
+    if (error) {
+      console.error('❌ خطا در فعال‌سازی گروه:', error);
+      ctx.reply('❌ خطا در فعال‌سازی گروه.');
+      return;
+    }
+
+    ctx.reply('✅ ربات با موفقیت فعال شد! از این پس کاربران جدید قرنطینه خواهند شد.');
+    
+    // ارسال گزارش به مالک
+    const reportMessage = `
+🟢 **ربات در گروه جدید فعال شد**
+
+🏠 گروه: ${ctx.chat.title}
+🆔 آیدی: ${ctx.chat.id}
+
+👤 فعال‌کننده: ${ctx.from.first_name} ${ctx.from.last_name || ''} (${ctx.from.username ? `@${ctx.from.username}` : 'بدون یوزرنیم'})
+🆔 آیدی کاربر: ${ctx.from.id}
+
+⏰ زمان: ${formatPersianDate()}
+    `;
+    
+    await sendReportToOwner(reportMessage);
+    await logAction('chat_activated', userId, chatId, {
+      chat_title: ctx.chat.title
+    });
+  } catch (error) {
+    console.error('❌ خطا در فعال‌سازی گروه:', error);
+    ctx.reply('❌ خطا در فعال‌سازی گروه.');
+  }
+});
+
+// دستور غیرفعال‌سازی گروه - فقط برای مالک
+bot.command('off', async (ctx) => {
+  if (!ctx.message.chat.type.includes('group')) {
+    ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
+    return;
+  }
+
+  const chatId = ctx.chat.id.toString();
+  const userId = ctx.message.from.id;
+
+  if (!checkRateLimit(userId, 'deactivate')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+
+  // فقط مالک می‌تواند استفاده کند
+  const userAccess = await checkUserAccess(ctx);
+  if (!userAccess.hasAccess) {
+    ctx.reply(`❌ ${userAccess.reason}`);
+    return;
+  }
+
+  try {
+    // بررسی اینکه گروه فعال است یا نه
+    const { data: existingChat, error: checkError } = await supabase
+      .from('allowed_chats')
+      .select('chat_id, chat_title')
+      .eq('chat_id', chatId)
+      .single();
+
+    if (!existingChat) {
+      ctx.reply('ℹ️ ربات در این گروه از قبل غیرفعال است.');
+      return;
+    }
+
+    // غیرفعال‌سازی گروه
+    const { error } = await supabase
+      .from('allowed_chats')
+      .delete()
+      .eq('chat_id', chatId);
+
+    if (error) {
+      console.error('❌ خطا در غیرفعال‌سازی گروه:', error);
+      ctx.reply('❌ خطا در غیرفعال‌سازی گروه.');
+      return;
+    }
+
+    ctx.reply('❌ ربات با موفقیت غیرفعال شد! از این پس کاربران جدید قرنطینه نخواهند شد.');
+    
+    // ارسال گزارش به مالک
+    const reportMessage = `
+🔴 **ربات در گروه غیرفعال شد**
+
+🏠 گروه: ${existingChat.chat_title || ctx.chat.title}
+🆔 آیدی: ${ctx.chat.id}
+
+👤 غیرفعال‌کننده: ${ctx.from.first_name} ${ctx.from.last_name || ''} (${ctx.from.username ? `@${ctx.from.username}` : 'بدون یوزرنیم'})
+🆔 آیدی کاربر: ${ctx.from.id}
+
+⏰ زمان: ${formatPersianDate()}
+    `;
+    
+    await sendReportToOwner(reportMessage);
+    await logAction('chat_deactivated', userId, chatId, {
+      chat_title: ctx.chat.title
+    });
+  } catch (error) {
+    console.error('❌ خطا در غیرفعال‌سازی گروه:', error);
+    ctx.reply('❌ خطا در غیرفعال‌سازی گروه.');
+  }
+});
+
+// دستور وضعیت گروه
+bot.command('status', async (ctx) => {
+  if (!ctx.message.chat.type.includes('group')) {
+    ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
+    return;
+  }
+
+  const chatId = ctx.chat.id.toString();
+  const userId = ctx.message.from.id;
+
+  if (!checkRateLimit(userId, 'status')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+
+  try {
+    const { data: allowedChat } = await supabase
+      .from('allowed_chats')
+      .select('chat_id')
+      .eq('chat_id', chatId)
+      .single();
+
+    if (allowedChat) {
+      ctx.reply('✅ ربات در این گروه فعال است و کاربران جدید را قرنطینه می‌کند.');
+    } else {
+      ctx.reply('❌ ربات در این گروه غیرفعال است. برای فعال‌سازی از دستور /on استفاده کنید.');
+    }
+  } catch (error) {
+    console.error('❌ خطا در بررسی وضعیت:', error);
+    ctx.reply('خطا در بررسی وضعیت ربات.');
+  }
+});
+
+// ==================[ دستور جدید: آزادسازی کاربر با ریپلای ]==================
+bot.command('free', async (ctx) => {
+  try {
+    if (!ctx.message.chat.type.includes('group')) {
+      ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
+      return;
+    }
+
+    const userId = ctx.message.from.id;
+
+    if (!checkRateLimit(userId, 'free')) {
+      ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+      return;
+    }
+
+    // فقط مالک می‌تواند استفاده کند
+    const userAccess = await checkUserAccess(ctx);
+    if (!userAccess.hasAccess) {
+      ctx.reply(`❌ ${userAccess.reason}`);
+      return;
+    }
+
+    // بررسی اینکه آیا روی پیامی ریپلای شده است یا نه
+    if (!ctx.message.reply_to_message) {
+      ctx.reply('❌ لطفاً روی پیام کاربری که می‌خواهید آزاد کنید، ریپلای کنید.');
+      return;
+    }
+
+    const targetUser = ctx.message.reply_to_message.from;
+    
+    // بررسی اینکه کاربر ربات نباشد
+    if (targetUser.is_bot) {
+      ctx.reply('❌ نمی‌توان ربات‌ها را آزاد کرد.');
+      return;
+    }
+
+    console.log(`🔓 درخواست آزادسازی کاربر ${targetUser.id} توسط مالک ${userId}`);
+
+    // آزادسازی کاربر از قرنطینه
+    const success = await releaseUserFromQuarantine(targetUser.id);
+
+    if (success) {
+      ctx.reply(`✅ کاربر ${targetUser.first_name} (${targetUser.id}) با موفقیت از قرنطینه خارج شد.`);
+      
+      // ارسال گزارش به مالک
+      const reportMessage = `
+🟢 **کاربر به صورت دستی از قرنطینه خارج شد**
+
+👤 کاربر: ${targetUser.first_name || 'ناشناس'} (${targetUser.id})
+📱 یوزرنیم: ${targetUser.username ? `@${targetUser.username}` : 'ندارد'}
+
+👤 آزادکننده: ${ctx.from.first_name} ${ctx.from.last_name || ''} (${ctx.from.username ? `@${ctx.from.username}` : 'بدون یوزرنیم'})
+📍 گروه: ${ctx.chat.title} (${ctx.chat.id})
+
+⏰ زمان: ${formatPersianDate()}
+🤖 ربات: ${SELF_BOT_ID}
+      `;
+      
+      await sendReportToOwner(reportMessage);
+      await logAction('manual_release', userId, ctx.chat.id, {
+        target_user_id: targetUser.id,
+        target_username: targetUser.username,
+        target_first_name: targetUser.first_name
+      });
+    } else {
+      ctx.reply('❌ خطا در آزادسازی کاربر از قرنطینه.');
+    }
+  } catch (error) {
+    console.error('❌ خطا در دستور free:', error);
+    ctx.reply('❌ خطا در اجرای دستور.');
+  }
+});
+
+// دستور راهنما
+bot.command('help', (ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'help')) {
+    ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+    return;
+  }
+  
+  const helpText = `
+🤖 راهنمای ربات قرنطینه:
+
+/on - فعال‌سازی ربات در گروه (فقط مالک)
+/off - غیرفعال‌سازی ربات در گروه (فقط مالک)
+/free - آزادسازی کاربر از قرنطینه (ریپلای روی کاربر + فقط مالک)
+/status - نمایش وضعیت ربات در گروه
+/help - نمایش این راهنما
+
+پس از فعال‌سازی، کاربران جدید به صورت خودکار قرنطینه می‌شوند و فقط در یک گروه می‌توانند عضو باشند.
+  `;
+  
+  ctx.reply(helpText);
+  logAction('help_requested', ctx.from.id);
+});
+
+// ==================[ پردازش اعضای جدید - بهبود یافته برای تشخیص مالک ]==================
 bot.on('new_chat_members', async (ctx) => {
   try {
-    console.log(`\n🆕 اعضای جدید به گروه ${ctx.chat.id} اضافه شدند`);
+    console.log(`🆕 اعضای جدید به گروه ${ctx.chat.id} اضافه شدند`);
     
     for (const member of ctx.message.new_chat_members) {
-      if (!member.is_bot) {
+      if (member.is_bot && member.username === ctx.botInfo.username) {
+        // اگر ربات خودش اضافه شده
+        console.log(`🤖 ربات توسط کاربر ${ctx.from.id} اضافه شد`);
+        console.log(`🔍 بررسی مالک: ${ctx.from.id} == ${OWNER_ID}`);
+        
+        // بررسی مستقیم مالک بودن
+        if (!isOwner(ctx.from.id)) {
+          console.log(`❌ کاربر ${ctx.from.id} مالک نیست - ربات لفت می‌دهد`);
+          await ctx.reply('❌ فقط مالک ربات می‌تواند ربات را اضافه کند.');
+          await ctx.leaveChat();
+          return;
+        }
+        
+        // اگر مالک است
+        console.log(`✅ کاربر ${ctx.from.id} مالک است - ربات می‌ماند`);
+        await ctx.reply(
+          '🤖 ربات اضافه شد!\n\n' +
+          'برای فعال‌سازی و شروع قرنطینه کاربران جدید، از دستور /on استفاده کنید.\n' +
+          'برای غیرفعال‌سازی از دستور /off استفاده کنید.'
+        );
+      } else if (!member.is_bot) {
+        // اگر کاربر عادی اضافه شده
         console.log(`👤 کاربر عادی اضافه شد: ${member.first_name} (${member.id})`);
-        await quarantineUser(ctx, member, true);
+        await handleNewUser(ctx, member);
       }
     }
   } catch (error) {
@@ -640,7 +1180,7 @@ bot.on('new_chat_members', async (ctx) => {
   }
 });
 
-// ==================[ endpointهای API - حیاتی ]==================
+// ==================[ endpointهای API - کاملاً بازنویسی شده ]==================
 app.post('/api/check-quarantine', async (req, res) => {
   try {
     const { userId, secretKey, sourceBot } = req.body;
@@ -783,12 +1323,10 @@ app.get('/', (req, res) => res.send('ربات قرنطینه فعال است!'))
 app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
 
 app.listen(PORT, () => {
-  console.log(`\n✅ سرور ربات قرنطینه ${SELF_BOT_ID} روی پورت ${PORT} راه‌اندازی شد`);
+  console.log(`✅ سرور روی پورت ${PORT} راه‌اندازی شد`);
   console.log(`🤖 شناسه ربات: ${SELF_BOT_ID}`);
   console.log(`🔗 حالت هماهنگی: ${SYNC_ENABLED ? 'فعال' : 'غیرفعال'}`);
   console.log(`👥 تعداد ربات‌های متصل: ${BOT_INSTANCES.length}`);
-  console.log(`🏥 ربات‌های قرنطینه: ${BOT_INSTANCES.filter(bot => bot.type === 'quarantine').length}`);
-  console.log(`⚡ ربات‌های تریگر: ${BOT_INSTANCES.filter(bot => bot.type === 'trigger').length}`);
   console.log(`👑 مالک ربات: ${OWNER_ID}`);
   
   // شروع پینگ خودکار
