@@ -24,7 +24,7 @@ const SELF_BOT_ID = process.env.SELF_BOT_ID || 'quarantine_1';
 const SYNC_ENABLED = process.env.SYNC_ENABLED === 'true';
 const API_SECRET_KEY = process.env.API_SECRET_KEY;
 const BOT_INSTANCES = process.env.BOT_INSTANCES ? JSON.parse(process.env.BOT_INSTANCES) : [];
-const OWNER_ID = process.env.OWNER_ID;
+const OWNER_ID = process.env.OWNER_ID; // فقط از این متغیر استفاده می‌شود
 
 // کش برای ذخیره وضعیت
 const cache = new NodeCache({ stdTTL: 300, checkperiod: 600 });
@@ -92,7 +92,7 @@ if (process.env.NODE_ENV !== 'production') {
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const bot = new Telegraf(BOT_TOKEN);
 
-// ==================[ تابع ساده بررسی مالک ]==================
+// ==================[ تابع بهبود یافته بررسی مالک ]==================
 const isOwner = (userId) => {
   if (!OWNER_ID) {
     console.error('❌ OWNER_ID تنظیم نشده است');
@@ -102,7 +102,10 @@ const isOwner = (userId) => {
   const userIdStr = userId.toString().trim();
   const ownerIdStr = OWNER_ID.toString().trim();
   
+  console.log(`🔍 بررسی مالک: کاربر '${userIdStr}' - مالک '${ownerIdStr}'`);
+  
   const result = userIdStr === ownerIdStr;
+  console.log(`✅ نتیجه بررسی مالک: ${result}`);
   return result;
 };
 
@@ -295,10 +298,10 @@ const removeUserFromAllOtherChats = async (currentChatId, userId, userName = 'ن
 🚨 **گزارش تخلف قرنطینه**
 
 👤 کاربر: ${userName} (${userId})
-📋 نوع تخلف: کاربر در گروه‌های متعدد شناسایی و حذف شد
+📋 نوع تخلف: کاربر قرنطینه شده از گروه خارج نشده و به گروه جدید پیوسته است
 
-📍 گروه اصلی: ${sourceChatTitle} (${currentChatId})
-📍 گروه حذف شده: ${chat.chat_title || 'بدون عنوان'} (${chat.chat_id})
+📍 گروه مبدا: ${sourceChatTitle} (${currentChatId})
+📍 گروه مقصد: ${chat.chat_title || 'بدون عنوان'} (${chat.chat_id})
 
 ⏰ زمان: ${formatPersianDate()}
 🤖 ربات گزارش‌دهنده: ${SELF_BOT_ID}
@@ -777,6 +780,7 @@ const checkQuarantineExpiry = async () => {
 // ==================[ بررسی دسترسی کاربر - فقط مالک ]==================
 const checkUserAccess = async (ctx) => {
   try {
+    // فقط مالک ربات دسترسی دارد
     if (isOwner(ctx.from.id)) {
       return { hasAccess: true, isOwner: true };
     }
@@ -814,9 +818,10 @@ bot.command('on', async (ctx) => {
     return;
   }
 
-  // فقط مالک می��تواند استفاده کند
-  if (!isOwner(userId)) {
-    ctx.reply('❌ فقط مالک ربات می‌تواند از این دستور استفاده کند.');
+  // فقط مالک می‌تواند استفاده کند
+  const userAccess = await checkUserAccess(ctx);
+  if (!userAccess.hasAccess) {
+    ctx.reply(`❌ ${userAccess.reason}`);
     return;
   }
 
@@ -898,8 +903,9 @@ bot.command('off', async (ctx) => {
   }
 
   // فقط مالک می‌تواند استفاده کند
-  if (!isOwner(userId)) {
-    ctx.reply('❌ فقط مالک ربات می‌تواند از این دستور استفاده کند.');
+  const userAccess = await checkUserAccess(ctx);
+  if (!userAccess.hasAccess) {
+    ctx.reply(`❌ ${userAccess.reason}`);
     return;
   }
 
@@ -1008,7 +1014,7 @@ bot.command('help', (ctx) => {
   logAction('help_requested', ctx.from.id);
 });
 
-// پردازش اعضای جدید
+// ==================[ پردازش اعضای جدید - بهبود یافته برای تشخیص مالک ]==================
 bot.on('new_chat_members', async (ctx) => {
   try {
     console.log(`🆕 اعضای جدید به گروه ${ctx.chat.id} اضافه شدند`);
@@ -1016,12 +1022,19 @@ bot.on('new_chat_members', async (ctx) => {
     for (const member of ctx.message.new_chat_members) {
       if (member.is_bot && member.username === ctx.botInfo.username) {
         // اگر ربات خودش اضافه شده
+        console.log(`🤖 ربات توسط کاربر ${ctx.from.id} اضافه شد`);
+        console.log(`🔍 بررسی مالک: ${ctx.from.id} == ${OWNER_ID}`);
+        
+        // بررسی مستقیم مالک بودن
         if (!isOwner(ctx.from.id)) {
+          console.log(`❌ کاربر ${ctx.from.id} مالک نیست - ربات لفت می‌دهد`);
           await ctx.reply('❌ فقط مالک ربات می‌تواند ربات را اضافه کند.');
           await ctx.leaveChat();
           return;
         }
         
+        // اگر مالک است
+        console.log(`✅ کاربر ${ctx.from.id} مالک است - ربات می‌ماند`);
         await ctx.reply(
           '🤖 ربات اضافه شد!\n\n' +
           'برای فعال‌سازی و شروع قرنطینه کاربران جدید، از دستور /on استفاده کنید.\n' +
