@@ -24,7 +24,7 @@ const SELF_BOT_ID = process.env.SELF_BOT_ID || 'quarantine_1';
 const SYNC_ENABLED = process.env.SYNC_ENABLED === 'true';
 const API_SECRET_KEY = process.env.API_SECRET_KEY;
 const BOT_INSTANCES = process.env.BOT_INSTANCES ? JSON.parse(process.env.BOT_INSTANCES) : [];
-const OWNER_ID = process.env.OWNER_ID; // فقط از این متغیر استفاده می‌شود
+const OWNER_ID = process.env.OWNER_ID;
 
 // کش برای ذخیره وضعیت
 const cache = new NodeCache({ stdTTL: 300, checkperiod: 600 });
@@ -190,7 +190,7 @@ const isBotAdmin = async (chatId) => {
     cache.set(cacheKey, isAdmin, 300);
     return isAdmin;
   } catch (error) {
-    console.error('❌ خطا در بررسی ادمین بودن ربات:', error);
+    console.error('❌ خطا ��ر بررسی ادمین بودن ربات:', error);
     
     if (error.response && error.response.error_code === 403) {
       return false;
@@ -482,7 +482,7 @@ const quarantineUser = async (ctx, user, isNewJoin = true) => {
           shouldQuarantine = false;
         } else {
           // کاربر در همین گروه قرنطینه است - فقط اطلاعات را آپدیت کن
-          console.log(`📝 کاربر در همین گروه قرنطینه است - آپدیت اطلاعات`);
+          console.log(`📝 کاربر در همین گروه قرنطینه است - آپدیت اطلاع��ت`);
         }
       } else {
         // کاربر قبلاً آزاد شده بود - قرنطینه مجدد
@@ -547,7 +547,7 @@ const ensureUserInSingleChat = async (ctx, user) => {
     const currentChatId = ctx.chat.id.toString();
     const userName = user.first_name || 'ناشناس';
     
-    // بررسی وضعیت کاربر در دیتابیس
+    // بررسی وضعیت کاربر در ��یتابیس
     const { data: existingUser, error: userError } = await supabase
       .from('quarantine_users')
       .select('*')
@@ -664,7 +664,7 @@ const syncUserWithOtherBots = async (userId, chatId, action) => {
       return;
     }
 
-    console.log(`🔄 هماهنگی کاربر ${userId} با سایر ربات‌ها برای عمل: ${action}...`);
+    console.log(`���� هماهنگی کاربر ${userId} با سایر ربات‌ها برای عمل: ${action}...`);
     
     const promises = BOT_INSTANCES
       .filter(botInstance => botInstance.id !== SELF_BOT_ID)
@@ -703,6 +703,42 @@ const syncUserWithOtherBots = async (userId, chatId, action) => {
   }
 };
 
+// ==================[ تابع آزادسازی کاربر از قرنطینه - بهبود یافته ]==================
+const releaseUserFromQuarantine = async (userId) => {
+  try {
+    console.log(`🔄 در حال آزاد کردن کاربر ${userId} از قرنطینه...`);
+    
+    // آپدیت وضعیت کاربر در دیتابیس
+    const { error: updateError } = await supabase
+      .from('quarantine_users')
+      .update({ 
+        is_quarantined: false,
+        current_chat_id: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId);
+      
+    if (updateError) {
+      console.error(`❌ خطا در خارج کردن کاربر ${userId} از قرنطینه:`, updateError);
+      return false;
+    }
+    
+    // پاک کردن کش کاربر
+    cache.del(`quarantine:${userId}`);
+    
+    // هماهنگی با سایر ربات‌ها
+    if (SYNC_ENABLED) {
+      await syncUserWithOtherBots(userId, null, 'release');
+    }
+    
+    console.log(`✅ کاربر ${userId} با موفقیت از قرنطینه خارج شد`);
+    return true;
+  } catch (error) {
+    console.error(`❌ خطا در آزادسازی کاربر ${userId}:`, error);
+    return false;
+  }
+};
+
 // ==================[ تابع بررسی انقضای قرنطینه - بهبود یافته ]==================
 const checkQuarantineExpiry = async () => {
   try {
@@ -725,30 +761,10 @@ const checkQuarantineExpiry = async () => {
       for (const user of expiredUsers) {
         console.log(`🔄 آزادسازی کاربر ${user.user_id} از قرنطینه...`);
         
-        const { error: updateError } = await supabase
-          .from('quarantine_users')
-          .update({ 
-            is_quarantined: false, 
-            current_chat_id: null, 
-            updated_at: new Date().toISOString() 
-          })
-          .eq('user_id', user.user_id);
-          
-        if (updateError) {
-          console.error(`❌ خطا در آزادسازی کاربر ${user.user_id}:`, updateError);
-          continue;
-        }
-        
-        // پاک کردن کش
-        cache.del(`quarantine:${user.user_id}`);
-        
-        // هماهنگی با سایر ربات‌ها
-        if (SYNC_ENABLED) {
-          await syncUserWithOtherBots(user.user_id, null, 'release');
-        }
-        
-        // گزارش به مالک
-        const reportMessage = `
+        const success = await releaseUserFromQuarantine(user.user_id);
+        if (success) {
+          // گزارش به مالک
+          const reportMessage = `
 🟢 **کاربر از قرنطینه خارج شد**
 
 👤 کاربر: ${user.first_name || 'ناشناس'} (${user.user_id})
@@ -758,16 +774,15 @@ const checkQuarantineExpiry = async () => {
 🤖 ربات: ${SELF_BOT_ID}
 
 📝 توضیح: کاربر به صورت خودکار پس از اتمام زمان قرنطینه آزاد شد.
-        `;
-        
-        await sendReportToOwner(reportMessage);
-        await logAction('quarantine_expired', user.user_id, null, {
-          username: user.username, 
-          first_name: user.first_name,
-          auto_released: true
-        });
-        
-        console.log(`✅ کاربر ${user.user_id} با موفقیت از قرنطینه آزاد شد`);
+          `;
+          
+          await sendReportToOwner(reportMessage);
+          await logAction('quarantine_expired', user.user_id, null, {
+            username: user.username, 
+            first_name: user.first_name,
+            auto_released: true
+          });
+        }
       }
     } else {
       console.log('ℹ️ هیچ کاربری برای آزادسازی از قرنطینه پیدا نشد');
@@ -992,6 +1007,79 @@ bot.command('status', async (ctx) => {
   }
 });
 
+// ==================[ دستور جدید: آزادسازی کاربر با ��یپلای ]==================
+bot.command('free', async (ctx) => {
+  try {
+    if (!ctx.message.chat.type.includes('group')) {
+      ctx.reply('این دستور فقط در گروه‌ها قابل استفاده است.');
+      return;
+    }
+
+    const userId = ctx.message.from.id;
+
+    if (!checkRateLimit(userId, 'free')) {
+      ctx.reply('درخواست‌های شما بیش از حد مجاز است. لطفاً کمی صبر کنید.');
+      return;
+    }
+
+    // فقط مالک می‌تواند استفاده کند
+    const userAccess = await checkUserAccess(ctx);
+    if (!userAccess.hasAccess) {
+      ctx.reply(`❌ ${userAccess.reason}`);
+      return;
+    }
+
+    // بررسی اینکه آیا روی پیامی ریپلای شده است یا نه
+    if (!ctx.message.reply_to_message) {
+      ctx.reply('❌ لطفاً روی پیام کاربری که می‌خواهید آزاد کنید، ریپلای کنید.');
+      return;
+    }
+
+    const targetUser = ctx.message.reply_to_message.from;
+    
+    // بررسی اینکه کاربر ربات نباشد
+    if (targetUser.is_bot) {
+      ctx.reply('❌ نمی‌توان ربات‌ها را آزاد کرد.');
+      return;
+    }
+
+    console.log(`🔓 درخواست آزادسازی کاربر ${targetUser.id} توسط مالک ${userId}`);
+
+    // آزادسازی کاربر از قرنطینه
+    const success = await releaseUserFromQuarantine(targetUser.id);
+
+    if (success) {
+      ctx.reply(`✅ کاربر ${targetUser.first_name} (${targetUser.id}) با موفقیت از قرنطینه خارج شد.`);
+      
+      // ارسال گزارش به مالک
+      const reportMessage = `
+🟢 **کاربر به صورت دستی از قرنطینه خارج شد**
+
+👤 کاربر: ${targetUser.first_name || 'ناشناس'} (${targetUser.id})
+📱 یوزرنیم: ${targetUser.username ? `@${targetUser.username}` : 'ندارد'}
+
+👤 آزادکننده: ${ctx.from.first_name} ${ctx.from.last_name || ''} (${ctx.from.username ? `@${ctx.from.username}` : 'بدون یوزرنیم'})
+📍 گروه: ${ctx.chat.title} (${ctx.chat.id})
+
+⏰ زمان: ${formatPersianDate()}
+🤖 ربات: ${SELF_BOT_ID}
+      `;
+      
+      await sendReportToOwner(reportMessage);
+      await logAction('manual_release', userId, ctx.chat.id, {
+        target_user_id: targetUser.id,
+        target_username: targetUser.username,
+        target_first_name: targetUser.first_name
+      });
+    } else {
+      ctx.reply('❌ خطا در آزادسازی کاربر از قرنطینه.');
+    }
+  } catch (error) {
+    console.error('❌ خطا در دستور free:', error);
+    ctx.reply('❌ خطا در اجرای دستور.');
+  }
+});
+
 // دستور راهنما
 bot.command('help', (ctx) => {
   if (!checkRateLimit(ctx.from.id, 'help')) {
@@ -1004,6 +1092,7 @@ bot.command('help', (ctx) => {
 
 /on - فعال‌سازی ربات در گروه (فقط مالک)
 /off - غیرفعال‌سازی ربات در گروه (فقط مالک)
+/free - آزادسازی کاربر از قرنطینه (ریپلای روی کاربر + فقط مالک)
 /status - نمایش وضعیت ربات در گروه
 /help - نمایش این راهنما
 
@@ -1120,18 +1209,8 @@ app.post('/api/sync-user', async (req, res) => {
       
     } else if (action === 'release') {
       // آزاد کردن کاربر
-      await supabase
-        .from('quarantine_users')
-        .update({ 
-          is_quarantined: false,
-          current_chat_id: null,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId);
+      await releaseUserFromQuarantine(userId);
     }
-    
-    // پاک کردن کش
-    cache.del(`quarantine:${userId}`);
     
     console.log(`✅ هماهنگی کاربر ${userId} برای عمل ${action} تکمیل شد`);
     res.status(200).json({
@@ -1160,35 +1239,24 @@ app.post('/api/release-user', async (req, res) => {
       return res.status(400).json({ error: 'User ID is required' });
     }
     
-    // خارج کردن کاربر از قرنطینه
-    const { error } = await supabase
-      .from('quarantine_users')
-      .update({ 
-        is_quarantined: false,
-        current_chat_id: null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('user_id', userId);
-      
-    if (error) {
-      console.error('❌ خطا در خارج کردن کاربر از قرنطینه:', error);
-      return res.status(500).json({ error: 'Internal server error' });
+    console.log(`🔓 درخواست API آزادسازی کاربر ${userId} از ${sourceBot || 'unknown'}`);
+    
+    const success = await releaseUserFromQuarantine(userId);
+    
+    if (success) {
+      console.log(`✅ کاربر ${userId} از طریق API از قرنطینه خارج شد`);
+      res.status(200).json({ 
+        success: true,
+        botId: SELF_BOT_ID,
+        message: `User ${userId} released from quarantine`
+      });
+    } else {
+      console.log(`❌ خطا در آزادسازی کاربر ${userId} از طریق API`);
+      res.status(500).json({ 
+        success: false,
+        error: 'Failed to release user from quarantine'
+      });
     }
-    
-    // پاک کردن کش کاربر
-    cache.del(`quarantine:${userId}`);
-    
-    // هماهنگی با سایر ربات‌ها
-    if (SYNC_ENABLED && sourceBot !== SELF_BOT_ID) {
-      await syncUserWithOtherBots(userId, null, 'release');
-    }
-    
-    console.log(`✅ کاربر ${userId} از طریق API از قرنطینه خارج شد (درخواست از: ${sourceBot || 'unknown'})`);
-    res.status(200).json({ 
-      success: true,
-      botId: SELF_BOT_ID,
-      message: `User ${userId} released from quarantine`
-    });
   } catch (error) {
     console.error('❌ خطا در endpoint آزاد کردن کاربر:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -1241,4 +1309,3 @@ process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 module.exports = app;
-
