@@ -28,7 +28,7 @@ const OWNER_ID = parseInt(process.env.OWNER_ID) || 0;
 
 // کش پیشرفته برای کاهش درخواست‌های دیتابیس
 const cache = new NodeCache({ 
-  stdTTL: 900,        // 15 دقیقه
+  stdTTL: 900,
   checkperiod: 300,
   maxKeys: 5000,
   useClones: false
@@ -64,7 +64,7 @@ app.get('/ping', (req, res) => {
   });
 });
 
-// ==================[ توابع مالکیت و دسترسی - کاملاً اصلاح شده ]==================
+// ==================[ توابع مالکیت و دسترسی ]==================
 const isOwner = (userId) => {
   if (!OWNER_ID) {
     console.log('⚠️ OWNER_ID تنظیم نشده است');
@@ -72,7 +72,6 @@ const isOwner = (userId) => {
   }
   
   const isOwner = userId === OWNER_ID;
-  console.log(`🔍 بررسی مالکیت: ${userId} == ${OWNER_ID} = ${isOwner}`);
   return isOwner;
 };
 
@@ -80,7 +79,6 @@ const isOwnerOrCreator = async (ctx) => {
   try {
     const userId = ctx.from.id;
     
-    // مالک اصلی
     if (isOwner(userId)) {
       return { hasAccess: true, isOwner: true, reason: 'مالک ربات' };
     }
@@ -89,7 +87,6 @@ const isOwnerOrCreator = async (ctx) => {
       return { hasAccess: false, reason: 'این دستور فقط در گروه کار می‌کند' };
     }
 
-    // بررسی سازنده گروه
     const member = await ctx.getChatMember(userId);
     if (member.status === 'creator') {
       return { hasAccess: true, isCreator: true, reason: 'سازنده گروه' };
@@ -102,45 +99,40 @@ const isOwnerOrCreator = async (ctx) => {
   }
 };
 
-// ==================[ کش پیشرفته برای داده‌های پرتکرار ]==================
+// ==================[ کش پیشرفته ]==================
 const cacheManager = {
-  // کش برای کاربران
   setUser: (userId, userData) => {
-    cache.set(`user:${userId}`, userData, 300); // 5 دقیقه
+    cache.set(`user:${userId}`, userData, 300);
   },
   
   getUser: (userId) => {
     return cache.get(`user:${userId}`);
   },
   
-  // کش برای گروه‌های فعال
   setAllowedChat: (chatId, chatData) => {
-    cache.set(`chat:${chatId}`, chatData, 600); // 10 دقیقه
+    cache.set(`chat:${chatId}`, chatData, 600);
   },
   
   getAllowedChat: (chatId) => {
     return cache.get(`chat:${chatId}`);
   },
   
-  // کش برای وضعیت ادمین
   setAdminStatus: (chatId, userId, isAdmin) => {
-    cache.set(`admin:${chatId}:${userId}`, isAdmin, 300); // 5 دقیقه
+    cache.set(`admin:${chatId}:${userId}`, isAdmin, 300);
   },
   
   getAdminStatus: (chatId, userId) => {
     return cache.get(`admin:${chatId}:${userId}`);
   },
   
-  // کش برای نتایج بررسی سایر ربات‌ها
   setBotCheckResult: (userId, result) => {
-    cache.set(`botcheck:${userId}`, result, 180); // 3 دقیقه
+    cache.set(`botcheck:${userId}`, result, 180);
   },
   
   getBotCheckResult: (userId) => {
     return cache.get(`botcheck:${userId}`);
   },
   
-  // پاک کردن کش مربوط به یک کاربر
   invalidateUser: (userId) => {
     cache.del(`user:${userId}`);
     cache.del(`botcheck:${userId}`);
@@ -151,7 +143,7 @@ const cacheManager = {
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const bot = new Telegraf(BOT_TOKEN);
 
-// ==================[ توابع بهینه‌شده با کش ]==================
+// ==================[ توابع اصلی - کاملاً اصلاح شده ]==================
 const isBotAdmin = async (chatId) => {
   try {
     const cacheKey = `botadmin:${chatId}`;
@@ -175,6 +167,7 @@ const getUserStatus = async (chatId, userId) => {
     return member.status;
   } catch (error) {
     if (error.response?.error_code === 400) return 'not_member';
+    if (error.response?.error_code === 403) return 'bot_not_in_chat';
     return null;
   }
 };
@@ -209,13 +202,187 @@ const removeUserFromChat = async (chatId, userId) => {
   }
 };
 
-// ==================[ توابع اصلی با بهینه‌سازی Egress ]==================
+// ==================[ تابع جدید: حذف کاربر از تمام گروه‌های دیگر - کاملاً اصلاح شده ]==================
+const removeUserFromAllOtherChats = async (currentChatId, userId) => {
+  try {
+    console.log(`🗑️ شروع حذف کاربر ${userId} از تمام گروه‌های دیگر به جز ${currentChatId}`);
+    
+    let totalRemoved = 0;
+    
+    // 1. حذف از گروه‌های محلی این ربات
+    const localRemoved = await removeUserFromLocalChats(currentChatId, userId);
+    totalRemoved += localRemoved;
+    
+    // 2. حذف از گروه‌های ربات‌های قرنطینه دیگر
+    const quarantineRemoved = await removeUserFromOtherQuarantineBots(currentChatId, userId);
+    totalRemoved += quarantineRemoved;
+    
+    // 3. حذف از گروه‌های ربات‌های تریگر
+    const triggerRemoved = await removeUserFromTriggerBots(currentChatId, userId);
+    totalRemoved += triggerRemoved;
+    
+    console.log(`✅ کاربر ${userId} از ${totalRemoved} گروه دیگر حذف شد`);
+    return totalRemoved;
+  } catch (error) {
+    console.error('❌ خطا در حذف کاربر از گروه‌های دیگر:', error);
+    return 0;
+  }
+};
+
+// ==================[ تابع حذف از گروه‌های محلی - اصلاح شده ]==================
+const removeUserFromLocalChats = async (currentChatId, userId) => {
+  try {
+    let allChats = cache.get('allowed_chats');
+    
+    if (!allChats) {
+      const { data } = await supabase.from('allowed_chats').select('chat_id, chat_title');
+      if (data) {
+        allChats = data;
+        cache.set('allowed_chats', data, 300);
+      } else {
+        return 0;
+      }
+    }
+
+    let removedCount = 0;
+    for (const chat of allChats) {
+      const chatIdStr = chat.chat_id.toString();
+      if (chatIdStr === currentChatId.toString()) continue;
+
+      try {
+        const userStatus = await getUserStatus(chat.chat_id, userId);
+        if (userStatus && !['left', 'kicked', 'not_member', 'bot_not_in_chat'].includes(userStatus)) {
+          const removed = await removeUserFromChat(chat.chat_id, userId);
+          if (removed) removedCount++;
+        }
+      } catch (error) {
+        // کاربر در گروه نیست یا خطای دیگر
+      }
+    }
+    
+    if (removedCount > 0) {
+      console.log(`✅ کاربر ${userId} از ${removedCount} گروه محلی حذف شد`);
+    }
+    
+    return removedCount;
+  } catch (error) {
+    console.error('❌ خطا در حذف از گروه‌های محلی:', error);
+    return 0;
+  }
+};
+
+// ==================[ تابع جدید: حذف از ربات‌های قرنطینه دیگر ]==================
+const removeUserFromOtherQuarantineBots = async (currentChatId, userId) => {
+  try {
+    if (!SYNC_ENABLED) {
+      console.log('🔕 سینک غیرفعال - حذف از ربات‌های قرنطینه دیگر انجام نشد');
+      return 0;
+    }
+
+    const otherQuarantineBots = BOT_INSTANCES.filter(bot => 
+      bot.id !== SELF_BOT_ID && bot.type === 'quarantine'
+    );
+    
+    if (otherQuarantineBots.length === 0) {
+      return 0;
+    }
+
+    let removedCount = 0;
+    const promises = otherQuarantineBots.map(async (botInstance) => {
+      try {
+        let apiUrl = botInstance.url;
+        if (!apiUrl.startsWith('http')) apiUrl = `https://${apiUrl}`;
+        
+        const response = await axios.post(`${apiUrl}/api/remove-user-from-all-chats`, {
+          userId: userId,
+          currentChatId: currentChatId,
+          secretKey: botInstance.secretKey || API_SECRET_KEY,
+          sourceBot: SELF_BOT_ID
+        }, { timeout: 10000 });
+
+        if (response.data.success) {
+          console.log(`✅ درخواست حذف کاربر ${userId} از ربات ${botInstance.id} ارسال شد`);
+          return response.data.removedCount || 0;
+        }
+        return 0;
+      } catch (error) {
+        console.log(`❌ خطا در ارتباط با ربات ${botInstance.id}:`, error.message);
+        return 0;
+      }
+    });
+
+    const results = await Promise.allSettled(promises);
+    results.forEach(result => {
+      if (result.status === 'fulfilled') {
+        removedCount += result.value;
+      }
+    });
+
+    console.log(`✅ کاربر ${userId} از ${removedCount} گروه در ربات‌های قرنطینه دیگر حذف شد`);
+    return removedCount;
+  } catch (error) {
+    console.error('❌ خطا در حذف از ربات‌های قرنطینه دیگر:', error);
+    return 0;
+  }
+};
+
+// ==================[ تابع جدید: حذف از ربات‌های تریگر ]==================
+const removeUserFromTriggerBots = async (currentChatId, userId) => {
+  try {
+    if (!SYNC_ENABLED) {
+      return 0;
+    }
+
+    const triggerBots = BOT_INSTANCES.filter(bot => bot.type === 'trigger');
+    
+    if (triggerBots.length === 0) {
+      return 0;
+    }
+
+    let removedCount = 0;
+    const promises = triggerBots.map(async (botInstance) => {
+      try {
+        let apiUrl = botInstance.url;
+        if (!apiUrl.startsWith('http')) apiUrl = `https://${apiUrl}`;
+        
+        const response = await axios.post(`${apiUrl}/api/remove-user-from-all-chats`, {
+          userId: userId,
+          currentChatId: currentChatId,
+          secretKey: botInstance.secretKey || API_SECRET_KEY,
+          sourceBot: SELF_BOT_ID
+        }, { timeout: 10000 });
+
+        if (response.data.success) {
+          console.log(`✅ درخواست حذف کاربر ${userId} از ربات تریگر ${botInstance.id} ارسال شد`);
+          return response.data.removedCount || 0;
+        }
+        return 0;
+      } catch (error) {
+        console.log(`❌ خطا در ارتباط با ربات تریگر ${botInstance.id}:`, error.message);
+        return 0;
+      }
+    });
+
+    const results = await Promise.allSettled(promises);
+    results.forEach(result => {
+      if (result.status === 'fulfilled') {
+        removedCount += result.value;
+      }
+    });
+
+    console.log(`✅ کاربر ${userId} از ${removedCount} گروه در ربات‌های تریگر حذف شد`);
+    return removedCount;
+  } catch (error) {
+    console.error('❌ خطا در حذف از ربات‌های تریگر:', error);
+    return 0;
+  }
+};
+
+// ==================[ توابع هماهنگی بین ربات‌ها ]==================
 const checkUserInAllOtherBots = async (userId) => {
   try {
-    // اول از کش چک کن
     const cachedResult = cacheManager.getBotCheckResult(userId);
     if (cachedResult) {
-      console.log(`🔍 استفاده از کش برای بررسی کاربر ${userId}`);
       return cachedResult;
     }
 
@@ -229,7 +396,6 @@ const checkUserInAllOtherBots = async (userId) => {
       return { found: false, botId: null, chatId: null };
     }
 
-    // از Promise.allSettled استفاده کن تا اگر بعضی ربات‌ها جواب ندادن، بقیه کار کنن
     const promises = otherBots.map(async (botInstance) => {
       try {
         let apiUrl = botInstance.url;
@@ -249,7 +415,7 @@ const checkUserInAllOtherBots = async (userId) => {
           };
         }
       } catch (error) {
-        // خطا رو لاگ نکن تا Egress کمتری مصرف بشه
+        // خطا رو لاگ نکن
       }
       return null;
     });
@@ -258,7 +424,6 @@ const checkUserInAllOtherBots = async (userId) => {
     
     for (const result of results) {
       if (result.status === 'fulfilled' && result.value !== null) {
-        // نتیجه رو در کش ذخیره کن
         cacheManager.setBotCheckResult(userId, result.value);
         return result.value;
       }
@@ -279,7 +444,6 @@ const notifyAllOtherBots = async (userId, chatId, action) => {
     const otherBots = BOT_INSTANCES.filter(bot => bot.id !== SELF_BOT_ID && bot.type === 'quarantine');
     if (otherBots.length === 0) return;
 
-    // اطلاع‌رسانی غیرهمزمان - منتظر جواب نباش
     otherBots.forEach(async (botInstance) => {
       try {
         let apiUrl = botInstance.url;
@@ -297,18 +461,19 @@ const notifyAllOtherBots = async (userId, chatId, action) => {
       }
     });
   } catch (error) {
-    // خطای اصلی رو لاگ کن
     console.error('❌ خطا در اطلاع‌رسانی به ربات‌ها:', error);
   }
 };
 
-// ==================[ تابع اصلی قرنطینه - بهینه‌شده ]==================
+// ==================[ تابع اصلی قرنطینه - کاملاً بازنویسی شده ]==================
 const quarantineUser = async (ctx, user) => {
   try {
     const currentChatId = ctx.chat.id.toString();
     const userName = user.first_name || 'ناشناس';
 
-    // 🔍 بررسی کش برای کاربر
+    console.log(`🔍 شروع فرآیند قرنطینه برای کاربر ${user.id} در گروه ${currentChatId}`);
+
+    // 1. بررسی کش
     const cachedUser = cacheManager.getUser(user.id);
     if (cachedUser && cachedUser.is_quarantined && cachedUser.current_chat_id !== currentChatId) {
       console.log(`🚫 کاربر در کش پیدا شد - حذف از گروه فعلی`);
@@ -316,7 +481,7 @@ const quarantineUser = async (ctx, user) => {
       return false;
     }
 
-    // 🔍 بررسی سایر ربات‌ها
+    // 2. بررسی سایر ربات‌ها
     const userInOtherBot = await checkUserInAllOtherBots(user.id);
     if (userInOtherBot.found) {
       console.log(`🚫 کاربر در ربات ${userInOtherBot.botId} قرنطینه است`);
@@ -324,7 +489,7 @@ const quarantineUser = async (ctx, user) => {
       return false;
     }
 
-    // 🔍 بررسی دیتابیس (فقط اگر در کش نبود)
+    // 3. بررسی دیتابیس
     const { data: existingUser } = await supabase
       .from('quarantine_users')
       .select('user_id, is_quarantined, current_chat_id')
@@ -333,13 +498,12 @@ const quarantineUser = async (ctx, user) => {
 
     if (existingUser && existingUser.is_quarantined && existingUser.current_chat_id !== currentChatId) {
       console.log(`🚫 کاربر در دیتابیس پیدا شد - حذف از گروه فعلی`);
-      // در کش ذخیره کن
       cacheManager.setUser(user.id, existingUser);
       await removeUserFromChat(currentChatId, user.id);
       return false;
     }
 
-    // ✅ قرنطینه کاربر
+    // 4. قرنطینه کاربر
     const userData = {
       user_id: user.id,
       username: user.username,
@@ -353,61 +517,21 @@ const quarantineUser = async (ctx, user) => {
       onConflict: 'user_id' 
     });
 
-    // در کش ذخیره کن
     cacheManager.setUser(user.id, userData);
 
-    // 🗑️ حذف از گروه‌های محلی
-    await removeUserFromLocalChats(currentChatId, user.id);
-
-    // 📢 اطلاع به سایر ربات‌ها
+    // 5. حذف از تمام گروه‌های دیگر - این قسمت کلیدی است
+    console.log(`🗑️ شروع حذف کاربر ${user.id} از تمام گروه‌های دیگر`);
+    const removedCount = await removeUserFromAllOtherChats(currentChatId, user.id);
+    
+    // 6. اطلاع به سایر ربات‌ها
     await notifyAllOtherBots(user.id, currentChatId, 'quarantine');
 
-    console.log(`✅ کاربر ${user.id} با موفقیت قرنطینه شد`);
+    console.log(`✅ کاربر ${user.id} با موفقیت قرنطینه شد و از ${removedCount} گروه دیگر حذف شد`);
     return true;
     
   } catch (error) {
     console.error('❌ خطا در فرآیند قرنطینه:', error);
     return false;
-  }
-};
-
-const removeUserFromLocalChats = async (currentChatId, userId) => {
-  try {
-    // اول از کش گروه‌ها رو بگیر
-    let allChats = cache.get('allowed_chats');
-    
-    if (!allChats) {
-      // اگر در کش نبود، از دیتابیس بگیر و در کش ذخیره کن
-      const { data } = await supabase.from('allowed_chats').select('chat_id, chat_title');
-      if (data) {
-        allChats = data;
-        cache.set('allowed_chats', data, 300); // 5 دقیقه
-      } else {
-        return;
-      }
-    }
-
-    let removedCount = 0;
-    for (const chat of allChats) {
-      const chatIdStr = chat.chat_id.toString();
-      if (chatIdStr === currentChatId.toString()) continue;
-
-      try {
-        const userStatus = await getUserStatus(chat.chat_id, userId);
-        if (userStatus && !['left', 'kicked', 'not_member'].includes(userStatus)) {
-          const removed = await removeUserFromChat(chat.chat_id, userId);
-          if (removed) removedCount++;
-        }
-      } catch (error) {
-        // کاربر در گروه نیست
-      }
-    }
-    
-    if (removedCount > 0) {
-      console.log(`✅ کاربر ${userId} از ${removedCount} گروه محلی حذف شد`);
-    }
-  } catch (error) {
-    console.error('❌ خطا در حذف از گروه‌های محلی:', error);
   }
 };
 
@@ -422,10 +546,8 @@ const releaseUserFromQuarantine = async (userId) => {
       })
       .eq('user_id', userId);
     
-    // کش رو پاک کن
     cacheManager.invalidateUser(userId);
     
-    // اطلاع به سایر ربات‌ها
     await notifyAllOtherBots(userId, null, 'release');
     
     console.log(`✅ کاربر ${userId} از قرنطینه آزاد شد`);
@@ -436,7 +558,7 @@ const releaseUserFromQuarantine = async (userId) => {
   }
 };
 
-// ==================[ پردازش اعضای جدید - با چک مالکیت ]==================
+// ==================[ پردازش اعضای جدید ]==================
 bot.on('new_chat_members', async (ctx) => {
   try {
     // اگر ربات اضافه شده باشد
@@ -444,7 +566,6 @@ bot.on('new_chat_members', async (ctx) => {
       if (member.is_bot && member.id === ctx.botInfo.id) {
         console.log(`🤖 ربات به گروه ${ctx.chat.title} (${ctx.chat.id}) اضافه شد`);
         
-        // بررسی مالکیت کاربری که ربات را اضافه کرده
         const addedBy = ctx.message.from;
         if (!isOwner(addedBy.id)) {
           console.log(`🚫 کاربر ${addedBy.id} مالک نیست - لفت دادن از گروه`);
@@ -488,7 +609,7 @@ bot.on('new_chat_members', async (ctx) => {
   }
 });
 
-// ==================[ endpointهای API - بهینه‌شده ]==================
+// ==================[ endpointهای API - با endpoint جدید ]==================
 app.post('/api/check-quarantine', async (req, res) => {
   try {
     const { userId, secretKey } = req.body;
@@ -497,7 +618,6 @@ app.post('/api/check-quarantine', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     
-    // اول از کش چک کن
     const cachedUser = cacheManager.getUser(userId);
     if (cachedUser) {
       return res.status(200).json({ 
@@ -508,7 +628,6 @@ app.post('/api/check-quarantine', async (req, res) => {
       });
     }
     
-    // اگر در کش نبود، از دیتابیس بگیر
     const { data: user } = await supabase
       .from('quarantine_users')
       .select('user_id, is_quarantined, current_chat_id')
@@ -516,7 +635,6 @@ app.post('/api/check-quarantine', async (req, res) => {
       .single();
       
     if (user) {
-      // در کش ذخیره کن
       cacheManager.setUser(userId, user);
     }
     
@@ -567,7 +685,31 @@ app.post('/api/sync-user', async (req, res) => {
   }
 });
 
-// ==================[ endpoint آزادسازی کاربر ]==================
+// ==================[ endpoint جدید: حذف کاربر از تمام گروه‌های این ربات ]==================
+app.post('/api/remove-user-from-all-chats', async (req, res) => {
+  try {
+    const { userId, currentChatId, secretKey } = req.body;
+    
+    if (!secretKey || secretKey !== API_SECRET_KEY) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    console.log(`🗑️ درخواست حذف کاربر ${userId} از تمام گروه‌های این ربات (به جز ${currentChatId})`);
+    
+    const removedCount = await removeUserFromLocalChats(currentChatId, userId);
+    
+    res.status(200).json({ 
+      success: true,
+      removedCount: removedCount,
+      botId: SELF_BOT_ID,
+      message: `کاربر ${userId} از ${removedCount} گروه در این ربات حذف شد`
+    });
+  } catch (error) {
+    console.error('❌ خطا در حذف کاربر از گروه‌ها:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/release-user', async (req, res) => {
   try {
     const { userId, secretKey } = req.body;
@@ -590,7 +732,7 @@ app.post('/api/release-user', async (req, res) => {
   }
 });
 
-// ==================[ دستورات مدیریتی - با چک مالکیت کامل ]==================
+// ==================[ دستورات مدیریتی ]==================
 bot.command('on', async (ctx) => {
   try {
     const access = await isOwnerOrCreator(ctx);
@@ -616,9 +758,8 @@ bot.command('on', async (ctx) => {
       .from('allowed_chats')
       .upsert(chatData, { onConflict: 'chat_id' });
 
-    // در کش ذخیره کن
     cacheManager.setAllowedChat(chatId, chatData);
-    cache.del('allowed_chats'); // کش لیست گروه‌ها رو پاک کن
+    cache.del('allowed_chats');
 
     console.log(`✅ ربات در گروه ${ctx.chat.title} (${chatId}) توسط ${access.reason} فعال شد`);
     ctx.reply('✅ ربات با موفقیت فعال شد! اکنون کاربران جدید به طور خودکار قرنطینه می‌شوند.');
@@ -628,7 +769,6 @@ bot.command('on', async (ctx) => {
   }
 });
 
-// ==================[ دستور /off - کاملاً جدید ]==================
 bot.command('off', async (ctx) => {
   try {
     const access = await isOwnerOrCreator(ctx);
@@ -639,7 +779,6 @@ bot.command('off', async (ctx) => {
 
     const chatId = ctx.chat.id.toString();
 
-    // حذف گروه از دیتابیس
     const { error: deleteError } = await supabase
       .from('allowed_chats')
       .delete()
@@ -647,14 +786,12 @@ bot.command('off', async (ctx) => {
 
     if (deleteError) throw deleteError;
 
-    // پاک کردن کش
     cacheManager.setAllowedChat(chatId, null);
     cache.del('allowed_chats');
 
     console.log(`❌ ربات در گروه ${ctx.chat.title} (${chatId}) توسط ${access.reason} غیرفعال شد`);
     ctx.reply('✅ ربات با موفقیت غیرفعال شد! کاربران جدید قرنطینه نخواهند شد.');
 
-    // خروج از گروه
     try {
       await ctx.leaveChat();
       console.log(`🚪 ربات از گروه ${chatId} خارج شد`);
@@ -671,13 +808,11 @@ bot.command('off', async (ctx) => {
 bot.command('status', async (ctx) => {
   const chatId = ctx.chat.id.toString();
   
-  // از کش چک کن
   const allowedChat = cacheManager.getAllowedChat(chatId);
   
   if (allowedChat) {
     ctx.reply('✅ ربات در این گروه فعال است.');
   } else {
-    // اگر در کش نبود، از دیتابیس چک کن
     const { data } = await supabase
       .from('allowed_chats')
       .select('chat_id')
@@ -690,35 +825,6 @@ bot.command('status', async (ctx) => {
     } else {
       ctx.reply('❌ ربات در این گروه غیرفعال است.');
     }
-  }
-});
-
-// ==================[ دستور اطلاعات ربات ]==================
-bot.command('info', async (ctx) => {
-  try {
-    const access = await isOwnerOrCreator(ctx);
-    
-    if (!access.hasAccess && !isOwner(ctx.from.id)) {
-      ctx.reply('❌ فقط مالک ربات می‌تواند از این دستور استفاده کند.');
-      return;
-    }
-
-    const stats = cache.getStats();
-    const chatId = ctx.chat.id.toString();
-    const allowedChat = cacheManager.getAllowedChat(chatId);
-    
-    let infoText = `🤖 اطلاعات ربات قرنطینه\n\n`;
-    infoText += `🔸 شناسه ربات: ${SELF_BOT_ID}\n`;
-    infoText += `🔸 مالک ربات: ${OWNER_ID}\n`;
-    infoText += `🔸 وضعیت سینک: ${SYNC_ENABLED ? 'فعال' : 'غیرفعال'}\n`;
-    infoText += `🔸 تعداد کش: ${stats.keys} کلید\n`;
-    infoText += `🔸 وضعیت گروه: ${allowedChat ? 'فعال' : 'غیرفعال'}\n`;
-    infoText += `🔸 تعداد ربات‌های هماهنگ: ${BOT_INSTANCES.length}\n`;
-
-    ctx.reply(infoText);
-  } catch (error) {
-    console.error('❌ خطا در دستور info:', error);
-    ctx.reply('❌ خطا در دریافت اطلاعات ربات.');
   }
 });
 
@@ -737,10 +843,10 @@ app.listen(PORT, () => {
   console.log(`✅ ربات قرنطینه ${SELF_BOT_ID} راه‌اندازی شد`);
   console.log(`👤 مالک ربات: ${OWNER_ID}`);
   console.log(`🔗 سینک: ${SYNC_ENABLED ? 'فعال' : 'غیرفعال'}`);
+  console.log(`🤖 تعداد ربات‌های هماهنگ: ${BOT_INSTANCES.length}`);
   startAutoPing();
 });
 
-// فعال سازی وب هوک
 if (process.env.RENDER_EXTERNAL_URL) {
   const webhookUrl = `${process.env.RENDER_EXTERNAL_URL}/webhook`;
   bot.telegram.setWebhook(webhookUrl)
@@ -753,13 +859,11 @@ if (process.env.RENDER_EXTERNAL_URL) {
   bot.launch();
 }
 
-// پاک‌سازی کش‌های قدیمی هر 1 ساعت
 cron.schedule('0 * * * *', () => {
   const stats = cache.getStats();
   console.log(`🧹 وضعیت کش: ${stats.keys} کلید`);
 });
 
-// مدیریت خطاهای catch نشده
 process.on('unhandledRejection', (error) => {
   console.error('❌ خطای catch نشده:', error);
 });
