@@ -17,10 +17,12 @@ const SELF_BOT_ID = process.env.SELF_BOT_ID || 'quarantine_1';
 const OWNER_ID = parseInt(process.env.OWNER_ID) || 0;
 const API_SECRET_KEY = process.env.API_SECRET_KEY;
 
+// کش بهبود یافته
 const cache = new NodeCache({ 
   stdTTL: 900,
   checkperiod: 300,
-  maxKeys: 5000
+  maxKeys: 5000,
+  useClones: false
 });
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -36,7 +38,9 @@ const startAutoPing = () => {
   const performPing = async () => {
     try {
       await axios.head(`${selfUrl}/ping`, { timeout: 5000 });
+      console.log('✅ پینگ موفق');
     } catch (error) {
+      console.log('❌ خطا در پینگ:', error.message);
       setTimeout(performPing, 60000);
     }
   };
@@ -47,14 +51,14 @@ const startAutoPing = () => {
 
 app.head('/ping', (req, res) => res.status(200).end());
 app.get('/ping', (req, res) => {
-  res.status(200).json({ status: 'active', bot: SELF_BOT_ID });
+  res.status(200).json({ status: 'active', bot: SELF_BOT_ID, timestamp: new Date().toISOString() });
 });
 
-// ==================[ توابع اصلی ]==================
+// ==================[ توابع اصلی بهبود یافته ]==================
 
 const checkOwnerAccess = (ctx) => {
-  const userId = ctx.from.id;
-  if (userId !== OWNER_ID) {
+  const userId = ctx.from?.id;
+  if (!userId || userId !== OWNER_ID) {
     return {
       hasAccess: false,
       message: '🚫 شما مالک اکلیس نیستی ، حق استفاده از بات این مجموعه رو نداری ، حدتو بدون'
@@ -75,7 +79,7 @@ const isBotAdmin = async (chatId) => {
     cache.set(cacheKey, isAdmin, 300);
     return isAdmin;
   } catch (error) {
-    console.log(`❌ خطا در بررسی ادمین:`, error.message);
+    console.log(`❌ خطا در بررسی ادمین برای ${chatId}:`, error.message);
     cache.set(`admin_${chatId}`, false, 60);
     return false;
   }
@@ -112,13 +116,15 @@ const removeUserFromChat = async (chatId, userId) => {
     setTimeout(async () => {
       try {
         await bot.telegram.unbanChatMember(chatId, userId);
-      } catch (error) {}
+      } catch (error) {
+        console.log(`⚠️ خطا در آنبن کاربر ${userId}:`, error.message);
+      }
     }, 1000);
     
     console.log(`✅ کاربر ${userId} از گروه ${chatId} حذف شد`);
     return true;
   } catch (error) {
-    console.log(`❌ خطا در حذف کاربر:`, error.message);
+    console.log(`❌ خطا در حذف کاربر ${userId} از ${chatId}:`, error.message);
     return false;
   }
 };
@@ -135,6 +141,10 @@ const getUserQuarantineStatus = async (userId) => {
       .eq('user_id', userId)
       .single();
 
+    if (error && error.code !== 'PGRST116') {
+      console.log(`❌ خطا در دریافت وضعیت کاربر ${userId}:`, error.message);
+    }
+
     const result = data ? {
       isQuarantined: data.is_quarantined,
       currentChatId: data.current_chat_id
@@ -143,8 +153,31 @@ const getUserQuarantineStatus = async (userId) => {
     cache.set(cacheKey, result, 600);
     return result;
   } catch (error) {
-    console.log(`❌ خطا در دریافت وضعیت کاربر:`, error.message);
+    console.log(`❌ خطا در دریافت وضعیت کاربر ${userId}:`, error.message);
     return { isQuarantined: false, currentChatId: null };
+  }
+};
+
+const getAllowedChats = async () => {
+  try {
+    const cacheKey = 'allowed_chats_list';
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
+
+    const { data: allChats, error } = await supabase
+      .from('allowed_chats')
+      .select('chat_id, chat_title');
+
+    if (error || !allChats) {
+      console.log('❌ خطا در دریافت لیست گروه‌های مجاز:', error?.message);
+      return [];
+    }
+
+    cache.set(cacheKey, allChats, 300);
+    return allChats;
+  } catch (error) {
+    console.log('❌ خطا در دریافت گروه‌های مجاز:', error.message);
+    return [];
   }
 };
 
@@ -152,15 +185,7 @@ const removeFromOtherChats = async (allowedChatId, userId) => {
   try {
     console.log(`🔍 شروع حذف کاربر ${userId} از گروه‌های غیرمجاز...`);
     
-    const { data: allChats, error } = await supabase
-      .from('allowed_chats')
-      .select('chat_id, chat_title');
-
-    if (error || !allChats) {
-      console.log('❌ خطا در دریافت لیست گروه‌های مجاز');
-      return 0;
-    }
-
+    const allChats = await getAllowedChats();
     console.log(`📋 تعداد گروه‌های مجاز: ${allChats.length}`);
     
     let removedCount = 0;
@@ -193,6 +218,15 @@ const quarantineUser = async (ctx, user) => {
     const userId = user.id;
 
     console.log(`🔍 شروع فرآیند قرنطینه برای کاربر ${userId} در گروه ${currentChatId}`);
+
+    // بررسی اینکه گروه مجاز است
+    const allChats = await getAllowedChats();
+    const isChatAllowed = allChats.some(chat => chat.chat_id.toString() === currentChatId);
+    
+    if (!isChatAllowed) {
+      console.log(`❌ گروه ${currentChatId} در لیست مجاز نیست`);
+      return false;
+    }
 
     const status = await getUserQuarantineStatus(userId);
 
@@ -302,13 +336,12 @@ bot.on('new_chat_members', async (ctx) => {
     }
 
     const chatId = ctx.chat.id.toString();
-    const { data: allowedChat } = await supabase
-      .from('allowed_chats')
-      .select('chat_id')
-      .eq('chat_id', chatId)
-      .single();
-
-    if (!allowedChat) {
+    
+    // بررسی اینکه گروه فعال است
+    const allChats = await getAllowedChats();
+    const isChatAllowed = allChats.some(chat => chat.chat_id.toString() === chatId);
+    
+    if (!isChatAllowed) {
       console.log('⚠️ گروه در لیست فعال نیست - پردازش کاربران جدید انجام نمی‌شود');
       return;
     }
@@ -324,6 +357,33 @@ bot.on('new_chat_members', async (ctx) => {
 
   } catch (error) {
     console.log('❌ خطا در پردازش عضو جدید:', error);
+  }
+});
+
+// ==================[ پردازش پیام‌های معمولی برای کاربران موجود ]==================
+bot.on('message', async (ctx) => {
+  try {
+    // فقط پیام‌های متنی از کاربران عادی (نه بات‌ها)
+    if (!ctx.message.text || ctx.from.is_bot) return;
+    
+    const chatId = ctx.chat.id.toString();
+    const userId = ctx.from.id;
+    
+    // بررسی اینکه گروه فعال است
+    const allChats = await getAllowedChats();
+    const isChatAllowed = allChats.some(chat => chat.chat_id.toString() === chatId);
+    
+    if (!isChatAllowed) return;
+
+    // بررسی وضعیت قرنطینه کاربر
+    const status = await getUserQuarantineStatus(userId);
+    
+    if (status.isQuarantined && status.currentChatId !== chatId) {
+      console.log(`🚫 کاربر ${userId} در گروه اشتباه شناسایی شد - حذف کردن`);
+      await removeUserFromChat(chatId, userId);
+    }
+  } catch (error) {
+    console.log('❌ خطا در پردازش پیام معمولی:', error);
   }
 });
 
@@ -386,6 +446,7 @@ app.post('/api/check-quarantine', async (req, res) => {
       botId: SELF_BOT_ID
     });
   } catch (error) {
+    console.log('❌ خطا در endpoint بررسی قرنطینه:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -395,7 +456,7 @@ bot.command('on', async (ctx) => {
   try {
     const access = checkOwnerAccess(ctx);
     if (!access.hasAccess) {
-      ctx.reply(access.message);
+      await ctx.reply(access.message);
       return;
     }
 
@@ -408,7 +469,7 @@ bot.command('on', async (ctx) => {
 
     if (!isAdmin) {
       console.log(`❌ ربات در گروه ${chatTitle} ادمین نیست`);
-      ctx.reply('❌ لطفاً ابتدا ربات را ادمین گروه کنید و سپس مجدداً /on را ارسال کنید.');
+      await ctx.reply('❌ لطفاً ابتدا ربات را ادمین گروه کنید و سپس مجدداً /on را ارسال کنید.');
       return;
     }
 
@@ -431,12 +492,12 @@ bot.command('on', async (ctx) => {
 
     cache.del('allowed_chats_list');
 
-    ctx.reply('✅ ربات با موفقیت فعال شد! کاربران جدید به طور خودکار قرنطینه می‌شوند.');
+    await ctx.reply('✅ ربات با موفقیت فعال شد! کاربران جدید به طور خودکار قرنطینه می‌شوند.');
     console.log(`✅ گروه ${chatTitle} (${chatId}) توسط مالک فعال شد`);
 
   } catch (error) {
     console.log('❌ خطا در فعال‌سازی گروه:', error);
-    ctx.reply('❌ خطا در فعال‌سازی گروه. لطفاً دوباره تلاش کنید.');
+    await ctx.reply('❌ خطا در فعال‌سازی گروه. لطفاً دوباره تلاش کنید.');
   }
 });
 
@@ -444,7 +505,7 @@ bot.command('off', async (ctx) => {
   try {
     const access = checkOwnerAccess(ctx);
     if (!access.hasAccess) {
-      ctx.reply(access.message);
+      await ctx.reply(access.message);
       return;
     }
 
@@ -465,7 +526,7 @@ bot.command('off', async (ctx) => {
     cache.del('allowed_chats_list');
     cache.del(`admin_${chatId}`);
 
-    ctx.reply('✅ ربات با موفقیت غیرفعال شد!');
+    await ctx.reply('✅ ربات با موفقیت غیرفعال شد!');
 
     try {
       await ctx.leaveChat();
@@ -476,23 +537,25 @@ bot.command('off', async (ctx) => {
 
   } catch (error) {
     console.log('❌ خطا در غیرفعال کردن ربات:', error);
-    ctx.reply('❌ خطایی در غیرفعال کردن ربات رخ داد.');
+    await ctx.reply('❌ خطایی در غیرفعال کردن ربات رخ داد.');
   }
 });
 
 bot.command('status', async (ctx) => {
-  const chatId = ctx.chat.id.toString();
-  
-  const { data: allowedChat } = await supabase
-    .from('allowed_chats')
-    .select('chat_id')
-    .eq('chat_id', chatId)
-    .single();
+  try {
+    const chatId = ctx.chat.id.toString();
+    
+    const allChats = await getAllowedChats();
+    const isChatAllowed = allChats.some(chat => chat.chat_id.toString() === chatId);
 
-  if (allowedChat) {
-    ctx.reply('✅ ربات در این گروه فعال است.');
-  } else {
-    ctx.reply('❌ ربات در این گروه غیرفعال است.');
+    if (isChatAllowed) {
+      await ctx.reply('✅ ربات در این گروه فعال است.');
+    } else {
+      await ctx.reply('❌ ربات در این گروه غیرفعال است.');
+    }
+  } catch (error) {
+    console.log('❌ خطا در دستور status:', error);
+    await ctx.reply('❌ خطا در بررسی وضعیت');
   }
 });
 
@@ -504,6 +567,7 @@ app.get('/', (req, res) => {
     <h1>🤖 ربات قرنطینه ${SELF_BOT_ID}</h1>
     <p>ربات فعال است - فقط مالک می‌تواند استفاده کند</p>
     <p>مالک: ${OWNER_ID}</p>
+    <p>زمان: ${new Date().toLocaleString('fa-IR')}</p>
   `);
 });
 
@@ -511,21 +575,37 @@ app.listen(PORT, () => {
   console.log(`🚀 ربات قرنطینه ${SELF_BOT_ID} راه‌اندازی شد`);
   console.log(`👤 مالک ربات: ${OWNER_ID}`);
   console.log(`🔑 کلید API: ${API_SECRET_KEY ? 'تنظیم شده' : 'تنظیم نشده'}`);
+  console.log(`🌐 پورت: ${PORT}`);
   startAutoPing();
 });
 
 if (process.env.RENDER_EXTERNAL_URL) {
   const webhookUrl = `${process.env.RENDER_EXTERNAL_URL}/webhook`;
   bot.telegram.setWebhook(webhookUrl)
-    .then(() => console.log('✅ Webhook تنظیم شد'))
+    .then(() => console.log('✅ Webhook تنظیم شد: ' + webhookUrl))
     .catch(error => {
       console.log('❌ خطا در تنظیم Webhook:', error.message);
+      console.log('🔄 راه‌اندازی با polling...');
       bot.launch();
     });
 } else {
+  console.log('🔄 راه‌اندازی با polling...');
   bot.launch();
 }
 
 process.on('unhandledRejection', (error) => {
   console.log('❌ خطای catch نشده:', error.message);
+});
+
+// graceful shutdown
+process.on('SIGINT', () => {
+  console.log('🛑 دریافت SIGINT - خروج...');
+  bot.stop();
+  process.exit();
+});
+
+process.on('SIGTERM', () => {
+  console.log('🛑 دریافت SIGTERM - خروج...');
+  bot.stop();
+  process.exit();
 });
