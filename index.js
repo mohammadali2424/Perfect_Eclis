@@ -17,7 +17,6 @@ const SELF_BOT_ID = process.env.SELF_BOT_ID || 'quarantine_1';
 const OWNER_ID = parseInt(process.env.OWNER_ID) || 0;
 const API_SECRET_KEY = process.env.API_SECRET_KEY;
 
-// کش بهبود یافته
 const cache = new NodeCache({ 
   stdTTL: 900,
   checkperiod: 300,
@@ -181,15 +180,32 @@ const getAllowedChats = async () => {
   }
 };
 
+// ==================[ تابع اصلاح شده - فقط کاربران قرنطینه شده را حذف کند ]==================
 const removeFromOtherChats = async (allowedChatId, userId) => {
   try {
-    console.log(`🔍 شروع حذف کاربر ${userId} از گروه‌های غیرمجاز...`);
+    console.log(`🔍 بررسی حذف کاربر ${userId} از گروه‌های غیرمجاز...`);
     
+    // ابتدا وضعیت کاربر را بررسی کنید
+    const userStatus = await getUserQuarantineStatus(userId);
+    
+    // اگر کاربر قرنطینه نیست، هیچ کاری نکنید
+    if (!userStatus.isQuarantined) {
+      console.log(`✅ کاربر ${userId} در قرنطینه نیست - نیاز به حذف ندارد`);
+      return 0;
+    }
+
+    // اگر کاربر در گروه مجاز خودش است، حذف نکنید
+    if (userStatus.currentChatId === allowedChatId.toString()) {
+      console.log(`✅ کاربر ${userId} در گروه مجاز خودش است - حذف نمی‌شود`);
+      return 0;
+    }
+
     const allChats = await getAllowedChats();
     console.log(`📋 تعداد گروه‌های مجاز: ${allChats.length}`);
     
     let removedCount = 0;
     for (const chat of allChats) {
+      // کاربر را فقط از گروه‌هایی غیر از گروه مجازش حذف کنید
       if (chat.chat_id.toString() === allowedChatId.toString()) {
         console.log(`✅ گروه ${chat.chat_title} گروه مجاز کاربر است - حذف نمی‌شود`);
         continue;
@@ -230,15 +246,17 @@ const quarantineUser = async (ctx, user) => {
 
     const status = await getUserQuarantineStatus(userId);
 
-    if (status.isQuarantined) {
-      if (status.currentChatId === currentChatId) {
-        console.log(`✅ کاربر ${userId} در گروه مجاز خودش هست`);
-        return true;
-      } else {
-        console.log(`🚫 کاربر ${userId} در گروه اشتباهی هست - حذف کردن`);
-        await removeUserFromChat(currentChatId, userId);
-        return false;
-      }
+    // اگر کاربر از قبل قرنطینه است و در گروه دیگری است، او را از این گروه حذف کنید
+    if (status.isQuarantined && status.currentChatId !== currentChatId) {
+      console.log(`🚫 کاربر ${userId} در حال حاضر در گروه ${status.currentChatId} قرنطینه است - حذف از گروه فعلی`);
+      await removeUserFromChat(currentChatId, userId);
+      return false;
+    }
+
+    // اگر کاربر از قبل در این گروه قرنطینه است، کاری نکنید
+    if (status.isQuarantined && status.currentChatId === currentChatId) {
+      console.log(`✅ کاربر ${userId} از قبل در این گروه قرنطینه است`);
+      return true;
     }
 
     console.log(`🔒 قرنطینه کردن کاربر جدید ${userId} در گروه ${currentChatId}`);
@@ -263,6 +281,7 @@ const quarantineUser = async (ctx, user) => {
 
     cache.del(`user_${userId}`);
 
+    // فقط کاربران قرنطینه شده را از گروه‌های دیگر حذف کنید
     const removedCount = await removeFromOtherChats(currentChatId, userId);
 
     console.log(`✅ کاربر ${userId} با موفقیت در دیتابیس مرکزی قرنطینه شد`);
@@ -378,6 +397,7 @@ bot.on('message', async (ctx) => {
     // بررسی وضعیت قرنطینه کاربر
     const status = await getUserQuarantineStatus(userId);
     
+    // اگر کاربر قرنطینه است اما در گروه اشتباهی است، او را حذف کنید
     if (status.isQuarantined && status.currentChatId !== chatId) {
       console.log(`🚫 کاربر ${userId} در گروه اشتباه شناسایی شد - حذف کردن`);
       await removeUserFromChat(chatId, userId);
@@ -469,7 +489,7 @@ bot.command('on', async (ctx) => {
 
     if (!isAdmin) {
       console.log(`❌ ربات در گروه ${chatTitle} ادمین نیست`);
-      await ctx.reply('❌ لطفاً ابتدا ربات را ادمین گروه کنید و سپس مجدداً /on را ارسال کنید.');
+      await ctx.reply('��� لطفاً ابتدا ربات را ادمین گروه کنید و سپس مجدداً /on را ارسال کنید.');
       return;
     }
 
@@ -551,7 +571,7 @@ bot.command('status', async (ctx) => {
     if (isChatAllowed) {
       await ctx.reply('✅ ربات در این گروه فعال است.');
     } else {
-      await ctx.reply('❌ ربات در این گروه غیرفعال است.');
+      await ctx.reply('❌ رب��ت در این گروه غیرفعال است.');
     }
   } catch (error) {
     console.log('❌ خطا در دستور status:', error);
