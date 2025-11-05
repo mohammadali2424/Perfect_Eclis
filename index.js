@@ -8,7 +8,7 @@ const NodeCache = require('node-cache');
 // ---------- Env ----------
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY; // حتماً نقش سرویس
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
 const PORT = process.env.PORT || 3000;
 
 const OWNER_ID = parseInt(process.env.OWNER_ID || '0', 10);
@@ -110,10 +110,15 @@ const removeUserFromChat = async (chatId, userId) => {
       const m = await bot.telegram.getChatMember(chatId, userId);
       if (['left', 'kicked'].includes(m.status)) return true;
       if (m.status === 'creator') return false;
-    } catch { return true; }
+    } catch { return true; } 
 
     await bot.telegram.banChatMember(chatId, userId);
-    setTimeout(async () => { try { await bot.telegram.unbanChatMember(chatId, userId); } catch {} }, 5000);
+
+    // افزایش زمان آن‌بن (۱۰ ثانیه بیشتر)
+    setTimeout(async () => {
+      try { await bot.telegram.unbanChatMember(chatId, userId); } catch {}
+    }, 10000);  // تاخیر ۱۰ ثانیه برای اطمینان از آن‌بن درست
+
     return true;
   } catch { return false; }
 };
@@ -171,25 +176,6 @@ const quarantineUser = async (ctx, user) => {
   await removeFromOtherChats(currentChatId, userId);
   return true;
 };
-
-// ---------- Ownership-safe joins ----------
-bot.on('my_chat_member', async (ctx) => {
-  try {
-    const newStatus = ctx.update.my_chat_member?.new_chat_member?.status;
-    const adderId = ctx.update.my_chat_member?.from?.id;
-    const chatId = ctx.chat?.id;
-
-    if (newStatus && ['member', 'administrator'].includes(newStatus)) {
-      if (adderId !== OWNER_ID) {
-        try {
-          await bot.telegram.sendMessage(chatId,
-            'این ربات متعلق به مجموعه اکلیس است ، شما حق استفاده از آنها رو ندارین ، حدتو بدون');
-        } catch {}
-        try { await bot.telegram.leaveChat(chatId); } catch {}
-      }
-    }
-  } catch (e) { console.log('my_chat_member error:', e.message); }
-});
 
 // ---------- Commands ----------
 bot.start((ctx) => ctx.reply('نینجا در خدمت شماست 🥷🏻'));
@@ -292,47 +278,73 @@ bot.command('free', async (ctx) => {
   return ctx.reply(`✅ ${target.first_name} از قرنطینه خارج شد`);
 });
 
-// ورود اعضای جدید → قرنطینه
-bot.on('new_chat_members', async (ctx) => {
+// #خروج: ارسال پیام فوری و منشن کاربر
+const handleFarewell = async (ctx) => {
   try {
-    const chatId = `${ctx.chat.id}`;
-    const key = `allowed_${chatId}`;
-    let isAllowed = cache.get(key);
-    if (isAllowed === undefined) {
-      const { data, error } = await supabase.from(TABLE_ALLOWED_CHATS).select('chat_id').eq('chat_id', chatId).single();
-      isAllowed = !error && !!data;
-      cache.set(key, isAllowed, 300);
-    }
-    if (!isAllowed) return;
-
-    for (const m of ctx.message.new_chat_members) {
-      if (m.is_bot) continue;
-      await quarantineUser(ctx, m);
-    }
-  } catch (e) { console.log('❌ new_chat_members:', e.message); }
-});
-
-// ---------- API: release-user (از ربات تریگر) ----------
-app.post('/api/release-user', async (req, res) => {
-  try {
-    const { userId, secretKey } = req.body || {};
-    if (!API_SECRET_KEY || !secretKey || secretKey !== API_SECRET_KEY) {
-      return res.status(403).json({ success: false, error: 'forbidden' });
-    }
-    await supabase.from(TABLE_QUARANTINE_USERS).delete().eq('user_id', userId);
-    cache.del(`user_${userId}`);
-    return res.json({ success: true });
+    if (ctx.chat.type === 'private') return;
+    const user = ctx.from;
+    const displayName = user.first_name || user.username || 'کاربر';
+    const mention = `<a href="tg://user?id=${user.id}">${displayName}</a>`;
+    const text = `🧭┊سفر به سلامت ${mention}`;
+    await ctx.reply(text, { reply_to_message_id: ctx.message.message_id, parse_mode: 'HTML', disable_web_page_preview: true });
   } catch (e) {
-    return res.status(500).json({ success: false, error: e.message });
+    console.log('❌ پیام خروج:', e.message);
   }
+};
+
+// ---------- Text pipeline ----------
+bot.on('text', async (ctx) => {
+  try {
+    const text = ctx.message.text || '';
+
+    if (text.includes('#خروج')) {
+      await handleFarewell(ctx);
+      return;
+    }
+
+    if (text.includes('#ورود')) await handleTrigger(ctx, 'ورود');
+    if (text.includes('#ماشین')) await handleTrigger(ctx, 'ماشین');
+    if (text.includes('#موتور')) await handleTrigger(ctx, 'موتور');
+
+    if (!ctx.session.settingTrigger) return;
+    if (!isOwner(ctx)) { await replyNotOwner(ctx); ctx.session.settingTrigger = false; return; }
+
+    if (ctx.session.step === 'delay') {
+      const delay = parseInt(text, 10);
+      if (isNaN(delay) || delay <= 0 || delay > 3600) return ctx.reply('❌ عدد 1 تا 3600');
+      ctx.session.delay = delay; ctx.session.step = 'message';
+      return ctx.reply(`✅ زمان: ${formatTime(delay)}\n📝 پیام:`);
+    }
+
+    if (ctx.session.step === 'message') {
+      try {
+        const entities = ctx.message.entities || [];
+        await supabase.from('triggers').delete().eq('chat_id', ctx.session.chatId).eq('trigger_type', ctx.session.triggerType);
+        const { error } = await supabase.from('triggers').insert({
+          chat_id: `${ctx.session.chatId}`,
+          trigger_type: ctx.session.triggerType,
+          delay: ctx.session.delay,
+          delayed_message: text,
+          message_entities: entities,
+          updated_at: new Date().toISOString()
+        });
+        if (!error) {
+          cache.del(`trigger_${ctx.session.chatId}_${ctx.session.triggerType}`);
+          const emoji = ctx.session.triggerType === 'ورود' ? '🚪' : (ctx.session.triggerType === 'ماشین' ? '🚗' : '🏍️');
+          await ctx.reply(`${emoji} تریگر #${ctx.session.triggerType} تنظیم شد!`);
+        } else { await ctx.reply('❌ خطا در ذخیره تریگر'); }
+      } catch { await ctx.reply('❌ خطا در ذخیره'); }
+      finally { ctx.session.settingTrigger = false; }
+    }
+  } catch (e) { console.log('خطا در پردازش پیام:', e.message); }
 });
 
 // ---------- Webhook / Launch ----------
 app.use(bot.webhookCallback('/webhook'));
-app.get('/', (_req, res) => res.send(`<h3>🤖 قرنطینه ${SELF_BOT_ID}</h3><p>مالک: ${OWNER_ID}</p>`));
+app.get('/', (_req, res) => res.send(`<h3>🤖 تریگر ${SELF_BOT_ID}</h3><p>مالک: ${OWNER_ID}</p>`));
 
 app.listen(PORT, async () => {
-  console.log(`🚀 قرنطینه ${SELF_BOT_ID} روی پورت ${PORT}`);
+  console.log(`🚀 تریگر ${SELF_BOT_ID} روی پورت ${PORT}`);
   startAutoPing();
   try {
     if (process.env.RENDER_EXTERNAL_URL) {
