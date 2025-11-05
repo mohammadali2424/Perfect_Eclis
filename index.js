@@ -62,7 +62,7 @@ const isBotAdmin = async (chatId) => {
   }
 };
 
-// ==================[ افزودن گروه به لیست مجاز ]==================
+// ==================[ دستور /on ]==================
 bot.command('on', async (ctx) => {
   try {
     const chatId = ctx.chat.id.toString();
@@ -88,6 +88,46 @@ bot.command('on', async (ctx) => {
   } catch (error) {
     console.log('❌ خطا در فعال‌سازی گروه:', error);
     ctx.reply('❌ خطا در فعال‌سازی گروه. لطفاً دوباره تلاش کنید.');
+  }
+});
+
+// ==================[ دستور /off ]==================
+bot.command('off', async (ctx) => {
+  const access = checkOwnerAccess(ctx);
+  if (!access.hasAccess) {
+    ctx.reply(access.message);
+    return;
+  }
+
+  const chatId = ctx.chat.id.toString();
+  const chatTitle = ctx.chat.title || 'بدون عنوان';
+
+  try {
+    // حذف گروه از دیتابیس
+    const { error } = await supabase
+      .from('allowed_chats')
+      .delete()
+      .eq('chat_id', chatId);
+
+    if (error) {
+      console.log('❌ خطا در حذف گروه از دیتابیس:', error);
+      return;
+    }
+
+    console.log(`✅ گروه ${chatTitle} از لیست فعال حذف شد`);
+
+    // خروج ربات از گروه
+    try {
+      await ctx.leaveChat();
+      console.log(`🚪 ربات از گروه ${chatId} خارج شد`);
+    } catch (leaveError) {
+      console.log('⚠️ خطا در خروج از گروه:', leaveError.message);
+    }
+
+    ctx.reply('✅ ربات از گروه غیرفعال شد!');
+  } catch (error) {
+    console.log('❌ خطا در غیرفعال کردن گروه:', error);
+    ctx.reply('❌ خطایی در غیرفعال کردن گروه رخ داد.');
   }
 });
 
