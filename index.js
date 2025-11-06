@@ -42,7 +42,10 @@ const startAutoPing = () => {
 app.head('/ping', (_req, res) => res.status(200).end());
 app.get('/ping', (_req, res) => res.status(200).json({ status: 'active', bot: SELF_BOT_ID }));
 
-// ---------- Helpers ----------
+// ---------- Utils ----------
+const withTimeout = (p, ms) =>
+  Promise.race([p, new Promise((_, r) => setTimeout(() => r(new Error('LOCAL_TIMEOUT')), ms))]);
+
 const isOwner = (ctx) => (ctx.from?.id === OWNER_ID);
 const replyNotOwner = async (ctx) => {
   try { await ctx.reply('به غیر از ارباب کسی نمیتونه به ما دستور بده', { reply_to_message_id: ctx.message?.message_id }); } catch {}
@@ -62,14 +65,37 @@ const isBotAdmin = async (chatId) => {
   } catch { cache.set(`admin_${chatId}`, false, 60); return false; }
 };
 
+const ensureAllowedChat = async (chatId) => {
+  const key = `allowed_${chatId}`;
+  let isAllowed = cache.get(key);
+  if (isAllowed !== undefined) return isAllowed;
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from(TABLE_ALLOWED_CHATS).select('chat_id').eq('chat_id', `${chatId}`).single(),
+      5000
+    );
+    isAllowed = !error && !!data;
+  } catch { isAllowed = false; }
+  cache.set(key, isAllowed, 300);
+  return isAllowed;
+};
+
 const isVip = async (userId) => {
   const key = `vip_${userId}`;
   const cached = cache.get(key);
   if (cached !== undefined) return cached;
-  const { data, error } = await supabase.from(TABLE_VIP_USERS).select('user_id').eq('user_id', userId).single();
-  const ok = !error && !!data;
-  cache.set(key, ok, 600);
-  return ok;
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from(TABLE_VIP_USERS).select('user_id').eq('user_id', userId).single(),
+      5000
+    );
+    const ok = !error && !!data;
+    cache.set(key, ok, 600);
+    return ok;
+  } catch {
+    cache.set(key, false, 60);
+    return false;
+  }
 };
 
 const setVip = async (userId, yes) => {
@@ -87,20 +113,27 @@ const getUserQuarantineStatus = async (userId) => {
   const key = `user_${userId}`;
   const cached = cache.get(key);
   if (cached) return cached;
-  const { data, error } = await supabase
-    .from(TABLE_QUARANTINE_USERS)
-    .select('is_quarantined, current_chat_id, username, first_name')
-    .eq('user_id', userId)
-    .single();
-
-  const result = (!error && data)
-    ? { isQuarantined: data.is_quarantined, currentChatId: data.current_chat_id, username: data.username, first_name: data.first_name }
-    : { isQuarantined: false, currentChatId: null, username: null, first_name: null };
-
-  cache.set(key, result, 600);
-  return result;
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from(TABLE_QUARANTINE_USERS)
+        .select('is_quarantined, current_chat_id, username, first_name')
+        .eq('user_id', userId)
+        .single(),
+      5000
+    );
+    const result = (!error && data)
+      ? { isQuarantined: data.is_quarantined, currentChatId: data.current_chat_id, username: data.username, first_name: data.first_name }
+      : { isQuarantined: false, currentChatId: null, username: null, first_name: null };
+    cache.set(key, result, 600);
+    return result;
+  } catch {
+    const result = { isQuarantined: false, currentChatId: null, username: null, first_name: null };
+    cache.set(key, result, 60);
+    return result;
+  }
 };
 
+// حذف امن: ban + unban با تاخیر ۱۰ ثانیه
 const removeUserFromChat = async (chatId, userId) => {
   try {
     const admin = await isBotAdmin(chatId);
@@ -110,24 +143,29 @@ const removeUserFromChat = async (chatId, userId) => {
       const m = await bot.telegram.getChatMember(chatId, userId);
       if (['left', 'kicked'].includes(m.status)) return true;
       if (m.status === 'creator') return false;
-    } catch { return true; }
+    } catch { /* اگر نتونستیم وضعیت رو بگیریم، ادامه می‌دیم */ }
 
-    // حذف امن: ban + unban با تاخیر ۱۰ ثانیه
     await bot.telegram.banChatMember(chatId, userId);
     setTimeout(async () => {
       try { await bot.telegram.unbanChatMember(chatId, userId); } catch {}
     }, 10000);
-
     return true;
-  } catch { return false; }
+  } catch (e) {
+    console.log('❌ removeUserFromChat:', e.message);
+    return false;
+  }
 };
 
+// حذف از تمام گروه‌های ثبت‌شده به جز گروه مجاز فعلی
 const removeFromOtherChats = async (allowedChatId, userId) => {
   try {
     const key = `allowed_list`;
     let all = cache.get(key);
     if (!all) {
-      const { data, error } = await supabase.from(TABLE_ALLOWED_CHATS).select('chat_id, chat_title');
+      const { data, error } = await withTimeout(
+        supabase.from(TABLE_ALLOWED_CHATS).select('chat_id, chat_title'),
+        5000
+      );
       if (error || !data) return 0;
       all = data; cache.set(key, all, 300);
     }
@@ -138,14 +176,15 @@ const removeFromOtherChats = async (allowedChatId, userId) => {
       if (ok) removed++;
     }
     return removed;
-  } catch { return 0; }
+  } catch (e) { console.log('❌ removeFromOtherChats:', e.message); return 0; }
 };
 
+// هستهٔ قرنطینه: سناریو A→B را درست پیاده می‌کند
 const quarantineUser = async (ctx, user) => {
   const currentChatId = `${ctx.chat.id}`;
   const userId = user.id;
 
-  // VIP قرنطینه نمی‌شود
+  // VIP ها قرنطینه نمی‌شوند
   if (await isVip(userId)) {
     await supabase.from(TABLE_QUARANTINE_USERS).delete().eq('user_id', userId);
     cache.del(`user_${userId}`);
@@ -154,14 +193,30 @@ const quarantineUser = async (ctx, user) => {
 
   const status = await getUserQuarantineStatus(userId);
 
-  // اگر از قبل قرنطینه است و وارد گروه جدید شد → از این گروه حذف شود
+  // اگر از قبل قرنطینه است و وارد گروه جدید شد → رکورد را به گروه جدید آپدیت کن و از بقیه حذف کن
   if (status.isQuarantined) {
-    if (`${status.currentChatId}` === `${currentChatId}`) return true;
-    await removeUserFromChat(currentChatId, userId);
-    return false;
+    if (`${status.currentChatId}` === `${currentChatId}`) {
+      // همان گروه فعلی است؛ کاری لازم نیست
+      return true;
+    }
+    // آپدیت به گروه جدید (خیلی مهم)
+    try {
+      const { error } = await withTimeout(
+        supabase.from(TABLE_QUARANTINE_USERS)
+          .update({ current_chat_id: currentChatId, updated_at: new Date().toISOString() })
+          .eq('user_id', userId),
+        5000
+      );
+      if (error) console.log('❌ update current_chat_id:', error.message);
+      cache.del(`user_${userId}`);
+    } catch { /* timeout-local */ }
+
+    // از سایر گروه‌های ثبت‌شده حذفش کن
+    await removeFromOtherChats(currentChatId, userId);
+    return true;
   }
 
-  // ثبت قرنطینه برای ورود جدید
+  // اگر قبلاً قرنطینه نبود → رکورد بساز و از سایر گروه‌ها حذف کن
   const payload = {
     user_id: userId,
     username: user.username,
@@ -171,10 +226,15 @@ const quarantineUser = async (ctx, user) => {
     updated_at: new Date().toISOString(),
   };
 
-  const { error } = await supabase.from(TABLE_QUARANTINE_USERS).upsert(payload, { onConflict: 'user_id' });
-  if (error) { console.log('❌ خطا در ذخیره قرنطینه:', error.message); return false; }
+  try {
+    const { error } = await withTimeout(
+      supabase.from(TABLE_QUARANTINE_USERS).upsert(payload, { onConflict: 'user_id' }),
+      5000
+    );
+    if (error) { console.log('❌ upsert quarantine:', error.message); return false; }
+    cache.del(`user_${userId}`);
+  } catch { return false; }
 
-  cache.del(`user_${userId}`);
   await removeFromOtherChats(currentChatId, userId);
   return true;
 };
@@ -201,71 +261,83 @@ bot.on('my_chat_member', async (ctx) => {
 // ---------- Commands ----------
 bot.start((ctx) => ctx.reply('نینجا در خدمت شماست 🥷🏻'));
 
-// فعال‌سازی گروه
 bot.command('on', async (ctx) => {
   if (!ensureOwner(ctx)) return;
   const chatId = `${ctx.chat.id}`;
   const chatTitle = ctx.chat.title || 'بدون عنوان';
-  const { error } = await supabase
-    .from(TABLE_ALLOWED_CHATS)
-    .upsert({ chat_id: chatId, chat_title: chatTitle, created_at: new Date().toISOString() }, { onConflict: 'chat_id' });
 
-  if (error) { console.log('❌ خطا در ثبت منطقه:', error); return ctx.reply('❌ خطا در ثبت منطقه'); }
+  try {
+    const { error } = await withTimeout(
+      supabase.from(TABLE_ALLOWED_CHATS)
+        .upsert({ chat_id: chatId, chat_title: chatTitle, created_at: new Date().toISOString() }, { onConflict: 'chat_id' }),
+      5000
+    );
+    if (error) { console.log('❌ ثبت منطقه:', error); return ctx.reply('❌ خطا در ثبت منطقه'); }
+  } catch { return ctx.reply('❌ خطا در ثبت منطقه (timeout)'); }
+
   cache.del('allowed_list');
+  cache.del(`allowed_${chatId}`);
   return ctx.reply('✅ منطقه ثبت شد');
 });
 
-// غیرفعال‌سازی + خروج
 bot.command('off', async (ctx) => {
   if (!ensureOwner(ctx)) return;
   const chatId = `${ctx.chat.id}`;
-  const { error } = await supabase.from(TABLE_ALLOWED_CHATS).delete().eq('chat_id', chatId);
-  if (error) {
-    console.log('❌ خطا در حذف منطقه:', error);
-    await ctx.reply('⚠️ حذف از دیتابیس انجام نشد، تلاش برای ترک گروه...');
-  } else {
-    cache.del('allowed_list');
-    await ctx.reply('✅ منطقه حذف شد؛ ربات گروه را ترک می‌کند...');
+  try {
+    const { error } = await withTimeout(
+      supabase.from(TABLE_ALLOWED_CHATS).delete().eq('chat_id', chatId),
+      5000
+    );
+    if (error) {
+      console.log('❌ حذف منطقه:', error);
+      await ctx.reply('⚠️ حذف از دیتابیس انجام نشد، تلاش برای ترک گروه...');
+    } else {
+      cache.del('allowed_list'); cache.del(`allowed_${chatId}`);
+      await ctx.reply('✅ منطقه حذف شد؛ ربات گروه را ترک می‌کند...');
+    }
+  } catch {
+    await ctx.reply('⚠️ حذف از دیتابیس (timeout). تلاش برای ترک گروه...');
   }
   try { await ctx.leaveChat(); } catch {}
 });
 
-// لیست قرنطینه همین گروه
 bot.command('ban_list', async (ctx) => {
   if (!ensureOwner(ctx)) return;
   const chatId = `${ctx.chat.id}`;
-  const { data, error } = await supabase
-    .from(TABLE_QUARANTINE_USERS)
-    .select('user_id, username, first_name')
-    .eq('current_chat_id', chatId)
-    .eq('is_quarantined', true)
-    .limit(100);
-
-  if (error) return ctx.reply('❌ خطا در دریافت لیست');
-  if (!data || data.length === 0) return ctx.reply('لیست قرنطینه فعلاً خالیه ✅');
-
-  const lines = data.map(u => `• ${u.first_name || ''} @${u.username || '-'} (${u.user_id})`).join('\n');
-  return ctx.reply(`🧾 لیست قرنطینه (${data.length} نفر):\n${lines}`);
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from(TABLE_QUARANTINE_USERS)
+        .select('user_id, username, first_name')
+        .eq('current_chat_id', chatId)
+        .eq('is_quarantined', true)
+        .limit(100),
+      5000
+    );
+    if (error) return ctx.reply('❌ خطا در دریافت لیست');
+    if (!data || data.length === 0) return ctx.reply('لیست قرنطینه فعلاً خالیه ✅');
+    const lines = data.map(u => `• ${u.first_name || ''} @${u.username || '-'} (${u.user_id})`).join('\n');
+    return ctx.reply(`🧾 لیست قرنطینه (${data.length} نفر):\n${lines}`);
+  } catch { return ctx.reply('❌ خطا در دریافت لیست (timeout)'); }
 });
 
-// لیست غیرقرنطینه/دیگر گروه‌ها
 bot.command('free_list', async (ctx) => {
   if (!ensureOwner(ctx)) return;
   const chatId = `${ctx.chat.id}`;
-  const { data, error } = await supabase
-    .from(TABLE_QUARANTINE_USERS)
-    .select('user_id, username, first_name, is_quarantined, current_chat_id')
-    .limit(200);
-
-  if (error) return ctx.reply('❌ خطا در دریافت لیست');
-  const list = (data || []).filter(u => !u.is_quarantined || `${u.current_chat_id}` !== chatId);
-  if (list.length === 0) return ctx.reply('لیست آزادها فعلاً خالیه ✅');
-
-  const lines = list.map(u => `• ${u.first_name || ''} @${u.username || '-'} (${u.user_id})`).join('\n');
-  return ctx.reply(`🧾 لیست غیرقرنطینه (${list.length} نفر):\n${lines}`);
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from(TABLE_QUARANTINE_USERS)
+        .select('user_id, username, first_name, is_quarantined, current_chat_id')
+        .limit(200),
+      5000
+    );
+    if (error) return ctx.reply('❌ خطا در دریافت لیست');
+    const list = (data || []).filter(u => !u.is_quarantined || `${u.current_chat_id}` !== chatId);
+    if (list.length === 0) return ctx.reply('لیست آزادها فعلاً خالیه ✅');
+    const lines = list.map(u => `• ${u.first_name || ''} @${u.username || '-'} (${u.user_id})`).join('\n');
+    return ctx.reply(`🧾 لیست غیرقرنطینه (${list.length} نفر):\n${lines}`);
+  } catch { return ctx.reply('❌ خطا در دریافت لیست (timeout)'); }
 });
 
-// VIP / UNVIP با ریپلای
 bot.command('vip', async (ctx) => {
   if (!ensureOwner(ctx)) return;
   const target = ctx.message?.reply_to_message?.from;
@@ -290,7 +362,6 @@ bot.command('unvip', async (ctx) => {
   return ctx.reply('❌ خطا در حذف VIP');
 });
 
-// آزادسازی دستی (با ریپلای)
 bot.command('free', async (ctx) => {
   if (!ensureOwner(ctx)) return;
   const target = ctx.message?.reply_to_message?.from;
@@ -301,21 +372,14 @@ bot.command('free', async (ctx) => {
   return ctx.reply(`✅ ${target.first_name} از قرنطینه خارج شد`);
 });
 
-// ورود اعضای جدید → قرنطینه
+// فقط رویداد عضویت جدید را گوش می‌دهیم (هیچ تریگر متنی نداریم)
 bot.on('new_chat_members', async (ctx) => {
   try {
     const chatId = `${ctx.chat.id}`;
+    const allowed = await ensureAllowedChat(chatId);
+    if (!allowed) return;
 
-    // فقط گروه‌های ثبت‌شده
-    const key = `allowed_${chatId}`;
-    let isAllowed = cache.get(key);
-    if (isAllowed === undefined) {
-      const { data, error } = await supabase.from(TABLE_ALLOWED_CHATS).select('chat_id').eq('chat_id', chatId).single();
-      isAllowed = !error && !!data;
-      cache.set(key, isAllowed, 300);
-    }
-    if (!isAllowed) return;
-
+    // هر عضو را به‌صورت ترتیبی (نه همزمان) پردازش کن تا ریت‌لیمیت نشود
     for (const m of ctx.message.new_chat_members) {
       if (m.is_bot) continue;
       await quarantineUser(ctx, m);
