@@ -1,28 +1,17 @@
 {
-  "name": "telegram-quarantine-bot",
-  "version": "3.3.0",
-  "description": "Telegram quarantine bot to manage quarantined users",
+  "name": "rpg-world-bot",
+  "version": "1.0.0",
+  "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node index.js"
   },
   "dependencies": {
-    "dotenv": "^16.0.0",
-    "axios": "^1.3.0",
-    "express": "^4.17.3",
+    "@supabase/supabase-js": "^2.46.2",
+    "axios": "^1.7.7",
+    "express": "^4.19.2",
     "node-cache": "^5.1.2",
-    "telegraf": "^4.8.0",
-    "helmet": "^5.0.2",
-    "cors": "^2.8.5",
-    "@supabase/supabase-js": "^2.12.0"
-  },
-  "devDependencies": {
-    "nodemon": "^2.0.19"
-  },
-  "engines": {
-    "node": ">=16.0.0"
-  },
-  "author": "",
-  "license": "MIT"
+    "telegraf": "^4.16.3",
+    "dotenv": "^16.4.5"
+  }
 }
