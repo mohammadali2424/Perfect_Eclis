@@ -1,6 +1,6 @@
 /**
- * RPG World Bot — Robust #ورود matcher + PV Link Wizard + Quick ID Search
- * Text-only, Render/Supabase-friendly
+ * RPG World Bot — Robust gates + Sections (Pages) + PV Wizard
+ * Fix: gateId as string (UUID-safe), sectioned menus, Persian #ورود matcher
  */
 require('dotenv').config();
 const express = require('express');
@@ -37,6 +37,20 @@ const isOwner = (ctx) => ctx.from?.id === OWNER_ID;
 const replyNotOwner = async (ctx) => { try { await ctx.reply('به غیر از ارباب کسی نمیتونه به ما دستور بده', { reply_to_message_id: ctx.message?.message_id }); } catch {} };
 const ensureOwner = (ctx) => { if (isOwner(ctx)) return true; replyNotOwner(ctx); return false; };
 
+const normalize = (s='') =>
+  s.replace(/\u200c/g, '')      // ZWNJ
+   .replace(/[ي]/g, 'ی').replace(/[ك]/g, 'ک') // عربی→فارسی
+   .replace(/[ـ]+/g, '')        // کشیده
+   .replace(/\s+/g, ' ')        // فاصله‌ها
+   .trim();
+
+const isTrigger = (text, word) => {
+  const t = normalize(text).toLowerCase();
+  const r = new RegExp(`^#\\s*${word}(?:\\s|$)`);
+  return r.test(t);
+};
+
+// ------- admin checks -------
 const isBotAdmin = async (chatId) => {
   const key = `admin:${chatId}`;
   const c = cache.get(key);
@@ -83,24 +97,9 @@ const getChatTitle = async (chatId) => {
   return t;
 };
 
-// ---------- helpers ----------
-const normalize = (s='') =>
-  s.replace(/\u200c/g, '')     // ZWNJ
-   .replace(/[ي]/g, 'ی').replace(/[ك]/g, 'ک') // عربی → فارسی
-   .replace(/[ـ]+/g, '')       // کشیده
-   .replace(/\s+/g, ' ')       // فواصل
-   .trim();
-
-const isTrigger = (text, word) => {
-  // قبول: "#ورود", "# ورود", "#ورود …", چندخطی
-  const t = normalize(text).toLowerCase();
-  const r = new RegExp(`^#\\s*${word}(?:\\s|$)`);
-  return r.test(t);
-};
-
-// ------- send rate limiter -------
+// ------- rate-limited sender -------
 const globalQueue = []; let sending = false;
-const SEND_RATE_DELAY = 70; // ~14 msg/sec
+const SEND_RATE_DELAY = 70;
 async function enqueueSend(fn){ return new Promise((resolve)=>{ globalQueue.push({fn,resolve}); if(!sending) pump(); }); }
 async function pump(){ sending = true; while(globalQueue.length){ const {fn,resolve}=globalQueue.shift(); try{ resolve(await fn()); }catch(e){ resolve(Promise.reject(e)); } await sleep(SEND_RATE_DELAY); } sending=false; }
 async function safeSendMessage(chatId, text, extra = {}) {
@@ -121,8 +120,11 @@ async function getGatesFrom(fromChatId) {
   const c = cache.get(k);
   if (c) return c;
   const { data } = await withTimeout(
-    supa.from('gates').select('id, from_chat_id, to_chat_id, label, emoji, base_travel_sec, active')
-      .eq('from_chat_id', `${fromChatId}`).eq('active', true).limit(200),
+    supa.from('gates').select('id, from_chat_id, to_chat_id, label, emoji, base_travel_sec, active, section, order_index')
+      .eq('from_chat_id', `${fromChatId}`).eq('active', true)
+      .order('order_index', { ascending: true })
+      .order('id', { ascending: true })
+      .limit(500),
     6000
   );
   cache.set(k, data || [], 600);
@@ -139,7 +141,69 @@ async function createOneTimeInvite(destChatId, userId, gateId, ttlSec) {
   });
 }
 
-// ------- Quarantine & removal -------
+async function listSections(fromChatId){
+  const gates = await getGatesFrom(fromChatId);
+  const map = new Map();
+  for (const g of gates) {
+    const s = (g.section || 'اصلی').slice(0, 40);
+    map.set(s, (map.get(s)||0)+1);
+  }
+  // مرتب‌سازی بخش‌ها بر اساس نام
+  return [...map.entries()].sort((a,b)=>a[0].localeCompare(b[0], 'fa'));
+}
+
+async function fetchLockMap(chatIds){
+  if (!chatIds.length) return {};
+  const { data } = await supa.from('registered_chats').select('chat_id, locked').in('chat_id', chatIds.map(String));
+  const map={}; for(const r of (data||[])) map[`${r.chat_id}`]=!!r.locked; return map;
+}
+
+function humanizeSeconds(sec){ sec=Math.max(1,Math.round(sec)); if(sec<60) return `${sec} ثانیه`; const m=Math.floor(sec/60), s=sec%60; return s?`${m} دقیقه و ${s} ثانیه`:`${m} دقیقه`; }
+
+// ------- building menus -------
+async function buildSectionMenu(chatId){
+  const secs = await listSections(chatId);
+  const rows = secs.map(([name,count]) => [Markup.button.callback(`📂 ${name} (${count})`, `menu:sec:${encodeURIComponent(name)}`)]);
+  return {
+    text: 'بخش مورد نظر را انتخاب کن:',
+    kb: Markup.inlineKeyboard(rows.length ? rows : [[Markup.button.callback('بخشی ثبت نشده', 'wz:nop')]], { columns: 1 })
+  };
+}
+
+async function buildGatesMenu(chatId, sectionName){
+  const gates = (await getGatesFrom(chatId)).filter(g => (g.section || 'اصلی') === sectionName);
+  const toIds = gates.map(g => `${g.to_chat_id}`); const lockMap = await fetchLockMap([...new Set(toIds)]);
+  const rows = [];
+  for (const g of gates.slice(0, 24)) {
+    const locked = !!lockMap[`${g.to_chat_id}`];
+    const labelText = `${locked ? '⛔️ ' : ''}${g.emoji || '🧭'} ${g.label} — ${humanizeSeconds(g.base_travel_sec)}`;
+    rows.push([Markup.button.callback(labelText, `ticket:gate:${g.id}:${g.base_travel_sec}`)]);
+  }
+  rows.push([Markup.button.callback('⬅️ صفحات', 'menu:sections')]);
+  return {
+    text: `مسیرهای بخش «${sectionName}»:`,
+    kb: Markup.inlineKeyboard(rows, { columns: 1 })
+  };
+}
+
+async function sendArrivalMessage(destChatId, userId){
+  const gates = await getGatesFrom(destChatId);
+  if (!gates || !gates.length) {
+    await safeSendMessage(destChatId, '🔍 برای این منطقه هنوز مسیری تعریف نشده. از /link_wizard در PV استفاده کن.');
+    return;
+  }
+  const secs = await listSections(destChatId);
+  if (secs.length > 1) {
+    const { text, kb } = await buildSectionMenu(destChatId);
+    await safeSendMessage(destChatId, text, kb);
+  } else {
+    const sectionName = secs[0]?.[0] || 'اصلی';
+    const { text, kb } = await buildGatesMenu(destChatId, sectionName);
+    await safeSendMessage(destChatId, text, kb);
+  }
+}
+
+// ------- quarantine helpers -------
 async function softKickFromChat(chatId, userId) {
   try {
     if (!await isBotAdmin(chatId)) return false;
@@ -163,41 +227,7 @@ async function removeFromOtherChats(allowedChatId, userId){
   }
 }
 
-// ------- Menu & arrival -------
-function humanizeSeconds(sec){ sec=Math.max(1,Math.round(sec)); if(sec<60) return `${sec} ثانیه`; const m=Math.floor(sec/60), s=sec%60; return s?`${m} دقیقه و ${s} ثانیه`:`${m} دقیقه`; }
-
-async function fetchLockMap(chatIds){
-  if (!chatIds.length) return {};
-  const { data } = await supa.from('registered_chats').select('chat_id, locked').in('chat_id', chatIds.map(String));
-  const map={}; for(const r of (data||[])) map[`${r.chat_id}`]=!!r.locked; return map;
-}
-
-async function buildMenuFor(chatId){
-  const gates = await getGatesFrom(chatId);
-  const toIds = gates.map(g => `${g.to_chat_id}`);
-  const lockMap = await fetchLockMap([...new Set(toIds)]);
-
-  const rows = [];
-  for (const g of gates.slice(0, 24)) {
-    const locked = !!lockMap[`${g.to_chat_id}`];
-    const labelText = `${locked ? '⛔️ ' : ''}${g.emoji || '🧭'} ${g.label} — ${humanizeSeconds(g.base_travel_sec)}`;
-    rows.push([Markup.button.callback(labelText, `ticket:gate:${g.id}:${g.base_travel_sec}`)]);
-  }
-  return Markup.inlineKeyboard(rows, { columns: 1 });
-}
-
-async function sendArrivalMessage(destChatId, userId){
-  const gates = await getGatesFrom(destChatId);
-  if (!gates || !gates.length) {
-    await safeSendMessage(destChatId, '🔍 برای این منطقه هنوز مسیری تعریف نشده. از /link_wizard در PV استفاده کن.');
-    return;
-  }
-  const kb = await buildMenuFor(destChatId);
-  const text = '🎴┊وارد شدی؛ هوای اینجا بوی ماجرا می‌دهد...\n\nمسیرهای پیشِ رو:';
-  await safeSendMessage(destChatId, text, kb);
-}
-
-// ------- Movement scheduling -------
+// ------- movement scheduling -------
 const scheduledJobs = new Map();
 async function scheduleArrival(move){
   const delay = Math.max(0, new Date(move.arrive_at).getTime() - Date.now());
@@ -223,7 +253,7 @@ async function bootCatchUp(){
   for (const m of (data||[])) scheduleArrival(m);
 }
 
-// ------- Callback tickets & wizard -------
+// ------- handlers -------
 bot.on('callback_query', async (ctx) => {
   try{
     const cb = ctx.callbackQuery;
@@ -233,46 +263,56 @@ bot.on('callback_query', async (ctx) => {
 
     if (data === 'wz:nop') return ctx.answerCbQuery();
 
+    // section navigation
+    if (data === 'menu:sections') {
+      const { text, kb } = await buildSectionMenu(chatId);
+      try { await ctx.editMessageText(text, kb); } catch { await safeSendMessage(chatId, text, kb); }
+      return ctx.answerCbQuery();
+    }
+    if (data.startsWith('menu:sec:')) {
+      const secName = decodeURIComponent(data.split(':').slice(2).join(':'));
+      const { text, kb } = await buildGatesMenu(chatId, secName);
+      try { await ctx.editMessageText(text, kb); } catch { await safeSendMessage(chatId, text, kb); }
+      return ctx.answerCbQuery();
+    }
+
+    // Wizard only in PV
     if (data.startsWith('wz:') && ctx.chat?.type !== 'private') {
       await ctx.answerCbQuery('ویزارد فقط در PV کار می‌کند'); return;
     }
     if (data.startsWith('wz:')) return handleWizardAction(ctx);
 
-    if (data.startsWith('ticket:')) {
+    // Ticket: use string gateId (UUID-safe)
+    if (data.startsWith('ticket:gate:')) {
       if (!await ensureAllowedChat(chatId)) {
         await ctx.answerCbQuery('منطقه فعال نیست'); 
         try { await safeSendMessage(chatId, '⚠️ این منطقه فعال نیست. با /on فعال کن.'); } catch {}
         return;
       }
-      let toChatId=null, etaSec=null, gateId=null;
+      const parts = data.split(':'); // ticket, gate, <id>, <sec>
+      const gateId = parts[2];                 // ← بدون parseInt
+      const etaSec = parseInt(parts[3], 10);
 
-      if (data.startsWith('ticket:gate:')) {
-        const [, , , gId, etaStr] = data.split(':');
-        gateId = parseInt(gId, 10); etaSec = parseInt(etaStr, 10);
-        const { data: g } = await supa.from('gates').select('id,from_chat_id,to_chat_id,base_travel_sec')
-          .eq('id', gateId).maybeSingle();
-        if (!g || `${g.from_chat_id}` !== `${chatId}`) { await ctx.answerCbQuery('مسیر نامعتبر'); return; }
-        toChatId = g.to_chat_id;
+      const { data: g } = await supa.from('gates').select('id,from_chat_id,to_chat_id,base_travel_sec')
+        .eq('id', gateId).maybeSingle();
+      if (!g) { await ctx.answerCbQuery('مسیر نامعتبر'); return; }
 
-        const destState = await getRegionState(`${toChatId}`);
-        if (destState.locked) { await ctx.answerCbQuery(destState.msg || '⛔️ منطقه بسته است'); return; }
-      } else {
-        return ctx.answerCbQuery();
-      }
+      const destState = await getRegionState(`${g.to_chat_id}`);
+      if (destState.locked) { await ctx.answerCbQuery(destState.msg || '⛔️ منطقه بسته است'); return; }
 
-      const link = await createOneTimeInvite(toChatId, userId, gateId||0, 5*60);
-      const moveId = newMoveId(userId, gateId||0);
+      const link = await createOneTimeInvite(g.to_chat_id, userId, gateId, 5*60);
+      const moveId = newMoveId(userId, gateId);
       const depart = nowIso();
       const arrive = new Date(Date.now() + (etaSec*1000)).toISOString();
 
-      await upsertPlayer({ user_id:userId, current_chat_id:`${toChatId}`, last_chat_id:`${chatId}`, status:'quarantined', updated_at:depart });
-      await upsertMovement({ move_id:moveId, user_id:userId, from_chat_id:`${chatId}`, to_chat_id:`${toChatId}`,
+      await upsertPlayer({ user_id:userId, current_chat_id:`${g.to_chat_id}`, last_chat_id:`${g.from_chat_id}`, status:'quarantined', updated_at:depart });
+      await upsertMovement({ move_id:moveId, user_id:userId, from_chat_id:`${g.from_chat_id}`, to_chat_id:`${g.to_chat_id}`,
         gate_id:gateId, departed_at:depart, arrive_at:arrive, state:'scheduled',
         ticket_id:moveId, ticket_expires_at:new Date(Date.now()+5*60*1000).toISOString(), invite_link: link.invite_link
       });
 
-      removeFromOtherChats(`${toChatId}`, userId).catch(()=>{});
-      scheduleArrival({ move_id:moveId, arrive_at:arrive, to_chat_id:toChatId, user_id:userId });
+      removeFromOtherChats(`${g.to_chat_id}`, userId).catch(()=>{});
+      scheduleArrival({ move_id:moveId, arrive_at:arrive, to_chat_id:g.to_chat_id, user_id:userId });
 
       try{
         await bot.telegram.sendMessage(userId, `🎟️ بلیت مقصد آماده شد.\n\nبرای ورود کلیک کن:`,
@@ -290,7 +330,6 @@ bot.on('callback_query', async (ctx) => {
   }catch{ try{ await ctx.answerCbQuery('خطا'); }catch{} }
 });
 
-// ------- Join requests -------
 bot.on('chat_join_request', async (ctx) => {
   try{
     const req = ctx.update.chat_join_request;
@@ -319,19 +358,14 @@ bot.on('chat_join_request', async (ctx) => {
   }catch{}
 });
 
-// ------- Simple text triggers (group only) -------
+// متن‌های ساده در گروه
 async function handleVorud(ctx){
   const chatId = `${ctx.chat?.id}`; const userId = ctx.from?.id;
   if (!chatId || !userId) return;
-
   const allowed = await ensureAllowedChat(chatId);
-  if (!allowed) {
-    await ctx.reply('⚠️ این منطقه هنوز فعال نشده. داخل همین گروه با اکانت مالک بزن: /on');
-    return;
-  }
+  if (!allowed) { await ctx.reply('⚠️ این منطقه هنوز فعال نشده. داخل همین گروه با اکانت مالک بزن: /on'); return; }
 
   try {
-    // آیا حرکت فعال برای رسیدن به همین‌جا داری؟
     const now = new Date();
     const { data } = await supa.from('movements')
       .select('arrive_at, state').eq('user_id', userId).eq('to_chat_id', chatId)
@@ -347,30 +381,24 @@ async function handleVorud(ctx){
     }
 
     const gates = await getGatesFrom(chatId);
-    if (!gates || !gates.length) {
-      await ctx.reply('🔍 برای این منطقه هنوز مسیری تعریف نشده.\nاز PV با /link_wizard مسیر بساز (دوطرفه).');
-      return;
-    }
+    if (!gates || !gates.length) { await ctx.reply('🔍 مسیر تعریف نشده.\nاز PV با /link_wizard بخش و مسیر بساز.'); return; }
     await sendArrivalMessage(chatId, userId);
-  } catch {
-    try { await ctx.reply('یک خطای موقت رخ داد. دوباره #ورود بزن یا کمی بعد تلاش کن.'); } catch {}
-  }
+  } catch { try { await ctx.reply('خطای موقت. دوباره #ورود بزن.'); } catch {} }
 }
 async function handleKhoroj(ctx){
   const user = ctx.message?.from; if (!user || user.is_bot) return;
   try { await ctx.reply(`🧭┊سفر به سلامت ${user.first_name || ''}`, { reply_to_message_id: ctx.message.message_id }); } catch {}
 }
 
-// این middleware قبل از PV wizard قرار می‌گیرد و فقط در گروه‌ها کار می‌کند:
 bot.on('text', async (ctx, next) => {
-  if (ctx.chat?.type === 'private') return next(); // فقط گروه/سوپرگروه
+  if (ctx.chat?.type === 'private') return next();
   const t = ctx.message?.text || '';
   if (isTrigger(t, 'ورود')) return handleVorud(ctx);
   if (isTrigger(t, 'خروج')) return handleKhoroj(ctx);
   return next();
 });
 
-// ------- Commands -------
+// Commands
 bot.start((ctx) => ctx.reply('نینجا در خدمت شماست 🥷🏻'));
 
 bot.command('on', async (ctx) => {
@@ -389,7 +417,7 @@ bot.command('off', async (ctx) => {
   await ctx.reply('✅ منطقه حذف شد؛ ربات لفت می‌دهد…'); try{ await ctx.leaveChat(); }catch{}
 });
 
-// قفل/باز منطقه
+// lock/unlock
 bot.command('lock', async (ctx) => { if(!ensureOwner(ctx))return; const id = `${ctx.chat.id}`; await supa.from('registered_chats').update({locked:true}).eq('chat_id', id); cache.del(`region:${id}`); ctx.reply('⛔️ این منطقه قفل شد'); });
 bot.command('unlock', async (ctx) => { if(!ensureOwner(ctx))return; const id = `${ctx.chat.id}`; await supa.from('registered_chats').update({locked:false}).eq('chat_id', id); cache.del(`region:${id}`); ctx.reply('✅ این منطقه باز شد'); });
 bot.command('toggle_lock', async (ctx) => {
@@ -398,7 +426,7 @@ bot.command('toggle_lock', async (ctx) => {
   cache.del(`region:${id}`); ctx.reply(!st.locked ? '⛔️ قفل شد' : '✅ باز شد');
 });
 
-// VIP / UNVIP / FREE
+// VIP / FREE
 bot.command('vip', async (ctx) => { if(!ensureOwner(ctx))return;
   const t = ctx.message?.reply_to_message?.from; if(!t) return ctx.reply('روی پیام کاربر ریپلای کن بعد /vip بزن');
   await supa.from('vip_users').upsert({ user_id:t.id, added_at:nowIso() }, { onConflict:'user_id' });
@@ -413,17 +441,18 @@ bot.command('free', async (ctx) => { if(!ensureOwner(ctx))return;
   await supa.from('players').delete().eq('user_id', t.id); ctx.reply(`✅ ${t.first_name} از قرنطینه خارج شد`);
 });
 
-// list / unlink
+// لیست مسیرها + حذف دوطرفه
 bot.command('listgates', async (ctx) => {
   if (!ensureOwner(ctx)) return;
   const fromId = `${ctx.chat.id}`;
-  const { data, error } = await supa.from('gates').select('id,to_chat_id,label,base_travel_sec,inverse_gate_id')
-    .eq('from_chat_id', fromId).eq('active', true).limit(200);
+  const { data, error } = await supa.from('gates').select('id,to_chat_id,label,base_travel_sec,inverse_gate_id,section,order_index')
+    .eq('from_chat_id', fromId).eq('active', true)
+    .order('section',{ascending:true}).order('order_index',{ascending:true}).order('id',{ascending:true}).limit(500);
   if (error) return ctx.reply('❌ خطا');
   if (!data || !data.length) return ctx.reply('هیچ مسیری ثبت نیست');
   let out = 'گیت‌های فعال از این منطقه:\n';
   for (const g of data) {
-    out += `• #${g.id} → ${g.to_chat_id} | ${g.label} | ${g.base_travel_sec}s`;
+    out += `• [${g.section}] #${g.id} → ${g.to_chat_id} | ${g.label} | ${g.base_travel_sec}s`;
     if (g.inverse_gate_id) out += ` (↔ ${g.inverse_gate_id})`;
     out += '\n';
   }
@@ -454,7 +483,7 @@ bot.on('my_chat_member', async (ctx) => {
   }catch{}
 });
 
-// -------------- PV-ONLY LINK WIZARD --------------
+// ---------------- PV WIZARD (با «بخش») ----------------
 const wizard = new Map(); // userId -> state
 function wzState(uid){ if(!wizard.has(uid)) wizard.set(uid,{ step:0 }); return wizard.get(uid); }
 
@@ -508,24 +537,42 @@ bot.on('text', async (ctx, next) => {
     );
   }
 
-  if (st.step === 3) { // label forward
+  // دریافت لیبل رفت
+  if (st.step === 3) {
     st.labelF = (ctx.message.text || '').trim();
-    st.step = 'labelBackMode';
-    const kb = Markup.inlineKeyboard([
-      [Markup.button.callback('✨ لیبل برگشت را خودکار بساز', 'wz:label:auto')],
-      [Markup.button.callback('✍️ خودم می‌نویسم', 'wz:label:manual')],
-      [Markup.button.callback('❌ لغو', 'wz:cancel')]
-    ]);
-    return safeSendMessage(uid, 'لیبل برگشت را چطور می‌خواهی؟', kb);
+    st.step = 'sectionMode';
+    return safeSendMessage(uid, 'نام «بخش/صفحه» را انتخاب کن (برای مرتب‌سازی مسیرها):',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('📂 استفاده از «اصلی»', 'wz:sec:default')],
+        [Markup.button.callback('✍️ خودم می‌نویسم', 'wz:sec:manual')],
+        [Markup.button.callback('❌ لغو', 'wz:cancel')]
+      ]));
   }
 
+  // دریافت نام بخش دستی
+  if (st.step === 'secInput') {
+    st.section = (ctx.message.text || '').trim() || 'اصلی';
+    st.step = 'labelBackMode';
+    return safeSendMessage(uid, 'لیبل برگشت را چطور می‌خواهی؟',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('✨ خودکار', 'wz:label:auto')],
+        [Markup.button.callback('✍️ دستی', 'wz:label:manual')],
+        [Markup.button.callback('❌ لغو', 'wz:cancel')]
+      ]));
+  }
+
+  // لیبل برگشت دستی
   if (st.step === 'labelBInput') {
     st.labelB = (ctx.message.text || '').trim();
     st.step = 4;
     return safeSendMessage(uid, '⏱ زمان رفت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:',
-      Markup.inlineKeyboard([[Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tf:default')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
+      Markup.inlineKeyboard([
+        [Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tf:default')],
+        [Markup.button.callback('❌ لغو','wz:cancel')]
+      ]));
   }
 
+  // زمان‌ها
   if (st.step === 4) {
     const t = (ctx.message.text || '').trim();
     st.tf = (t.toLowerCase() === 'default') ? 300 : parseInt(t, 10);
@@ -534,7 +581,6 @@ bot.on('text', async (ctx, next) => {
     return safeSendMessage(uid, '⏱ زمان برگشت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:',
       Markup.inlineKeyboard([[Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tb:default')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
   }
-
   if (st.step === 5) {
     const t = (ctx.message.text || '').trim();
     st.tb = (t.toLowerCase() === 'default') ? 300 : parseInt(t, 10);
@@ -545,16 +591,17 @@ bot.on('text', async (ctx, next) => {
       [Markup.button.callback('↩️ ویرایش زمان‌ها', 'wz:edit_times')],
       [Markup.button.callback('❌ لغو', 'wz:cancel')]
     ]);
-
     const summary = `بررسی نهایی:
 from: ${st.fromId}
 to:   ${st.toId}
+section: ${st.section || 'اصلی'}
 label→: ${st.labelF}
 label←: ${st.labelB || '(خودکار)'}
 forward: ${st.tf}s
 back:    ${st.tb}s`;
     return safeSendMessage(uid, summary, kb);
   }
+
   return next();
 });
 
@@ -663,6 +710,24 @@ async function handleWizardAction(ctx){
     return reply(`مبدأ: ${st.fromId}\nمقصد: ${st.toId}\n\nلیبلِ رفت را بنویس (مثلاً: «ورود به شهر»)\n(پیام متنی بفرست)`);
   }
 
+  // بخش
+  if (data === 'wz:sec:default') {
+    st.section = 'اصلی';
+    st.step = 'labelBackMode';
+    return reply('لیبل برگشت را چطور می‌خواهی؟',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('✨ خودکار', 'wz:label:auto')],
+        [Markup.button.callback('✍️ دستی', 'wz:label:manual')],
+        [Markup.button.callback('❌ لغو', 'wz:cancel')]
+      ]));
+  }
+  if (data === 'wz:sec:manual') {
+    st.step = 'secInput';
+    return reply('نام بخش/صفحه را بفرست (مثلاً بازار / دروازه‌ها / شمال شهر).',
+      Markup.inlineKeyboard([[Markup.button.callback('❌ لغو', 'wz:cancel')]]));
+  }
+
+  // لیبل برگشت
   if (data === 'wz:label:auto') {
     const tFrom = await getChatTitle(st.fromId);
     st.labelB = `بازگشت به ${tFrom}`;
@@ -676,12 +741,12 @@ async function handleWizardAction(ctx){
       Markup.inlineKeyboard([[Markup.button.callback('❌ لغو','wz:cancel')]]));
   }
 
+  // زمان‌ها
   if (data === 'wz:tf:default') {
     st.tf = 300; st.step = 5;
     return reply('⏱ زمان برگشت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:',
       Markup.inlineKeyboard([[Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tb:default')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
   }
-
   if (data === 'wz:tb:default') {
     st.tb = 300; st.step = 6;
     const kb = Markup.inlineKeyboard([
@@ -692,24 +757,26 @@ async function handleWizardAction(ctx){
     const summary = `بررسی نهایی:
 from: ${st.fromId}
 to:   ${st.toId}
+section: ${st.section || 'اصلی'}
 label→: ${st.labelF}
 label←: ${st.labelB || '(خودکار)'}
 forward: ${st.tf}s
 back:    ${st.tb}s`;
     return reply(summary, kb);
   }
-
   if (data === 'wz:edit_times') {
     st.step = 4;
     return reply('⏱ زمان رفت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:',
       Markup.inlineKeyboard([[Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tf:default')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
   }
 
+  // تایید ایجاد
   if (data === 'wz:confirm') {
     if (!st.fromId || !st.toId || !st.labelF || !st.tf || !st.tb) return ctx.answerCbQuery('اطلاعات ناقص است');
-    const forward = { from_chat_id: st.fromId, to_chat_id: st.toId, label: st.labelF, emoji:'🧭', base_travel_sec: parseInt(st.tf,10), invite_url:'-', active:true };
+    const section = st.section || 'اصلی';
+    const forward = { from_chat_id: st.fromId, to_chat_id: st.toId, label: st.labelF, emoji:'🧭', base_travel_sec: parseInt(st.tf,10), invite_url:'-', active:true, section, order_index:0 };
     const backLbl = st.labelB || `بازگشت به ${await getChatTitle(st.fromId)}`;
-    const backward= { from_chat_id: st.toId, to_chat_id: st.fromId, label: backLbl, emoji:'🧭', base_travel_sec: parseInt(st.tb,10), invite_url:'-', active:true };
+    const backward= { from_chat_id: st.toId, to_chat_id: st.fromId, label: backLbl, emoji:'🧭', base_travel_sec: parseInt(st.tb,10), invite_url:'-', active:true, section, order_index:0 };
     const { data:f } = await supa.from('gates').insert(forward).select('id').single();
     const { data:b } = await supa.from('gates').insert(backward).select('id').single();
     if (f?.id && b?.id) {
@@ -734,18 +801,16 @@ async function pagedRegisteredChats(page=1, pageSize=8, excludeId=null){
   return { items, page, pages };
 }
 
-// ------- Keep-alive & GC -------
+// ------- keepalive & webhook -------
 function startPing(){ if(!RENDER_URL) return; const url=RENDER_URL; const t=13*60*1000+59*1000; setInterval(()=>axios.head(`${url}/ping`).catch(()=>{}), t); }
 app.get('/ping', (_req,res)=>res.status(200).json({ok:true}));
 
-async function gcEphemerals(){
+setInterval(async ()=>{
   const ts = nowIso();
   await supa.from('footprints').delete().lt('expires_at', ts).catch(()=>{});
   await supa.from('relay_candles').delete().lt('expires_at', ts).catch(()=>{});
-}
-setInterval(gcEphemerals, 180_000);
+}, 180_000);
 
-// ------- Server / Webhook -------
 app.use(bot.webhookCallback('/webhook'));
 app.get('/', (_req, res) => res.send('<h3>RPG World Bot</h3>'));
 
@@ -757,7 +822,14 @@ app.listen(PORT, async () => {
     if (RENDER_URL) { const url = `${RENDER_URL}/webhook`; await bot.telegram.setWebhook(url); console.log('✅ Webhook set:', url); }
     else { await bot.launch(); console.log('✅ Long polling launched'); }
   } catch (e) { console.log('Startup warn:', e.message); }
-  bootCatchUp().catch(()=>{});
+  // catch-up scheduled movements (۲ دقیقه پنجره)
+  try{
+    const from = new Date(Date.now()-120_000).toISOString();
+    const to = new Date(Date.now()+120_000).toISOString();
+    const { data } = await supa.from('movements').select('move_id,user_id,to_chat_id,arrive_at,state')
+      .eq('state','scheduled').gte('arrive_at',from).lte('arrive_at',to).limit(500);
+    for (const m of (data||[])) scheduleArrival(m);
+  }catch{}
 });
 
 process.on('unhandledRejection', (e)=>console.log('Unhandled:', e?.message || e));
