@@ -1,8 +1,6 @@
 /**
- * RPG World Bot — PV-only Link Wizard + One-file unified bot
- * - /link_wizard همیشه در PV ادامه پیدا می‌کند (گروه چیزی نمی‌بیند)
- * - دکمه‌ها در PV کار می‌کنند؛ edit → fallback به send جدید
- * - باقی قابلیت‌ها: ticketed invite, quarantine, soft-kick, region lock, footprints, relay candles
+ * RPG World Bot — Unified + PV Link Wizard + Quick ID Search + Fixed #ورود
+ * Render/Supabase Free Friendly (text-only)
  */
 
 require('dotenv').config();
@@ -37,9 +35,7 @@ let ME_ID = null;
 (async () => { try { ME_ID = (await bot.telegram.getMe()).id; } catch {} })();
 
 const isOwner = (ctx) => ctx.from?.id === OWNER_ID;
-const replyNotOwner = async (ctx) => {
-  try { await ctx.reply('به غیر از ارباب کسی نمیتونه به ما دستور بده', { reply_to_message_id: ctx.message?.message_id }); } catch {}
-};
+const replyNotOwner = async (ctx) => { try { await ctx.reply('به غیر از ارباب کسی نمیتونه به ما دستور بده', { reply_to_message_id: ctx.message?.message_id }); } catch {} };
 const ensureOwner = (ctx) => { if (isOwner(ctx)) return true; replyNotOwner(ctx); return false; };
 
 const isBotAdmin = async (chatId) => {
@@ -152,23 +148,17 @@ async function fetchLockMap(chatIds){
   const map={}; for(const r of (data||[])) map[`${r.chat_id}`]=!!r.locked; return map;
 }
 
-async function buildMenuFor(chatId, userId){
+async function buildMenuFor(chatId /*, userId*/){
   await ensureAllowedChat(chatId);
   const gates = await getGatesFrom(chatId);
   const toIds = gates.map(g => `${g.to_chat_id}`);
   const lockMap = await fetchLockMap([...new Set(toIds)]);
 
-  // 👣 Footprints (اختیاری: حذف برای سادگی UI — اگر می‌خواهی نگه دار، این بخش را بازگردان)
-  // … (می‌توان افزود)
-
   const rows = [];
   for (const g of gates.slice(0, 24)) {
-    let eta = g.base_travel_sec;
-    // 🔥 Relay Candles (بوست 5%) — ساده‌سازی: بدون RPC، فقط نمایش ETA پایه
-    // اگر خواستی، RPC consume_candle را مثل نسخه‌ی قبل اضافه کن.
     const locked = !!lockMap[`${g.to_chat_id}`];
-    const labelText = `${locked ? '⛔️ ' : ''}${g.emoji || '🧭'} ${g.label} — ${humanizeSeconds(eta)}`;
-    rows.push([Markup.button.callback(labelText, `ticket:gate:${g.id}:${eta}`)]);
+    const labelText = `${locked ? '⛔️ ' : ''}${g.emoji || '🧭'} ${g.label} — ${humanizeSeconds(g.base_travel_sec)}`;
+    rows.push([Markup.button.callback(labelText, `ticket:gate:${g.id}:${g.base_travel_sec}`)]);
   }
   return Markup.inlineKeyboard(rows, { columns: 1 });
 }
@@ -213,17 +203,17 @@ bot.on('callback_query', async (ctx) => {
     const chatId = ctx.chat?.id;
     const userId = cb.from?.id;
 
-    if (data === 'wz:nop') { return ctx.answerCbQuery(); } // برای صفحه‌نمایش
+    if (data === 'wz:nop') { return ctx.answerCbQuery(); } // صفحه‌نما
 
-    // ویزارد فقط در PV
+    // ویزارد فقط PV
     if (data.startsWith('wz:') && ctx.chat?.type !== 'private') {
-      await ctx.answerCbQuery('این ویزارد فقط در PV کار می‌کند');
-      return;
+      await ctx.answerCbQuery('ویزارد فقط در PV کار می‌کند'); return;
     }
 
-    // ----- link wizard actions handled later -----
+    // ---------- Wizard actions ----------
+    if (data.startsWith('wz:')) return handleWizardAction(ctx);
 
-    // Ticket flow (فقط گروه‌های ثبت‌شده)
+    // ---------- Ticket flow ----------
     if (data.startsWith('ticket:')){
       if (!await ensureAllowedChat(chatId)) return ctx.answerCbQuery('منطقه فعال نیست');
       let toChatId=null, etaSec=null, gateId=null;
@@ -238,9 +228,8 @@ bot.on('callback_query', async (ctx) => {
 
         const destState = await getRegionState(`${toChatId}`);
         if (destState.locked) { await ctx.answerCbQuery(destState.msg || '⛔️ منطقه بسته است'); return; }
-
       } else {
-        return ctx.answerCbQuery(); // سایر حالت‌ها در این نسخه ساده غیرفعال
+        return ctx.answerCbQuery();
       }
 
       const link = await createOneTimeInvite(toChatId, userId, gateId||0, 5*60);
@@ -268,9 +257,6 @@ bot.on('callback_query', async (ctx) => {
       }
       return;
     }
-
-    // ---------- Wizard actions (PV only) ----------
-    if (data.startsWith('wz:')) return handleWizardAction(ctx);
 
     await ctx.answerCbQuery();
   }catch{ try{ await ctx.answerCbQuery('خطا'); }catch{} }
@@ -309,6 +295,34 @@ bot.on('chat_join_request', async (ctx) => {
 bot.hears(/^#خروج$/i, async (ctx) => {
   const user = ctx.message?.from; if (!user || user.is_bot) return;
   try { await ctx.reply(`🧭┊سفر به سلامت ${user.first_name || ''}`, { reply_to_message_id: ctx.message.message_id }); } catch {}
+});
+
+// ✅ #ورود: اگر حرکتِ scheduled به این‌جا داری و هنوز نرسیده‌ای → پیام «در مسیر»؛ وگرنه منوی مقصدها را نشان می‌دهیم
+bot.hears(/^#ورود\b/i, async (ctx) => {
+  const chatId = `${ctx.chat?.id}`; const userId = ctx.from?.id;
+  if (!chatId || !userId) return;
+  if (!await ensureAllowedChat(chatId)) return;
+
+  try {
+    const now = new Date();
+    const { data } = await supa.from('movements')
+      .select('arrive_at, state').eq('user_id', userId).eq('to_chat_id', chatId)
+      .eq('state','scheduled').order('arrive_at', { ascending: false }).limit(1);
+
+    const mv = (data && data[0]) || null;
+    if (mv) {
+      const etaMs = new Date(mv.arrive_at).getTime() - now.getTime();
+      if (etaMs > 0) {
+        const sec = Math.max(1, Math.round(etaMs/1000));
+        return ctx.reply(`⏳ هنوز در مسیر هستی — ${humanizeSeconds(sec)} تا رسیدن باقیست.`);
+      }
+    }
+    // یا رسیدی، یا حرکت ثبت نشده: منو را همان‌جا نشان بده
+    await sendArrivalMessage(chatId, userId);
+  } catch {
+    // اگر خطایی شد، حداقل منو را نشان بده
+    try { await sendArrivalMessage(chatId, userId); } catch {}
+  }
 });
 
 // ------- Commands -------
@@ -400,40 +414,30 @@ const wizard = new Map(); // userId -> state
 function wzState(uid){ if(!wizard.has(uid)) wizard.set(uid,{ step:0 }); return wizard.get(uid); }
 
 async function ensurePV(userId){
-  try {
-    await bot.telegram.sendChatAction(userId, 'typing');
-    return true;
-  } catch {
-    return false;
-  }
+  try { await bot.telegram.sendChatAction(userId, 'typing'); return true; }
+  catch { return false; }
 }
 
-async function startWizardInPV(userId){
+async function startWizardInPV(userId, lastGroupId){
   const ok = await ensurePV(userId);
   if (!ok) return false;
   const kb = Markup.inlineKeyboard([
-    [Markup.button.callback('✔️ مبدأ = همین گروهِ آخر؟', 'wz:from:this')], // بعداً مقدار واقعی با انتخاب از لیست ست می‌شود
-    [Markup.button.callback('📜 انتخاب مبدأ از لیست مناطق', 'wz:from:list:1')],
+    [Markup.button.callback('✔️ مبدأ = آخرین گروهی که ویزارد را صدا زدم', 'wz:from:this')],
+    [Markup.button.callback('📜 انتخاب مبدأ از لیست', 'wz:from:list:1')],
+    [Markup.button.callback('🔎 جستجوی مبدأ با آیدی', 'wz:from:find')],
     [Markup.button.callback('❌ لغو', 'wz:cancel')]
   ]);
   await safeSendMessage(userId, 'وِیزارد لینک: مبدأ را انتخاب کن.', kb);
+  const st = wzState(userId); st.lastGroupId = lastGroupId || null; st.step = 1;
   return true;
 }
 
 bot.command('link_wizard', async (ctx) => {
   if (!ensureOwner(ctx)) return;
   const uid = ctx.from.id;
-  const started = await startWizardInPV(uid);
-  if (!started) {
-    return ctx.reply('برای ادامه، PV بات را /start کن تا ویزارد را آنجا اجرا کنم.');
-  }
-  if (ctx.chat?.type !== 'private') {
-    try { await ctx.reply('✔️ ادامهٔ ویزارد در PV شما انجام می‌شود.'); } catch {}
-  }
-  // مقدار "آخرین گروه" (به‌عنوان مبدأ پیش‌فرض) را در state نگه می‌داریم
-  const st = wzState(uid);
-  st.step = 1;
-  st.lastGroupId = `${ctx.chat.id}`; // اگر از گروه فراخوانی شد
+  const started = await startWizardInPV(uid, ctx.chat?.type !== 'private' ? `${ctx.chat.id}` : null);
+  if (!started) return ctx.reply('برای ادامه، PV بات را /start کن تا ویزارد را آنجا اجرا کنم.');
+  if (ctx.chat?.type !== 'private') { try { await ctx.reply('✔️ ادامهٔ ویزارد در PV شما انجام می‌شود.'); } catch {} }
 });
 
 // پیام‌های متنیِ ویزارد فقط در PV
@@ -443,28 +447,40 @@ bot.on('text', async (ctx, next) => {
   const uid = ctx.from.id;
   const st = wizard.get(uid); if (!st) return next();
 
+  // ورودی آیدی برای جستجوی سریع
+  if (st.step === 'fromIdInput' || st.step === 'toIdInput') {
+    const raw = (ctx.message.text || '').trim();
+    if (!/^-?\d{6,20}$/.test(raw)) return safeSendMessage(uid, '⛔️ آیدی عددی نامعتبر است. دوباره بفرست.');
+    const { data } = await supa.from('registered_chats').select('chat_id,title').eq('chat_id', raw).single();
+    if (!data) return safeSendMessage(uid, '❌ چنین آیدی در مناطق ثبت‌شده نیست. ابتدا در آن گروه /on بزن و دوباره تلاش کن.');
+    const confirmKey = st.step === 'fromIdInput' ? `wz:from:confirm:${raw}` : `wz:to:confirm:${raw}`;
+    return safeSendMessage(uid, `آیا منظورت این گروه است؟\n\n${data.title || '-'}\n${data.chat_id}`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('✅ بله، انتخابش کن', confirmKey)],
+        [Markup.button.callback('↩️ برگشت', st.step === 'fromIdInput' ? 'wz:from:list:1' : 'wz:to:list:1')],
+        [Markup.button.callback('❌ لغو', 'wz:cancel')]
+      ])
+    );
+  }
+
   if (st.step === 3) {
     st.label = (ctx.message.text || '').trim();
     st.step = 4;
-    return safeSendMessage(uid, '⏱ زمان رفت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:', Markup.inlineKeyboard([
-      [Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tf:default')],
-      [Markup.button.callback('❌ لغو', 'wz:cancel')]
-    ]));
+    return safeSendMessage(uid, '⏱ زمان رفت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:',
+      Markup.inlineKeyboard([[Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tf:default')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
   }
   if (st.step === 4) {
     const t = (ctx.message.text || '').trim();
     st.tf = (t.toLowerCase() === 'default') ? 300 : parseInt(t, 10);
-    if (!Number.isFinite(st.tf) || st.tf <= 0) return safeSendMessage(uid, '⛔️ عدد معتبر بفرست یا بزن «پیش‌فرض (300)».');
+    if (!Number.isFinite(st.tf) || st.tf <= 0) return safeSendMessage(uid, '⛔️ عدد معتبر بفرست یا «پیش‌فرض (300)».');
     st.step = 5;
-    return safeSendMessage(uid, '⏱ زمان برگشت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:', Markup.inlineKeyboard([
-      [Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tb:default')],
-      [Markup.button.callback('❌ لغو', 'wz:cancel')]
-    ]));
+    return safeSendMessage(uid, '⏱ زمان برگشت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:',
+      Markup.inlineKeyboard([[Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tb:default')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
   }
   if (st.step === 5) {
     const t = (ctx.message.text || '').trim();
     st.tb = (t.toLowerCase() === 'default') ? 300 : parseInt(t, 10);
-    if (!Number.isFinite(st.tb) || st.tb <= 0) return safeSendMessage(uid, '⛔️ عدد معتبر بفرست یا بزن «پیش‌فرض (300)».');
+    if (!Number.isFinite(st.tb) || st.tb <= 0) return safeSendMessage(uid, '⛔️ عدد معتبر بفرست یا «پیش‌فرض (300)».');
     st.step = 6;
     const kb = Markup.inlineKeyboard([
       [Markup.button.callback('✅ ایجاد لینک‌های رفت/برگشت', 'wz:confirm')],
@@ -482,7 +498,6 @@ async function handleWizardAction(ctx){
   if (ctx.chat?.type !== 'private') { await ctx.answerCbQuery('ویزارد در PV اجرا می‌شود'); return; }
   const uid = ctx.from.id;
   const st = wzState(uid);
-
   const data = ctx.callbackQuery.data;
 
   const reply = async (text, kb) => {
@@ -497,17 +512,19 @@ async function handleWizardAction(ctx){
     return;
   }
 
-  if (data.startsWith('wz:from:this')) {
+  if (data === 'wz:from:this') {
     st.fromId = st.lastGroupId || null;
     if (!st.fromId) {
-      return reply('مبدأ مشخص نیست. از لیست انتخاب کن:', Markup.inlineKeyboard([
+      return reply('مبدأ مشخص نیست. یکی از گزینه‌ها را انتخاب کن:', Markup.inlineKeyboard([
         [Markup.button.callback('📜 انتخاب مبدأ از لیست', 'wz:from:list:1')],
+        [Markup.button.callback('🔎 جستجوی مبدأ با آیدی', 'wz:from:find')],
         [Markup.button.callback('❌ لغو', 'wz:cancel')]
       ]));
     }
     st.step = 2;
     return reply(`مبدأ تنظیم شد: ${st.fromId}\nحالا مقصد را انتخاب کن.`, Markup.inlineKeyboard([
       [Markup.button.callback('📜 انتخاب مقصد از لیست', 'wz:to:list:1')],
+      [Markup.button.callback('🔎 جستجوی مقصد با آیدی', 'wz:to:find')],
       [Markup.button.callback('↩️ تغییر مبدأ', 'wz:from:list:1')],
       [Markup.button.callback('❌ لغو', 'wz:cancel')]
     ]));
@@ -517,19 +534,26 @@ async function handleWizardAction(ctx){
     const page = parseInt(data.split(':').pop(), 10) || 1;
     const { items, pages } = await pagedRegisteredChats(page, 8, null);
     const rows = items.map(it => [Markup.button.callback(`${it.title || it.chat_id}`, `wz:from:set:${it.chat_id}`)]);
-    const nav = [
+    rows.push([
       Markup.button.callback('◀️', `wz:from:list:${Math.max(1, page-1)}`),
       Markup.button.callback(`${page}/${pages}`, 'wz:nop'),
       Markup.button.callback('▶️', `wz:from:list:${Math.min(pages, page+1)}`)
-    ];
-    rows.push(nav, [Markup.button.callback('❌ لغو', 'wz:cancel')]);
+    ]);
+    rows.push([Markup.button.callback('🔎 جستجو با آیدی', 'wz:from:find')]);
+    rows.push([Markup.button.callback('❌ لغو', 'wz:cancel')]);
     return reply('مبدأ را از لیست انتخاب کن:', Markup.inlineKeyboard(rows, { columns: 1 }));
+  }
+
+  if (data === 'wz:from:find') {
+    st.step = 'fromIdInput';
+    return reply('آیدی عددی گروه مبدأ را بفرست (مثل -1001234567890).', Markup.inlineKeyboard([[Markup.button.callback('❌ لغو', 'wz:cancel')]]));
   }
 
   if (data.startsWith('wz:from:set:')) {
     st.fromId = data.split(':').pop(); st.step = 2;
     return reply(`مبدأ: ${st.fromId}\nحالا مقصد را انتخاب کن.`, Markup.inlineKeyboard([
       [Markup.button.callback('📜 انتخاب مقصد از لیست', 'wz:to:list:1')],
+      [Markup.button.callback('🔎 جستجوی مقصد با آیدی', 'wz:to:find')],
       [Markup.button.callback('↩️ تغییر مبدأ', 'wz:from:list:1')],
       [Markup.button.callback('❌ لغو', 'wz:cancel')]
     ]));
@@ -540,13 +564,19 @@ async function handleWizardAction(ctx){
     const page = parseInt(data.split(':').pop(), 10) || 1;
     const { items, pages } = await pagedRegisteredChats(page, 8, st.fromId);
     const rows = items.map(it => [Markup.button.callback(`${it.title || it.chat_id}`, `wz:to:set:${it.chat_id}`)]);
-    const nav = [
+    rows.push([
       Markup.button.callback('◀️', `wz:to:list:${Math.max(1, page-1)}`),
       Markup.button.callback(`${page}/${pages}`, 'wz:nop'),
       Markup.button.callback('▶️', `wz:to:list:${Math.min(pages, page+1)}`)
-    ];
-    rows.push(nav, [Markup.button.callback('↩️ تغییر مبدأ', 'wz:from:list:1')], [Markup.button.callback('❌ لغو', 'wz:cancel')]);
+    ]);
+    rows.push([Markup.button.callback('🔎 جستجو با آیدی', 'wz:to:find')]);
+    rows.push([Markup.button.callback('↩️ تغییر مبدأ', 'wz:from:list:1')], [Markup.button.callback('❌ لغو', 'wz:cancel')]);
     return reply('مقصد را از لیست انتخاب کن:', Markup.inlineKeyboard(rows, { columns: 1 }));
+  }
+
+  if (data === 'wz:to:find') {
+    st.step = 'toIdInput';
+    return reply('آیدی عددی گروه مقصد را بفرست (مثل -1001234567890).', Markup.inlineKeyboard([[Markup.button.callback('❌ لغو', 'wz:cancel')]]));
   }
 
   if (data.startsWith('wz:to:set:')) {
@@ -554,12 +584,24 @@ async function handleWizardAction(ctx){
     return reply(`مبدأ: ${st.fromId}\nمقصد: ${st.toId}\n\nیک برچسب برای مسیر بنویس (مثلاً: «قلعه↔شهر»)\n(پیام متنی بفرست)`);
   }
 
-  if (data === 'wz:tf:default') {
-    st.tf = 300; st.step = 5;
-    return reply('⏱ زمان برگشت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:', Markup.inlineKeyboard([
-      [Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tb:default')],
+  if (data.startsWith('wz:from:confirm:')) {
+    st.fromId = data.split(':').pop(); st.step = 2;
+    return reply(`مبدأ: ${st.fromId}\nحالا مقصد را انتخاب کن.`, Markup.inlineKeyboard([
+      [Markup.button.callback('📜 انتخاب مقصد از لیست', 'wz:to:list:1')],
+      [Markup.button.callback('🔎 جستجوی مقصد با آیدی', 'wz:to:find')],
+      [Markup.button.callback('↩️ تغییر مبدأ', 'wz:from:list:1')],
       [Markup.button.callback('❌ لغو', 'wz:cancel')]
     ]));
+  }
+  if (data.startsWith('wz:to:confirm:')) {
+    st.toId = data.split(':').pop(); st.step = 3;
+    return reply(`مبدأ: ${st.fromId}\nمقصد: ${st.toId}\n\nیک برچسب برای مسیر بنویس (مثلاً: «قلعه↔شهر»)\n(پیام متنی بفرست)`);
+  }
+
+  if (data === 'wz:tf:default') {
+    st.tf = 300; st.step = 5;
+    return reply('⏱ زمان برگشت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:',
+      Markup.inlineKeyboard([[Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tb:default')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
   }
 
   if (data === 'wz:tb:default') {
@@ -574,10 +616,8 @@ async function handleWizardAction(ctx){
 
   if (data === 'wz:edit_times') {
     st.step = 4;
-    return reply('⏱ زمان رفت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:', Markup.inlineKeyboard([
-      [Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tf:default')],
-      [Markup.button.callback('❌ لغو', 'wz:cancel')]
-    ]));
+    return reply('⏱ زمان رفت (ثانیه) را بفرست (مثلاً 300). یا دکمهٔ زیر:',
+      Markup.inlineKeyboard([[Markup.button.callback('استفاده از پیش‌فرض (300)', 'wz:tf:default')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
   }
 
   if (data === 'wz:confirm') {
