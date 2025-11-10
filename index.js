@@ -1,5 +1,5 @@
 // index.js
-// RPG World Bot (Pages/Gates: main & sub) + Link Pool + JoinRequest + Batch Arrivals + Catch-up + Webhook
+// RPG World Bot — Link Pool + JoinRequest + Cancel/Switch + Reverse Gate + Edit Wizard
 // نیازمندی‌ها: telegraf, express, axios, node-cache, @supabase/supabase-js, dotenv
 
 require('dotenv').config();
@@ -9,11 +9,10 @@ const { Telegraf, Markup } = require('telegraf');
 const NodeCache = require('node-cache');
 const { createClient } = require('@supabase/supabase-js');
 
-// ====== ENV ======
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const OWNER_ID = parseInt(process.env.OWNER_ID || '0', 10);
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY; // حتما service_role باشد
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
 const RENDER_URL = process.env.RENDER_EXTERNAL_URL || '';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
@@ -22,7 +21,6 @@ if (!BOT_TOKEN || !OWNER_ID || !SUPABASE_URL || !SUPABASE_KEY) {
   process.exit(1);
 }
 
-// ====== Core ======
 const bot = new Telegraf(BOT_TOKEN, { handlerTimeout: 9000 });
 const supa = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 const app = express(); app.use(express.json());
@@ -30,7 +28,6 @@ const app = express(); app.use(express.json());
 let ME_ID = null;
 (async () => { try { ME_ID = (await bot.telegram.getMe()).id; } catch { ME_ID = null; } })();
 
-// ====== Utils ======
 const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
 const nowIso = ()=>new Date().toISOString();
 const humanize=(s)=>{ s=Math.max(1,Math.round(s)); if(s<60) return `${s} ثانیه`; const m=Math.floor(s/60),r=s%60; return r?`${m} دقیقه و ${r} ثانیه`:`${m} دقیقه`; };
@@ -42,14 +39,9 @@ const parseDur=(txt='')=>{
   if(u==='s'||u==='sec') return n; if(u==='h'||u==='hr') return n*3600; return n*60;
 };
 
-// ====== Caches ======
-// (21) کش داغ ۱۸۰ثانیه
 const cache = new NodeCache({ stdTTL: 180, checkperiod: 120, maxKeys: 20000 });
-
-// قفل پردازش per-user ضد کلیک‌های سریع و ریس‌شرایط
 const inFlightUser = new NodeCache({ stdTTL: 8, checkperiod: 15 });
 
-// ====== Send Queue (rate-limit safe) ======
 const q=[]; let pumping=false;
 const enqueue=fn=>new Promise((res)=>{ q.push({fn,res}); if(!pumping) pump(); });
 async function pump(){ pumping=true; while(q.length){ const {fn,res}=q.shift(); try{ res(await fn()); }catch(e){ res(Promise.reject(e)); } await sleep(80);} pumping=false; }
@@ -62,7 +54,7 @@ async function safeSend(chatId,text,extra={}) {
   }
 }
 
-// ====== DB helpers ======
+// ---------- DB helpers ----------
 async function ensureAllowedChat(chatId){
   const k=`allowed:${chatId}`; const c=cache.get(k); if(c!==undefined) return c;
   try{
@@ -104,7 +96,7 @@ async function getGatesFromPage(pageId){
   cache.set(k,rows,180); return rows;
 }
 async function upsertPlayer(p){ await supa.from('players').upsert(p,{ onConflict:'user_id' }); }
-async function getPlayer(userId){ const {data}=await supa.from('players').select('user_id,current_chat_id,current_page_id,status,updated_at').eq('user_id',userId).maybeSingle(); return data||null; }
+async function getPlayer(userId){ const {data}=await supa.from('players').select('user_id,current_chat_id,current_page_id,status,updated_at,pending_credit_sec').eq('user_id',userId).maybeSingle(); return data||null; }
 async function getFirstPage(chatId){
   const pages=await getPages(chatId);
   return pages[0] || null;
@@ -122,15 +114,13 @@ async function softKick(chatId,userId){
     await sleep(60); return true;
   }catch{ return false; }
 }
-
-// خروج از سایر گروه‌ها (بهینه)
 async function kickOthers(keepChatId,userId){
   const k='registered:list'; let regs=cache.get(k);
   if(!regs){ const {data}=await supa.from('registered_chats').select('chat_id').limit(5000); regs=data||[]; cache.set(k,regs,600); }
   for(const r of regs){ const cid=`${r.chat_id}`; if(cid===`${keepChatId}`) continue; await softKick(cid,userId); }
 }
 
-// ====== Link Pool (حل سقف لینک‌ها) ======
+// ---------- Link Pool ----------
 const invitePool = new Map(); // key = to_chat_id, value = { link, expireAtTs }
 async function getPooledJoinRequestLink(toChatId) {
   const now = Date.now();
@@ -138,7 +128,6 @@ async function getPooledJoinRequestLink(toChatId) {
   if (it && it.expireAtTs - now > 45_000) {
     return it.link;
   }
-  // ساخت لینک join_request با عمر 5 دقیقه (member_limit=0 یعنی محدود به زمان)
   const link = await bot.telegram.createChatInviteLink(toChatId, {
     expire_date: Math.floor((now + 5 * 60_000) / 1000),
     member_limit: 0,
@@ -150,7 +139,7 @@ async function getPooledJoinRequestLink(toChatId) {
 }
 setInterval(()=>{ const now=Date.now(); for(const [k,v] of invitePool.entries()){ if(v.expireAtTs<=now) invitePool.delete(k); }}, 60_000);
 
-// ====== Pages UI ======
+// ---------- Pages UI ----------
 function pageNeighbors(pages, pageId){
   const idx = pages.findIndex(p=>p.id===pageId);
   if(idx<0) return {prev:null,next:null,index:-1,total:pages.length};
@@ -200,12 +189,11 @@ async function sendCurrentPagePV(userId, chatId){
   return true;
 }
 
-// ====== Movement / Arrivals ======
+// ---------- Movement ----------
 const timers=new Map(); // move_id -> timeout
 function newMoveId(u,k){ return `${u}_${k}_${Date.now()}`; }
 
 const arrQ=[]; let arrTimer=null;
-// (22) Batch Arrival Writer
 function queueArrivalEvt(evt){ arrQ.push(evt); if(!arrTimer) arrTimer=setTimeout(flushArrivals,400); }
 async function flushArrivals(){
   const batch = arrQ.splice(0, arrQ.length); arrTimer=null;
@@ -231,18 +219,22 @@ async function flushArrivals(){
     await supa.from('players').upsert(rows, { onConflict:'user_id' });
 
     for(const u of updated){
+      // اطلاع به گروه فقط وقتی کاربر واقعاً عضو شده است:
+      try {
+        const cm = await bot.telegram.getChatMember(u.current_chat_id, u.user_id);
+        if (!['member','administrator','creator'].includes(cm.status)) continue;
+      } catch { continue; }
       const page = await getPageById(u.to_page_id);
       const mention = `[${u.user_id}](tg://user?id=${u.user_id})`;
-      try{ await safeSend(u.to_chat_id, `🏁 ${mention} وارد **${page?.title||'اینجا'}** شد.`, { parse_mode:'Markdown' }); }catch{}
+      try{ await safeSend(u.current_chat_id, `🏁 ${mention} وارد **${page?.title||'اینجا'}** شد.`, { parse_mode:'Markdown' }); }catch{}
     }
   }catch(e){
     console.log('Batch arrival error:', e.message||e);
   }
 }
-// (23) Timer Cap + Catch-up
 async function scheduleSubArrival(move){
   const delay=Math.max(0,new Date(move.arrive_at).getTime()-Date.now());
-  if(delay>60*60*1000) return; // سقف ۶۰ دقیقه
+  if(delay>60*60*1000) return;
   if(timers.has(move.move_id)) return;
   const id=setTimeout(()=>{ timers.delete(move.move_id); queueArrivalEvt({ move_id: move.move_id }); }, delay);
   timers.set(move.move_id,id);
@@ -261,8 +253,8 @@ async function finalizeDueMoves(userId){
   }catch(e){ /* ignore */ }
 }
 async function hasActiveMove(userId){
-  const {data}=await supa.from('movements').select('move_id').eq('user_id',userId).eq('state','scheduled').order('departed_at',{ascending:false}).limit(1);
-  return !!(data && data[0]);
+  const {data}=await supa.from('movements').select('move_id,departed_at').eq('user_id',userId).eq('state','scheduled').order('departed_at',{ascending:false}).limit(1);
+  return data && data[0];
 }
 async function canStartMove(chatId){
   const st = await getChatState(chatId);
@@ -271,11 +263,11 @@ async function canStartMove(chatId){
   return {ok:true};
 }
 
-// ====== Group Triggers (ساکت) ======
+// ---------- Group Triggers ----------
 async function handleVorud(ctx){
   const chatId=`${ctx.chat?.id}`; const userId=ctx.from?.id; if(!chatId||!userId) return;
   const allowed=await ensureAllowedChat(chatId); if(!allowed) return; // بی‌صدا
-  await finalizeDueMoves(userId); // (23) Catch-up
+  await finalizeDueMoves(userId);
   try{ await sendCurrentPagePV(userId,chatId); }catch{}
 }
 async function handleKhoroj(ctx){
@@ -290,7 +282,7 @@ bot.on('text', async (ctx,next)=>{
   return next();
 });
 
-// ====== Commands ======
+// ---------- Commands ----------
 const isOwner = (ctx)=>ctx.from?.id===OWNER_ID;
 const replyNotOwner = async (ctx)=>{ try{ await ctx.reply('به غیر از ارباب کسی نمیتونه به ما دستور بده',{ reply_to_message_id: ctx.message?.message_id }); }catch{} };
 const ensureOwner = (ctx)=>{ if(isOwner(ctx)) return true; replyNotOwner(ctx); return false; };
@@ -329,7 +321,6 @@ bot.command('unfreeze', async (ctx)=>{ if(!ensureOwner(ctx))return;
   ctx.reply('🔥 فریز برداشته شد');
 });
 
-// VIP/free tools
 bot.command('vip', async (ctx)=>{ if(!ensureOwner(ctx))return;
   const t=ctx.message?.reply_to_message?.from; if(!t) return ctx.reply('روی پیام کاربر ریپلای کن بعد /vip بزن');
   await supa.from('vip_users').upsert({user_id:t.id,added_at:nowIso()},{onConflict:'user_id'});
@@ -347,7 +338,7 @@ bot.command('free', async (ctx)=>{ if(!ensureOwner(ctx))return;
   ctx.reply(`✅ ${t.first_name} آزاد شد`);
 });
 
-// ====== Silent Link Wizard (PV only) ======
+// ---------- Silent Link Wizard (PV) + Reverse + Edit ----------
 const wizard=new Map();
 const stOf=(uid)=>{ if(!wizard.has(uid)) wizard.set(uid,{step:0}); return wizard.get(uid); };
 async function ensurePV(uid){ try{ await bot.telegram.sendChatAction(uid,'typing'); return true; }catch{ return false; } }
@@ -361,10 +352,7 @@ bot.command('link_wizard', async (ctx)=>{
   const invokedInGroup = ctx.chat?.type!=='private';
   const uid=ctx.from.id;
   const lastGroup = invokedInGroup ? `${ctx.chat.id}` : null;
-  if(!(await ensurePV(uid))){
-    // ساکت؛ در گروه چیزی نگیم
-    return;
-  }
+  if(!(await ensurePV(uid))){ return; }
   const st=stOf(uid);
   st.step='chooseType';
   st.fromChatId = lastGroup;
@@ -377,8 +365,124 @@ bot.command('link_wizard', async (ctx)=>{
   await safeSend(uid,'نوع مسیر را انتخاب کن:',kb);
 });
 
-bot.action('wz:cancel', async (ctx)=>{ if(ctx.chat?.type!=='private'||!isOwner(ctx)) return; wizard.delete(ctx.from.id); await wzReply(ctx,'وِیزارد لغو شد.'); });
+bot.command('edit_wizard', async (ctx)=>{
+  if(!ensureOwner(ctx)) return;
+  const uid=ctx.from.id;
+  if(!(await ensurePV(uid))){ return; }
+  const st=stOf(uid);
+  st.step='edit:fromChat';
+  st.edit = { };
+  await safeSend(uid,'[ویرایش] گروه را انتخاب کن:', Markup.inlineKeyboard([
+    [Markup.button.callback('📜 از گروه‌های ثبت‌شده','ed:from:list:1')],
+    [Markup.button.callback('❌ لغو','wz:cancel')]
+  ]));
+});
 
+// انتخاب گروه‌ها/صفحه‌ها/… (مشابه قبل) — برای ویرایش
+async function listRegistered(page=1,size=8){
+  const k='reg:list:all'; let list=cache.get(k);
+  if(!list){ const {data,error}=await supa.from('registered_chats').select('chat_id,title').order('title',{ascending:true}).limit(5000);
+    list=error?[]:(data||[]); cache.set(k,list,300);
+  }
+  const pagesCount=Math.max(1,Math.ceil(list.length/size));
+  const items=list.slice((page-1)*size,(page-1)*size+size);
+  return {items, page, pagesCount};
+}
+async function listPages(chatId,page=1,size=8){
+  const list=await getPages(chatId);
+  const pagesCount=Math.max(1,Math.ceil(list.length/size));
+  const items=list.slice((page-1)*size,(page-1)*size+size);
+  return {items, page, pagesCount};
+}
+async function listGates(pageId,page=1,size=8){
+  const list=await getGatesFromPage(pageId);
+  const pagesCount=Math.max(1,Math.ceil(list.length/size));
+  const items=list.slice((page-1)*size,(page-1)*size+size);
+  return {items, page, pagesCount};
+}
+
+// ویرایش: انتخاب گروه/صفحه/مسیر
+bot.action(/^ed:from:list:(\d+)$/i, async (ctx)=>{ if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
+  const p=parseInt(ctx.match[1],10)||1; const {items,page,pagesCount}=await listRegistered(p,8);
+  const rows=items.map(it=>[Markup.button.callback(`${it.title||it.chat_id}`,`ed:from:set:${it.chat_id}`)]);
+  rows.push([Markup.button.callback('◀️',`ed:from:list:${Math.max(1,page-1)}`),Markup.button.callback(`${page}/${pagesCount}`,'wz:nop'),Markup.button.callback('▶️',`ed:from:list:${Math.min(pagesCount,page+1)}`)]);
+  rows.push([Markup.button.callback('❌ لغو','wz:cancel')]);
+  await wzReply(ctx,'[ویرایش] گروه را انتخاب کن:',Markup.inlineKeyboard(rows,{columns:1}));
+});
+bot.action(/^ed:from:set:(-?\d{6,20})$/i, async (ctx)=>{ if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
+  const st=stOf(ctx.from.id); st.edit.fromChatId=ctx.match[1];
+  await wzReply(ctx,'[ویرایش] صفحه را انتخاب کن:', Markup.inlineKeyboard([
+    [Markup.button.callback('📄 از صفحات موجود','ed:page:list:1')],
+    [Markup.button.callback('❌ لغو','wz:cancel')]
+  ]));
+});
+bot.action(/^ed:page:list:(\d+)$/i, async (ctx)=>{ if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
+  const st=stOf(ctx.from.id); const p=parseInt(ctx.match[1],10)||1;
+  const {items,page,pagesCount}=await listPages(st.edit.fromChatId,p,8);
+  const rows=items.map(it=>[Markup.button.callback(`${it.title}`,`ed:page:set:${it.id}`)]);
+  rows.push([Markup.button.callback('◀️',`ed:page:list:${Math.max(1,page-1)}`),Markup.button.callback(`${page}/${pagesCount}`,'wz:nop'),Markup.button.callback('▶️',`ed:page:list:${Math.min(pagesCount,page+1)}`)]);
+  rows.push([Markup.button.callback('❌ لغو','wz:cancel')]);
+  await wzReply(ctx,'[ویرایش] صفحه را انتخاب کن:',Markup.inlineKeyboard(rows,{columns:1}));
+});
+bot.action(/^ed:page:set:(.+)$/i, async (ctx)=>{ if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
+  const st=stOf(ctx.from.id); st.edit.fromPageId=ctx.match[1];
+  await wzReply(ctx,'[ویرایش] مسیر را انتخاب کن:', Markup.inlineKeyboard([
+    [Markup.button.callback('🧭 مسیرها','ed:gate:list:1')],
+    [Markup.button.callback('❌ لغو','wz:cancel')]
+  ]));
+});
+bot.action(/^ed:gate:list:(\d+)$/i, async (ctx)=>{ if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
+  const st=stOf(ctx.from.id); const p=parseInt(ctx.match[1],10)||1;
+  const {items,page,pagesCount}=await listGates(st.edit.fromPageId,p,8);
+  const rows=items.map(it=>[Markup.button.callback(`${it.label} (${it.type}/${humanize(it.base_travel_sec)})`,`ed:gate:set:${it.id}`)]);
+  rows.push([Markup.button.callback('◀️',`ed:gate:list:${Math.max(1,page-1)}`),Markup.button.callback(`${page}/${pagesCount}`,'wz:nop'),Markup.button.callback('▶️',`ed:gate:list:${Math.min(pagesCount,page+1)}`)]);
+  rows.push([Markup.button.callback('❌ لغو','wz:cancel')]);
+  await wzReply(ctx,'[ویرایش] مسیر را انتخاب کن:',Markup.inlineKeyboard(rows,{columns:1}));
+});
+bot.action(/^ed:gate:set:(.+)$/i, async (ctx)=>{ if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
+  const st=stOf(ctx.from.id); st.edit.gateId=ctx.match[1];
+  await wzReply(ctx,'چه چیزی را می‌خواهی تغییر بدهی؟', Markup.inlineKeyboard([
+    [Markup.button.callback('🏷️ لیبل','ed:field:label')],
+    [Markup.button.callback('⏱ زمان','ed:field:time')],
+    [Markup.button.callback('✅/⛔️ فعال/غیرفعال','ed:field:toggle')],
+    [Markup.button.callback('❌ لغو','wz:cancel')]
+  ]));
+});
+bot.action(/^ed:field:(label|time|toggle)$/i, async (ctx)=>{
+  if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
+  const st=stOf(ctx.from.id); const f=ctx.match[1];
+  st.edit.field=f;
+  if(f==='toggle'){
+    await supa.from('gates').update({ active: supa.rpc ? undefined : undefined }).eq('id', st.edit.gateId);
+    // چون RPC نداریم، ابتدا بخوانیم مقدار فعلی و برعکسش کنیم
+    const {data}=await supa.from('gates').select('active').eq('id',st.edit.gateId).maybeSingle();
+    const next = !(data?.active!==false);
+    await supa.from('gates').update({active: next}).eq('id',st.edit.gateId);
+    return wzReply(ctx,`وضعیت مسیر: ${next?'✅ فعال':'⛔️ غیرفعال'}`);
+  }
+  if(f==='label'){ st.step='edit:set:label'; return wzReply(ctx,'لیبل جدید را بفرست',Markup.inlineKeyboard([[Markup.button.callback('❌ لغو','wz:cancel')]])); }
+  if(f==='time'){ st.step='edit:set:time'; return wzReply(ctx,'زمان جدید (ثانیه) را بفرست',Markup.inlineKeyboard([[Markup.button.callback('❌ لغو','wz:cancel')]])); }
+});
+bot.on('text', async (ctx,next)=>{
+  if(ctx.chat?.type!=='private'||!isOwner(ctx)) return next();
+  const st=wizard.get(ctx.from.id); if(!st) return next();
+
+  // ست‌کردن فیلدهای ویرایش
+  if(st.step==='edit:set:label'){
+    const label=(ctx.message.text||'').trim(); if(!label) return safeSend(ctx.from.id,'لیبل نامعتبر');
+    await supa.from('gates').update({label}).eq('id',st.edit.gateId);
+    st.step=0; return safeSend(ctx.from.id,'✅ لیبل ویرایش شد');
+  }
+  if(st.step==='edit:set:time'){
+    const t=parseInt((ctx.message.text||'').trim(),10); if(!Number.isFinite(t)||t<=0) return safeSend(ctx.from.id,'⏱ عدد معتبر بفرست');
+    await supa.from('gates').update({base_travel_sec:t}).eq('id',st.edit.gateId);
+    st.step=0; return safeSend(ctx.from.id,'✅ زمان ویرایش شد');
+  }
+  return next();
+});
+
+// ادامهٔ ویزارد اصلی (مثل نسخهٔ قبلی) — با «Reverse»
+bot.action('wz:cancel', async (ctx)=>{ if(ctx.chat?.type!=='private'||!isOwner(ctx)) return; wizard.delete(ctx.from.id); await wzReply(ctx,'وِیزارد لغو شد.'); });
 bot.action(/^wz:type:(main|sub)$/i, async (ctx)=>{
   if(ctx.chat?.type!=='private' || !isOwner(ctx)) return;
   const st=stOf(ctx.from.id); st.type=ctx.match[1]; st.step='fromChat';
@@ -396,16 +500,6 @@ bot.action(/^wz:type:(main|sub)$/i, async (ctx)=>{
     ]));
   }
 });
-
-async function listRegistered(page=1,size=8){
-  const k='reg:list:all'; let list=cache.get(k);
-  if(!list){ const {data,error}=await supa.from('registered_chats').select('chat_id,title').order('title',{ascending:true}).limit(5000);
-    list=error?[]:(data||[]); cache.set(k,list,300);
-  }
-  const pagesCount=Math.max(1,Math.ceil(list.length/size));
-  const items=list.slice((page-1)*size,(page-1)*size+size);
-  return {items, page, pagesCount};
-}
 bot.action(/^wz:from:list:(\d+)$/i, async (ctx)=>{
   if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
   const p=parseInt(ctx.match[1],10)||1; const {items,page,pagesCount}=await listRegistered(p,8);
@@ -423,13 +517,6 @@ bot.action(/^wz:from:set:(-?\d{6,20})$/i, async (ctx)=>{
     [Markup.button.callback('❌ لغو','wz:cancel')]
   ]));
 });
-
-async function listPages(chatId,page=1,size=8){
-  const list=await getPages(chatId);
-  const pagesCount=Math.max(1,Math.ceil(list.length/size));
-  const items=list.slice((page-1)*size,(page-1)*size+size);
-  return {items, page, pagesCount};
-}
 bot.action(/^wz:from:page:list:(\d+)$/i, async (ctx)=>{
   if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
   const st=stOf(ctx.from.id); const p=parseInt(ctx.match[1],10)||1;
@@ -439,136 +526,82 @@ bot.action(/^wz:from:page:list:(\d+)$/i, async (ctx)=>{
   rows.push([Markup.button.callback('➕ ساخت صفحهٔ جدید','wz:from:page:new')],[Markup.button.callback('❌ لغو','wz:cancel')]);
   await wzReply(ctx,'صفحهٔ مبدأ را انتخاب کن:',Markup.inlineKeyboard(rows,{columns:1}));
 });
-
 bot.action('wz:from:page:new', async (ctx)=>{
   if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
   const st=stOf(ctx.from.id); st.step='fromPageTitle';
-  await wzReply(ctx,'عنوان صفحهٔ مبدأ را بفرست (مثلاً «خیابان شهر باستانی»)', Markup.inlineKeyboard([[Markup.button.callback('❌ لغو','wz:cancel')]]));
+  await wzReply(ctx,'عنوان صفحهٔ مبدأ را بفرست', Markup.inlineKeyboard([[Markup.button.callback('❌ لغو','wz:cancel')]]));
 });
-
 bot.on('text', async (ctx,next)=>{
   if(ctx.chat?.type!=='private'||!isOwner(ctx)) return next();
   const st=wizard.get(ctx.from.id); if(!st) return next();
-  try{
-    if(st.step==='fromPageTitle'){
-      st.fromPageTitle=(ctx.message.text||'').trim();
-      if(!st.fromPageTitle) return safeSend(ctx.from.id,'⛔️ عنوان نمی‌تواند خالی باشد.');
-      st.step='fromPageBody';
-      return safeSend(ctx.from.id,'متن/توضیح صفحهٔ مبدأ را بفرست (اختیاری، خالی هم می‌پذیریم)');
-    }
-    if(st.step==='fromPageBody'){
-      st.fromPageBody=(ctx.message.text||'').trim();
-      const pages=await getPages(st.fromChatId);
-      const order=(pages[pages.length-1]?.order_index||0)+1;
-      const ins={chat_id:st.fromChatId,title:st.fromPageTitle,body:st.fromPageBody,order_index:order,active:true};
-      const {data:pg,error}=await supa.from('pages').insert(ins).select('id').single();
-      if(error||!pg){
-        const hint = (error?.code==='42501') ? ' (RLS/کلید: SUPABASE_SERVICE_ROLE_KEY را در Render ست کن و Policyها را اجرا کن)' : '';
-        await safeSend(ctx.from.id,'❌ خطا در ذخیرهٔ صفحهٔ مبدأ: '+(error?.message||'نامشخص') + hint);
-        st.step='fromPageTitle'; return;
-      }
-      cache.del(`pages:${st.fromChatId}`);
-      st.fromPageId=pg.id; st.step='destChooser';
-      if(st.type==='main'){
-        return safeSend(ctx.from.id,'گروه مقصد را انتخاب کن:', Markup.inlineKeyboard([
-          [Markup.button.callback('📜 از گروه‌های ثبت‌شده','wz:to:list:1')],
-          [Markup.button.callback('❌ لغو','wz:cancel')]
-        ]));
-      }else{
-        return safeSend(ctx.from.id,'صفحهٔ مقصد (در همین گروه) را انتخاب کن:', Markup.inlineKeyboard([
-          [Markup.button.callback('📄 از صفحات موجود','wz:to:page:list:1')],
-          [Markup.button.callback('➕ ساخت صفحهٔ جدید','wz:to:page:new')],
-          [Markup.button.callback('❌ لغو','wz:cancel')]
-        ]));
-      }
-    }
-    if(st.step==='toPageTitle'){
-      st.toPageTitle=(ctx.message.text||'').trim();
-      if(!st.toPageTitle) return safeSend(ctx.from.id,'⛔️ عنوان نمی‌تواند خالی باشد.');
-      st.step='toPageBody';
-      return safeSend(ctx.from.id,'متن/توضیح صفحهٔ مقصد را بفرست (اختیاری)');
-    }
-    if(st.step==='toPageBody'){
-      st.toPageBody=(ctx.message.text||'').trim();
-      const tgtChat = st.type==='main' ? st.toChatId : st.fromChatId;
-      const pages=await getPages(tgtChat);
-      const order=(pages[pages.length-1]?.order_index||0)+1;
-      const ins={chat_id:tgtChat,title:st.toPageTitle,body:st.toPageBody,order_index:order,active:true};
-      const {data:pg,error}=await supa.from('pages').insert(ins).select('id').single();
-      if(error||!pg){
-        const hint = (error?.code==='42501') ? ' (RLS/کلید: SUPABASE_SERVICE_ROLE_KEY را در Render ست کن و Policyها را اجرا کن)' : '';
-        await safeSend(ctx.from.id,'❌ خطا در ذخیرهٔ صفحهٔ مقصد: '+(error?.message||'نامشخص') + hint);
-        st.step='toPageTitle'; return;
-      }
-      cache.del(`pages:${tgtChat}`);
-      st.toPageId=pg.id; st.step='gateProps';
-      return safeSend(ctx.from.id,'لیبل دکمهٔ مسیر را بفرست (مثلاً «ورود به زیرزمین»).');
-    }
-    if(st.step==='gateProps'){
-      st.gateLabel=(ctx.message.text||'').trim();
-      if(!st.gateLabel) return safeSend(ctx.from.id,'⛔️ لیبل نمی‌تواند خالی باشد.');
-      st.step='gateTime';
-      return safeSend(ctx.from.id,'⏱ زمان مسیر (ثانیه) را بفرست. (مثلاً 300)');
-    }
-    if(st.step==='gateTime'){
-      const t=parseInt((ctx.message.text||'').trim(),10);
-      if(!Number.isFinite(t)||t<=0) return safeSend(ctx.from.id,'⛔️ عدد معتبر بفرست (ثانیه).');
-      st.gateTime=t; st.step='confirm';
-      const desc=`بررسی نهایی:\nنوع: ${st.type}\nfrom: ${st.fromChatId} / page=${st.fromPageId}\n`+(st.type==='main'?`to: ${st.toChatId} / page=${st.toPageId}\n`:`to: ${st.fromChatId} / page=${st.toPageId}\n`)+`label: ${st.gateLabel}\ntime: ${t}s`;
-      return safeSend(ctx.from.id,desc,Markup.inlineKeyboard([[Markup.button.callback('✅ ایجاد','wz:confirm')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
-    }
-  }catch(e){
-    await safeSend(ctx.from.id,'❌ خطای غیرمنتظره در ویزارد: '+(e.message||e));
-  }
-  return next();
-});
 
-bot.action(/^wz:to:list:(\d+)$/i, async (ctx)=>{
-  if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
-  const p=parseInt(ctx.match[1],10)||1; const {items,page,pagesCount}=await listRegistered(p,8);
-  const rows=items.map(it=>[Markup.button.callback(`${it.title||it.chat_id}`,`wz:to:set:${it.chat_id}`)]);
-  rows.push([Markup.button.callback('◀️',`wz:to:list:${Math.max(1,page-1)}`),Markup.button.callback(`${page}/${pagesCount}`,'wz:nop'),Markup.button.callback('▶️',`wz:to:list:${Math.min(pagesCount,page+1)}`)]);
-  rows.push([Markup.button.callback('❌ لغو','wz:cancel')]);
-  await wzReply(ctx,'گروه مقصد را انتخاب کن:',Markup.inlineKeyboard(rows,{columns:1}));
-});
-bot.action(/^wz:to:set:(-?\d{6,20})$/i, async (ctx)=>{
-  if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
-  const st=stOf(ctx.from.id); st.toChatId=ctx.match[1]; st.step='toPage';
-  await wzReply(ctx,`مقصد: ${st.toChatId}\nصفحهٔ مقصد را انتخاب کن:`, Markup.inlineKeyboard([
-    [Markup.button.callback('📄 از صفحات موجود','wz:to:page:list:1')],
-    [Markup.button.callback('➕ ساخت صفحهٔ جدید','wz:to:page:new')],
-    [Markup.button.callback('❌ لغو','wz:cancel')]
-  ]));
-});
-bot.action(/^wz:to:page:list:(\d+)$/i, async (ctx)=>{
-  if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
-  const st=stOf(ctx.from.id);
-  const tgtChat = st.type==='main' ? st.toChatId : st.fromChatId;
-  const p=parseInt(ctx.match[1],10)||1;
-  const {items,page,pagesCount}=await listPages(tgtChat,p,8);
-  const rows=items.map(it=>[Markup.button.callback(`${it.title}`,`wz:to:page:set:${it.id}`)]);
-  rows.push([Markup.button.callback('◀️',`wz:to:page:list:${Math.max(1,page-1)}`),Markup.button.callback(`${page}/${pagesCount}`,'wz:nop'),Markup.button.callback('▶️',`wz:to:page:list:${Math.min(pagesCount,page+1)}`)]);
-  rows.push([Markup.button.callback('➕ ساخت صفحهٔ جدید','wz:to:page:new')],[Markup.button.callback('❌ لغو','wz:cancel')]);
-  await wzReply(ctx,'صفحهٔ مقصد را انتخاب کن:', Markup.inlineKeyboard(rows,{columns:1}));
-});
-bot.action('wz:to:page:new', async (ctx)=>{
-  if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
-  const st=stOf(ctx.from.id); st.step='toPageTitle';
-  await wzReply(ctx,'عنوان صفحهٔ مقصد را بفرست', Markup.inlineKeyboard([[Markup.button.callback('❌ لغو','wz:cancel')]]));
-});
-bot.action(/^wz:from:page:set:(.+)$/i, async (ctx)=>{
-  if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
-  const st=stOf(ctx.from.id); st.fromPageId=ctx.match[1]; st.step='destChooser';
-  if(st.type==='main'){
-    return wzReply(ctx,'گروه مقصد را انتخاب کن:', Markup.inlineKeyboard([[Markup.button.callback('📜 از گروه‌های ثبت‌شده','wz:to:list:1')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
-  }else{
-    return wzReply(ctx,'صفحهٔ مقصد (در همین گروه) را انتخاب کن:', Markup.inlineKeyboard([[Markup.button.callback('📄 از صفحات موجود','wz:to:page:list:1')],[Markup.button.callback('➕ ساخت صفحهٔ جدید','wz:to:page:new')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
+  if(st.step==='fromPageTitle'){ st.fromPageTitle=(ctx.message.text||'').trim(); if(!st.fromPageTitle) return safeSend(ctx.from.id,'⛔️ عنوان خالی است'); st.step='fromPageBody'; return safeSend(ctx.from.id,'متن/توضیح صفحهٔ مبدأ را بفرست (اختیاری)'); }
+  if(st.step==='fromPageBody'){
+    st.fromPageBody=(ctx.message.text||'').trim();
+    const pages=await getPages(st.fromChatId);
+    const order=(pages[pages.length-1]?.order_index||0)+1;
+    const ins={chat_id:st.fromChatId,title:st.fromPageTitle,body:st.fromPageBody,order_index:order,active:true};
+    const {data:pg,error}=await supa.from('pages').insert(ins).select('id').single();
+    if(error||!pg){ const hint=(error?.code==='42501')?' (RLS/Service Role)': ''; await safeSend(ctx.from.id,'❌ خطا در ذخیرهٔ صفحهٔ مبدأ: '+(error?.message||'نامشخص')+hint); st.step='fromPageTitle'; return; }
+    cache.del(`pages:${st.fromChatId}`);
+    st.fromPageId=pg.id; st.step='destChooser';
+    if(st.type==='main'){ return safeSend(ctx.from.id,'گروه مقصد را انتخاب کن:', Markup.inlineKeyboard([[Markup.button.callback('📜 از گروه‌های ثبت‌شده','wz:to:list:1')],[Markup.button.callback('❌ لغو','wz:cancel')]])); }
+    else { return safeSend(ctx.from.id,'صفحهٔ مقصد (در همین گروه) را انتخاب کن:', Markup.inlineKeyboard([[Markup.button.callback('📄 از صفحات موجود','wz:to:page:list:1')],[Markup.button.callback('➕ ساخت صفحهٔ جدید','wz:to:page:new')],[Markup.button.callback('❌ لغو','wz:cancel')]])); }
   }
-});
-bot.action(/^wz:to:page:set:(.+)$/i, async (ctx)=>{
-  if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
-  const st=stOf(ctx.from.id); st.toPageId=ctx.match[1]; st.step='gateProps';
-  await wzReply(ctx,'لیبل دکمهٔ مسیر را بفرست',Markup.inlineKeyboard([[Markup.button.callback('❌ لغو','wz:cancel')]]));
+  if(st.step==='toPageTitle'){ st.toPageTitle=(ctx.message.text||'').trim(); if(!st.toPageTitle) return safeSend(ctx.from.id,'⛔️ عنوان خالی است'); st.step='toPageBody'; return safeSend(ctx.from.id,'متن/توضیح صفحهٔ مقصد را بفرست (اختیاری)'); }
+  if(st.step==='toPageBody'){
+    st.toPageBody=(ctx.message.text||'').trim();
+    const tgtChat = st.type==='main' ? st.toChatId : st.fromChatId;
+    const pages=await getPages(tgtChat);
+    const order=(pages[pages.length-1]?.order_index||0)+1;
+    const ins={chat_id:tgtChat,title:st.toPageTitle,body:st.toPageBody,order_index:order,active:true};
+    const {data:pg,error}=await supa.from('pages').insert(ins).select('id').single();
+    if(error||!pg){ const hint=(error?.code==='42501')?' (RLS/Service Role)': ''; await safeSend(ctx.from.id,'❌ خطا در ذخیرهٔ صفحهٔ مقصد: '+(error?.message||'نامشخص')+hint); st.step='toPageTitle'; return; }
+    cache.del(`pages:${tgtChat}`);
+    st.toPageId=pg.id; st.step='gateProps';
+    return safeSend(ctx.from.id,'لیبل دکمهٔ مسیر را بفرست (مثلاً «ورود به زیرزمین»).');
+  }
+  if(st.step==='gateProps'){
+    st.gateLabel=(ctx.message.text||'').trim();
+    if(!st.gateLabel) return safeSend(ctx.from.id,'⛔️ لیبل خالی است');
+    st.step='gateTime';
+    return safeSend(ctx.from.id,'⏱ زمان مسیر (ثانیه) را بفرست. (مثلاً 300)');
+  }
+  if(st.step==='gateTime'){
+    const t=parseInt((ctx.message.text||'').trim(),10);
+    if(!Number.isFinite(t)||t<=0) return safeSend(ctx.from.id,'⛔️ عدد معتبر بفرست (ثانیه).');
+    st.gateTime=t; st.step='confirm';
+    const desc=`بررسی نهایی:\nنوع: ${st.type}\nfrom: ${st.fromChatId} / page=${st.fromPageId}\n`+(st.type==='main'?`to: ${st.toChatId} / page=${st.toPageId}\n`:`to: ${st.fromChatId} / page=${st.toPageId}\n`)+`label: ${st.gateLabel}\ntime: ${t}s`;
+    return safeSend(ctx.from.id,desc,Markup.inlineKeyboard([[Markup.button.callback('✅ ایجاد','wz:confirm')],[Markup.button.callback('❌ لغو','wz:cancel')]]));
+  }
+  if(st.step==='rev:label'){
+    st.revLabel=(ctx.message.text||'').trim();
+    if(!st.revLabel) return safeSend(ctx.from.id,'⛔️ لیبل برگشت خالی است');
+    st.step='rev:time';
+    return safeSend(ctx.from.id,'⏱ زمان مسیر برگشت (ثانیه) را بفرست');
+  }
+  if(st.step==='rev:time'){
+    const t=parseInt((ctx.message.text||'').trim(),10);
+    if(!Number.isFinite(t)||t<=0) return safeSend(ctx.from.id,'⛔️ عدد معتبر بفرست (ثانیه).');
+    st.revTime=t;
+    // درج مسیر برگشت
+    const fromChat = st.type==='main' ? st.toChatId : st.fromChatId; // برگشتِ مسیر اصلی: مقصد ← مبدأ
+    const toChat   = st.type==='main' ? st.fromChatId : st.fromChatId;
+    const gate = {
+      type: st.type,
+      from_chat_id: fromChat, from_page_id: st.toPageId,
+      to_chat_id: toChat, to_page_id: st.fromPageId,
+      label: st.revLabel, emoji:'🧭', base_travel_sec: t,
+      active:true, order_index:0, section:null
+    };
+    await supa.from('gates').insert(gate);
+    if(st.type==='main'){ cache.del(`gates:from:${st.toPageId}`); cache.del(`gates:from:${st.fromPageId}`); }
+    else { cache.del(`gates:from:${st.fromPageId}`); }
+    st.step=0;
+    return safeSend(ctx.from.id,'✅ مسیر برگشت هم ساخته شد');
+  }
+
+  return next();
 });
 bot.action('wz:confirm', async (ctx)=>{
   if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
@@ -588,20 +621,30 @@ bot.action('wz:confirm', async (ctx)=>{
   };
   try{
     const {error}=await supa.from('gates').insert(gate);
-    if(error){
-      const hint = (error?.code==='42501') ? ' (RLS: SUPABASE_SERVICE_ROLE_KEY و Policyها)' : '';
-      throw new Error((error.message||'DB error') + hint);
-    }
+    if(error){ const hint=(error?.code==='42501')?' (RLS/Service Role)': ''; throw new Error((error.message||'DB error')+hint); }
     cache.del(`gates:from:${st.fromPageId}`);
     if(st.type==='main') cache.del(`gates:from:${st.toPageId}`);
-    wizard.delete(uid);
-    await wzReply(ctx,'✅ مسیر ساخته شد');
+    // پیشنهاد ساخت برگشت
+    st.step='rev:ask';
+    await wzReply(ctx,'مسیر برگشت هم ساخته بشه؟', Markup.inlineKeyboard([
+      [Markup.button.callback('✅ بله','wz:rev:yes'), Markup.button.callback('❌ نه','wz:rev:no')]
+    ]));
   }catch(e){
     await wzReply(ctx,'❌ خطا در ایجاد مسیر: '+(e.message||e));
   }
 });
+bot.action('wz:rev:yes', async (ctx)=>{
+  if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
+  const st=stOf(ctx.from.id); st.step='rev:label';
+  await wzReply(ctx,'🏷️ لیبل مسیر برگشت را بفرست', Markup.inlineKeyboard([[Markup.button.callback('❌ لغو','wz:cancel')]]));
+});
+bot.action('wz:rev:no', async (ctx)=>{
+  if(ctx.chat?.type!=='private'||!isOwner(ctx)) return;
+  wizard.delete(ctx.from.id);
+  await wzReply(ctx,'✅ مسیر ساخته شد');
+});
 
-// ====== PV nav & ETA ======
+// ---------- PV nav & ETA ----------
 bot.action(/^pnav:(-?\d{6,20}):(.+)$/i, async (ctx)=>{
   if(ctx.chat?.type!=='private') { try{ await ctx.answerCbQuery(); }catch{} return; }
   const chatId=ctx.match[1]; const pageId=ctx.match[2];
@@ -614,7 +657,7 @@ bot.action('pnav:nop', async (ctx)=>{ try{ await ctx.answerCbQuery(); }catch{} }
 
 bot.action('pmenu:eta', async (ctx)=>{
   const uid=ctx.from.id;
-  const {data:mv}=await supa.from('movements').select('arrive_at,state').eq('user_id',uid).eq('state','scheduled').order('departed_at',{ascending:false}).limit(1);
+  const {data:mv}=await supa.from('movements').select('move_id,arrive_at,departed_at,state').eq('user_id',uid).eq('state','scheduled').order('departed_at',{ascending:false}).limit(1);
   const m=mv&&mv[0]; if(!m) return ctx.answerCbQuery('حرکتی در جریان نیست').catch(()=>{});
   const d=new Date(m.arrive_at).getTime()-Date.now();
   if(d<=0){
@@ -624,9 +667,9 @@ bot.action('pmenu:eta', async (ctx)=>{
   return ctx.answerCbQuery(`زمان باقی‌مانده: ${humanize(Math.round(d/1000))}`).catch(()=>{});
 });
 
-// ====== Gate Click (main/sub) ======
+// ---------- Gate Click (main/sub) + Cancel ----------
 bot.action(/^gate:(.+):(main|sub):(\d+)$/i, async (ctx)=>{
-  const gateId=ctx.match[1]; const gtype=ctx.match[2]; const etaSec=parseInt(ctx.match[3],10);
+  const gateId=ctx.match[1]; const gtype=ctx.match[2]; const baseEta=parseInt(ctx.match[3],10);
   const uid=ctx.from.id;
 
   if(inFlightUser.get(uid)) { try{ await ctx.answerCbQuery('در حال پردازش…'); }catch{} return; }
@@ -638,16 +681,24 @@ bot.action(/^gate:(.+):(main|sub):(\d+)$/i, async (ctx)=>{
   const check = await canStartMove(`${g.from_chat_id}`);
   if(!check.ok){ try{ await ctx.answerCbQuery(check.why); }catch{} return; }
 
-  if(await hasActiveMove(uid)){ try{ await ctx.answerCbQuery('⏳ در حال حرکت هستی.'); }catch{} return; }
-
-  const player=await getPlayer(uid);
-  if(!player || `${player.current_chat_id}`!==`${g.from_chat_id}` || player.current_page_id!==g.from_page_id){
-    try{ await ctx.answerCbQuery('❌ برای این مسیر در صفحهٔ درستی نیستی. #ورود بزن.'); }catch{} return;
+  // اگر حرکت فعال داری، اجازه نمی‌دهیم مسیر جدید شروع شود—مگر اینکه لغو کند.
+  const active = await hasActiveMove(uid);
+  if(active){
+    try { await ctx.answerCbQuery('⏳ در حال حرکت هستی. ابتدا «لغو حرکت» را بزن.'); } catch {}
+    return;
   }
+
+  // اعتبار ذخیره‌شده (به خاطر لغو قبلی) برای کم‌کردن ETA
+  const player = await getPlayer(uid);
+  const credit = Math.max(0, parseInt(player?.pending_credit_sec||0,10) || 0);
+  const etaSec = Math.max(10, baseEta - credit);
 
   const depart = nowIso();
   const arrive = new Date(Date.now()+etaSec*1000).toISOString();
   const moveId = newMoveId(uid, gateId);
+
+  // مصرف اعتبار
+  if(credit>0){ await supa.from('players').update({ pending_credit_sec: 0 }).eq('user_id', uid); }
 
   if(gtype==='sub'){
     await supa.from('players').upsert({ user_id:uid, current_chat_id:`${g.to_chat_id}`, current_page_id:g.from_page_id, status:'quarantined', updated_at:depart },{onConflict:'user_id'});
@@ -657,17 +708,22 @@ bot.action(/^gate:(.+):(main|sub):(\d+)$/i, async (ctx)=>{
       gate_id:gateId, departed_at:depart, arrive_at:arrive, state:'scheduled',
       invite_link:null, ticket_expires_at:null
     });
-    // (23) اگر ETA ≤ 60d
     scheduleSubArrival({ move_id: moveId, arrive_at: arrive });
-    try{ await ctx.answerCbQuery(`حرکت شروع شد؛ ${humanize(etaSec)} تا رسیدن`); }catch{}
+
+    try{
+      await ctx.answerCbQuery('حرکتت ثبت شد');
+      await safeSend(uid,
+        `شما درحال حرکت هستی…\n\nمسیر شما به سمت «${(await getPageById(g.to_page_id))?.title||'مقصد'}» است.\nمدت مسیر: ${humanize(etaSec)}`,
+        Markup.inlineKeyboard([[Markup.button.callback('❌ لغو حرکت', `cancel:${moveId}:${g.from_chat_id}`)]])
+      );
+    }catch{}
     return;
   }
 
-  // main (بین گروهی) با Link Pool
+  // main — Link Pool
   let pooledLink;
-  try {
-    pooledLink = await getPooledJoinRequestLink(g.to_chat_id);
-  } catch (e) {
+  try { pooledLink = await getPooledJoinRequestLink(g.to_chat_id); }
+  catch (e) {
     console.log('[invitePool] failed:', e?.description || e?.message || e);
     try { await ctx.answerCbQuery('🚫 ایجاد لینک ممکن نشد (ادمین/Join Request؟)'); } catch {}
     return;
@@ -685,15 +741,41 @@ bot.action(/^gate:(.+):(main|sub):(\d+)$/i, async (ctx)=>{
   });
 
   kickOthers(`${g.to_chat_id}`,uid).catch(()=>{});
+
+  const destPage = await getPageById(g.to_page_id);
   await bot.telegram.sendMessage(
     uid,
-    '🎟️ بلیت مقصد آماده شد.\n\nپس از رسیدنِ تایمر، درخواست عضویتت خودکار تأیید می‌شود:',
-    Markup.inlineKeyboard([[ Markup.button.url('ورود به مقصد', pooledLink.invite_link) ]])
+    `شما درحال حرکت هستی…\n\nمسیر شما به سمت «${destPage?.title||'مقصد'}» است.\nمدت مسیر: ${humanize(etaSec)}\n\nبرای ورود، پس از رسیدن تایمر روی دکمه بزن:`,
+    Markup.inlineKeyboard([
+      [ Markup.button.url('ورود به مقصد', pooledLink.invite_link) ],
+      [ Markup.button.callback('❌ لغو حرکت', `cancel:${moveId}:${g.from_chat_id}`) ]
+    ])
   );
-  try { await ctx.answerCbQuery('لینک در PV ارسال شد'); } catch {}
+  try { await ctx.answerCbQuery('بلیت در PV ارسال شد'); } catch {}
 });
 
-// ====== Join Request (ضدتقلب بر اساس زمان رسیدن، نه لینکی) ======
+// لغو حرکت: ذخیره اعتبار (elapsed) و تغییر وضعیت به cancelled
+bot.action(/^cancel:(.+):(-?\d{6,20})$/i, async (ctx)=>{
+  const moveId = ctx.match[1]; const fromChatId = ctx.match[2];
+  const uid = ctx.from.id;
+
+  // فقط حرکتِ خود کاربر و scheduled
+  const { data, error } = await supa.from('movements')
+    .select('move_id,user_id,departed_at,state,from_chat_id')
+    .eq('move_id', moveId).eq('user_id', uid).eq('state','scheduled').maybeSingle();
+  if(error || !data){ try{ await ctx.answerCbQuery('حرکتی برای لغو نیست'); }catch{} return; }
+
+  const departedAt = new Date(data.departed_at).getTime();
+  const elapsedSec = Math.max(0, Math.round((Date.now() - departedAt)/1000));
+
+  await supa.from('movements').update({ state:'cancelled' }).eq('move_id', moveId);
+  await supa.from('players').upsert({ user_id: uid, pending_credit_sec: elapsedSec, updated_at: nowIso(), current_chat_id: `${fromChatId}` }, { onConflict:'user_id' });
+
+  try { await ctx.answerCbQuery('حرکت لغو شد'); } catch {}
+  try { await safeSend(uid, `✋ حرکت لغو شد. اعتبار مسیر ذخیره شد: ${humanize(elapsedSec)}\nحرکت بعدی به همین میزان کوتاه‌تر خواهد بود.`); } catch {}
+});
+
+// ---------- Join Request ----------
 bot.on('chat_join_request', async (ctx)=>{
   try{
     const req=ctx.update.chat_join_request; const userId=req.from.id; const chatId=`${req.chat.id}`;
@@ -709,10 +791,11 @@ bot.on('chat_join_request', async (ctx)=>{
       .limit(1);
     const mv=data&&data[0]; if(!mv){ await ctx.declineChatJoinRequest(userId); return; }
 
-    const nowOk = new Date(mv.arrive_at) <= new Date();
-    if(nowOk){
+    if (new Date(mv.arrive_at) <= new Date()) {
+      // رفع احتمال soft-ban
+      try { await bot.telegram.unbanChatMember(chatId, userId); } catch {}
       await ctx.approveChatJoinRequest(userId);
-      queueArrivalEvt({ move_id: mv.move_id }); // به صف batch
+      queueArrivalEvt({ move_id: mv.move_id }); // بعد از تایید
     } else {
       await ctx.declineChatJoinRequest(userId);
       const wait = Math.max(1, Math.round((new Date(mv.arrive_at).getTime()-Date.now())/1000));
@@ -723,8 +806,7 @@ bot.on('chat_join_request', async (ctx)=>{
   }
 });
 
-// ====== Fallback: ورود با لینک عادی (اگر جایی مجبور شدی) ======
-// برای لینک‌های غیر join_request، لحظه‌ی عضوشدن واقعی را می‌گیریم و finalize می‌کنیم.
+// ---------- Fallback: new_chat_members ----------
 bot.on('new_chat_members', async (ctx) => {
   try {
     const chatId = `${ctx.chat.id}`;
@@ -755,14 +837,12 @@ bot.on('new_chat_members', async (ctx) => {
       } else {
         const wait = Math.max(1, Math.round((new Date(mv.arrive_at).getTime() - Date.now())/1000));
         try { await bot.telegram.sendMessage(uid, `⏳ هنوز زود است؛ ${humanize(wait)} دیگر تلاش کن.`); } catch {}
-        // می‌تونی softKick هم بزنی اگر نمی‌خوای زودتر بمونه
-        // await softKick(chatId, uid).catch(()=>{});
       }
     }
   } catch (e) {}
 });
 
-// ====== Only owner can add bot ======
+// ---------- Only owner can add bot ----------
 bot.on('my_chat_member', async (ctx)=>{
   try{
     const ns=ctx.update.my_chat_member?.new_chat_member?.status;
@@ -777,7 +857,7 @@ bot.on('my_chat_member', async (ctx)=>{
   }catch{}
 });
 
-// ====== Keepalive & Webhook ======
+// ---------- Keepalive & Webhook ----------
 function startPing(){ if(!RENDER_URL) return; const url=RENDER_URL; setInterval(()=>axios.head(`${url}/ping`).catch(()=>{}), 13*60*1000+59*1000); }
 app.get('/ping',(_req,res)=>res.status(200).json({ok:true}));
 app.use(bot.webhookCallback('/webhook'));
