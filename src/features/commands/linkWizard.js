@@ -51,22 +51,12 @@ function pageButtons(pages) {
   return Markup.inlineKeyboard(rows, { columns: 1 });
 }
 
-async function hintSendChat(ctx){
-  return ctx.reply(
-    'گام ۱) مشخص کن «از کدام گروه» می‌خواهی مسیر بسازی:\n' +
-    '• یک پیام از آن گروه را به اینجا *فوروارد* کن\n' +
-    'یا\n' +
-    '• آیدی عددی گروه را ارسال کن (مثل -1001234567890)',
-    { parse_mode:'Markdown', ...kbCancel() }
-  );
-}
-
 function extractChatIdFromMessage(msg){
   const fwd = msg.forward_from_chat;
   if (fwd && (fwd.type === 'group' || fwd.type === 'supergroup')) return `${fwd.id}`;
   const sc = msg.sender_chat;
   if (sc && (sc.type === 'group' || sc.type === 'supergroup')) return `${sc.id}`;
-  if (msg.text && /-?\d{6,20}/.test(msg.text.trim())) return msg.text.trim();
+  if (msg.text && /-?\d{6,20}/.test((msg.text||'').trim())) return (msg.text||'').trim();
   return null;
 }
 
@@ -112,7 +102,7 @@ async function summary(ctx, st){
     '✅ مرور نهایی:',
     `• نوع: ${st.type==='main'?'مسیر اصلی':'مسیر فرعی'}`,
     `• مبدا: ${st.from_chat_id} | صفحه: ${st.from_page_id}`,
-    `• مقصد: ${st.to_chat_id} | صفحه: ${st.to_page_id}`,
+    `• مقصد: ${st.type==='sub' ? st.from_chat_id : st.to_chat_id} | صفحه: ${st.to_page_id}`,
     `• برچسب: ${st.label}`,
     `• ایموجی: ${st.emoji||'-'}`,
     `• زمان: ${st.base_travel_sec} ثانیه`
@@ -127,16 +117,13 @@ async function summary(ctx, st){
 
 function register(bot, config){
 
-  // ✅ رفتار تازه: اگر در «گروه» بزنیم، پیام سریع پاک و ویزارد در PV شروع می‌شود
+  // گروه → حذف پیام و شروع PV (بدون پیام راهنما مگر DM شکست بخورد)
   bot.command('link_wizard', async (ctx)=>{
-    // اگر در گروه است:
     if (ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup') {
       if (!onlyOwner(config, ctx)) return;
-      // پیام دستور را پاک کن
       try { await ctx.deleteMessage(); } catch {}
       const uid = ctx.from.id;
       const fromChatId = `${ctx.chat.id}`;
-      // شروع ویزارد در PV با پیش‌فرض گرفتن همین گروه به عنوان مبدا
       clearState(uid);
       setState(uid, { stage: 'from_page', from_chat_id: fromChatId });
       const title = ctx.chat.title || fromChatId;
@@ -144,26 +131,30 @@ function register(bot, config){
         await ctx.telegram.sendMessage(uid, `✨ ویزارد ساخت مسیر برای گروه «${title}» شروع شد.\n\nگام ۲) کدام «صفحه مبدا»؟`);
         await askFromPage({ ...ctx, from: { id: uid } }, fromChatId);
       } catch (e) {
-        // اگر نتوانست پیام PV بفرستد، در گروه یک راهنما بده و پاکش کن
+        // فقط اگر پی‌وی بسته است، پیام کوتاه راهنما بده
         const me = ctx.botInfo?.username;
-        const url = me ? `https://t.me/${me}` : undefined;
-        let extra = {};
-        if (url) extra = Markup.inlineKeyboard([[Markup.button.url('📥 باز کردن پی‌وی ربات', url)]]);
-        const m = await ctx.reply('برای شروع ویزارد، لطفاً یک‌بار به پی‌وی من برو و /start بزن.', extra);
+        if (!me) return;
+        const url = `https://t.me/${me}`;
+        const m = await ctx.reply('برای شروع ویزارد، یک‌بار به پی‌وی من برو و /start بزن.', Markup.inlineKeyboard([[Markup.button.url('📥 باز کردن پی‌وی ربات', url)]]));
         setTimeout(() => { ctx.deleteMessage(m.message_id).catch(()=>{}); }, 8000);
       }
       return;
     }
 
-    // اگر در PV است:
-    if (!onlyOwnerPV(config, ctx)) return;
+    // PV
+    if (!onlyOwnerPV(config,ctx)) return;
     clearState(ctx.from.id);
     setState(ctx.from.id, { stage: 'from_chat' });
     await ctx.reply('✨ ویزارد ساخت مسیر شروع شد.');
-    await hintSendChat(ctx);
+    await ctx.reply(
+      'گام ۱) مشخص کن «از کدام گروه» می‌خواهی مسیر بسازی:\n' +
+      '• یک پیام از آن گروه را به اینجا *فوروارد* کن\n' +
+      'یا\n' +
+      '• آیدی عددی گروه را ارسال کن (مثل -1001234567890)',
+      { parse_mode:'Markdown', ...kbCancel() }
+    );
   });
 
-  // کال‌بک‌ها
   bot.action(/^lw:cancel$/i, async (ctx)=>{
     clearState(ctx.from.id);
     try{ await ctx.answerCbQuery('لغو شد'); }catch{}
@@ -222,14 +213,13 @@ function register(bot, config){
       } else {
         await ctx.reply('✅ مسیر ذخیره شد');
       }
-    } catch (e){
+    } catch {
       await ctx.reply('❌ خطا در ذخیره');
     }
     clearState(ctx.from.id);
     try{ await ctx.answerCbQuery('ذخیره شد'); }catch{}
   });
 
-  // پیام‌های آزاد در PV برای ادامه ویزارد
   bot.on('message', async (ctx, next)=>{
     if(ctx.chat?.type!=='private') return next();
     const s = state(ctx.from.id);
@@ -293,9 +283,7 @@ function register(bot, config){
       const durTxt = (ctx.message.text||'').trim();
       const sec = parseDur(durTxt);
       if(!sec || sec<10) return ctx.reply('زمان نامعتبر. مثال: 5m یا 120s. حداقل 10s');
-      if(s.type==='sub'){
-        setState(ctx.from.id, { to_chat_id: s.from_chat_id });
-      }
+      if(s.type==='sub'){ setState(ctx.from.id, { to_chat_id: s.from_chat_id }); }
       setState(ctx.from.id, { base_travel_sec: sec, stage:'confirm' });
       return summary(ctx, state(ctx.from.id));
     }
