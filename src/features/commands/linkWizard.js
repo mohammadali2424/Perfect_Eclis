@@ -18,10 +18,15 @@ function onlyOwnerPV(config, ctx) {
   }
   return true;
 }
-
-function state(uid) {
-  return wiz.get(`w:${uid}`) || null;
+function onlyOwner(config, ctx) {
+  if (ctx.from?.id !== config.ownerId) {
+    try { ctx.reply('به غیر از ارباب کسی نمیتونه به ما دستور بده', { reply_to_message_id: ctx.message?.message_id }); } catch {}
+    return false;
+  }
+  return true;
 }
+
+function state(uid) { return wiz.get(`w:${uid}`) || null; }
 function setState(uid, patch) {
   const s = { ...(wiz.get(`w:${uid}`) || {}), ...patch };
   wiz.set(`w:${uid}`, s);
@@ -48,9 +53,9 @@ function pageButtons(pages) {
 
 async function hintSendChat(ctx){
   return ctx.reply(
-    'گام ۱) مشخص کن «از کدام گروه» می‌خواهی مسیر بسازی:\n'+
-    '• یک پیام از آن گروه را به اینجا *فوروارد* کن\n'+
-    'یا\n'+
+    'گام ۱) مشخص کن «از کدام گروه» می‌خواهی مسیر بسازی:\n' +
+    '• یک پیام از آن گروه را به اینجا *فوروارد* کن\n' +
+    'یا\n' +
     '• آیدی عددی گروه را ارسال کن (مثل -1001234567890)',
     { parse_mode:'Markdown', ...kbCancel() }
   );
@@ -58,16 +63,10 @@ async function hintSendChat(ctx){
 
 function extractChatIdFromMessage(msg){
   const fwd = msg.forward_from_chat;
-  if (fwd && (fwd.type === 'group' || fwd.type === 'supergroup')) {
-    return `${fwd.id}`;
-  }
+  if (fwd && (fwd.type === 'group' || fwd.type === 'supergroup')) return `${fwd.id}`;
   const sc = msg.sender_chat;
-  if (sc && (sc.type === 'group' || sc.type === 'supergroup')) {
-    return `${sc.id}`;
-  }
-  if (msg.text && /-?\d{6,20}/.test(msg.text.trim())) {
-    return msg.text.trim();
-  }
+  if (sc && (sc.type === 'group' || sc.type === 'supergroup')) return `${sc.id}`;
+  if (msg.text && /-?\d{6,20}/.test(msg.text.trim())) return msg.text.trim();
   return null;
 }
 
@@ -76,32 +75,26 @@ async function askFromPage(ctx, from_chat_id){
   await ctx.reply(`گام ۲) کدام «صفحه مبدا»؟`, pageButtons(pages));
   setState(ctx.from.id, { stage: 'from_page' });
 }
-
 async function askType(ctx){
   await ctx.reply('گام ۳) نوع مسیر را انتخاب کن:', kbTypes());
   setState(ctx.from.id, { stage: 'type' });
 }
-
 async function askToChat(ctx, type, from_chat_id){
-  if (type === 'sub') {
-    return askToPage(ctx, from_chat_id, true);
-  }
+  if (type === 'sub') return askToPage(ctx, from_chat_id, true);
   await ctx.reply(
-    'گام ۴) گروه مقصد:\n'+
-    '• یک پیام از گروه مقصد را فوروارد کن\n'+
+    'گام ۴) گروه مقصد:\n' +
+    '• یک پیام از گروه مقصد را فوروارد کن\n' +
     'یا آیدی عددی مقصد را بفرست.',
     kbCancel()
   );
   setState(ctx.from.id, { stage: 'to_chat' });
 }
-
 async function askToPage(ctx, chat_id, isSub){
   const pages = await getPages(chat_id);
   const head = isSub ? 'گام ۴) صفحهٔ مقصد (در همین گروه):' : 'گام ۵) صفحهٔ مقصد:';
   await ctx.reply(head, pageButtons(pages));
   setState(ctx.from.id, { stage: 'to_page' });
 }
-
 async function askLabel(ctx){
   await ctx.reply('گام بعدی) متن برچسب مسیر را بفرست (مثلاً «ورود به بازار»):', kbCancel());
   setState(ctx.from.id, { stage: 'label' });
@@ -114,7 +107,6 @@ async function askEta(ctx){
   await ctx.reply('زمان مسیر را بفرست (مثلاً 5m یا 120s). حداقل 10s:', kbCancel());
   setState(ctx.from.id, { stage: 'eta' });
 }
-
 async function summary(ctx, st){
   const lines = [
     '✅ مرور نهایی:',
@@ -135,14 +127,43 @@ async function summary(ctx, st){
 
 function register(bot, config){
 
+  // ✅ رفتار تازه: اگر در «گروه» بزنیم، پیام سریع پاک و ویزارد در PV شروع می‌شود
   bot.command('link_wizard', async (ctx)=>{
-    if(!onlyOwnerPV(config,ctx)) return;
+    // اگر در گروه است:
+    if (ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup') {
+      if (!onlyOwner(config, ctx)) return;
+      // پیام دستور را پاک کن
+      try { await ctx.deleteMessage(); } catch {}
+      const uid = ctx.from.id;
+      const fromChatId = `${ctx.chat.id}`;
+      // شروع ویزارد در PV با پیش‌فرض گرفتن همین گروه به عنوان مبدا
+      clearState(uid);
+      setState(uid, { stage: 'from_page', from_chat_id: fromChatId });
+      const title = ctx.chat.title || fromChatId;
+      try {
+        await ctx.telegram.sendMessage(uid, `✨ ویزارد ساخت مسیر برای گروه «${title}» شروع شد.\n\nگام ۲) کدام «صفحه مبدا»؟`);
+        await askFromPage({ ...ctx, from: { id: uid } }, fromChatId);
+      } catch (e) {
+        // اگر نتوانست پیام PV بفرستد، در گروه یک راهنما بده و پاکش کن
+        const me = ctx.botInfo?.username;
+        const url = me ? `https://t.me/${me}` : undefined;
+        let extra = {};
+        if (url) extra = Markup.inlineKeyboard([[Markup.button.url('📥 باز کردن پی‌وی ربات', url)]]);
+        const m = await ctx.reply('برای شروع ویزارد، لطفاً یک‌بار به پی‌وی من برو و /start بزن.', extra);
+        setTimeout(() => { ctx.deleteMessage(m.message_id).catch(()=>{}); }, 8000);
+      }
+      return;
+    }
+
+    // اگر در PV است:
+    if (!onlyOwnerPV(config, ctx)) return;
     clearState(ctx.from.id);
     setState(ctx.from.id, { stage: 'from_chat' });
     await ctx.reply('✨ ویزارد ساخت مسیر شروع شد.');
     await hintSendChat(ctx);
   });
 
+  // کال‌بک‌ها
   bot.action(/^lw:cancel$/i, async (ctx)=>{
     clearState(ctx.from.id);
     try{ await ctx.answerCbQuery('لغو شد'); }catch{}
@@ -186,7 +207,7 @@ function register(bot, config){
         type: s.type,
         from_chat_id: s.from_chat_id,
         from_page_id: s.from_page_id,
-        to_chat_id: s.to_chat_id,
+        to_chat_id: s.type==='sub' ? s.from_chat_id : s.to_chat_id,
         to_page_id: s.to_page_id,
         label: s.label,
         emoji: s.emoji || null,
@@ -208,6 +229,7 @@ function register(bot, config){
     try{ await ctx.answerCbQuery('ذخیره شد'); }catch{}
   });
 
+  // پیام‌های آزاد در PV برای ادامه ویزارد
   bot.on('message', async (ctx, next)=>{
     if(ctx.chat?.type!=='private') return next();
     const s = state(ctx.from.id);
