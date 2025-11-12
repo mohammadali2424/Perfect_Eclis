@@ -9,13 +9,17 @@ let ME_USERNAME = null;
 
 function hasVorud(text=''){
   const t = String(text||'').replace(/\u200c/g,'').trim();
-  // با یا بدون #
+  // هم با # هم بدون #
   return /^#?\s*ورود(\s|$)/i.test(t);
 }
 
 async function sendPV(bot,userId,chatId){
-  // بازیاب وضعیت و صفحه
-  const { data:player } = await supa.from('players').select('user_id,current_chat_id,current_page_id').eq('user_id',userId).maybeSingle();
+  const { data:player } = await supa
+    .from('players')
+    .select('user_id,current_chat_id,current_page_id')
+    .eq('user_id',userId)
+    .maybeSingle();
+
   let pageId=null;
 
   if(player && `${player.current_chat_id}`===`${chatId}` && player.current_page_id){
@@ -25,23 +29,29 @@ async function sendPV(bot,userId,chatId){
     if(!first) return { ok:false, reason:'no_page' };
     pageId=first.id;
     await supa.from('players').upsert({
-      user_id:userId, current_chat_id:`${chatId}`, current_page_id:pageId,
-      status:'idle', updated_at:new Date().toISOString()
+      user_id:userId,
+      current_chat_id:`${chatId}`,
+      current_page_id:pageId,
+      status:'idle',
+      updated_at:new Date().toISOString()
     }, { onConflict:'user_id' });
   }
 
   const view = await buildPageViewForUser(chatId,pageId);
   if(!view) return { ok:false, reason:'no_page_view' };
 
-  try { await safeSend(bot,userId,view.text,view.kb); return { ok:true }; }
-  catch { return { ok:false, reason:'dm_fail' }; }
+  try {
+    await safeSend(bot,userId,view.text,view.kb);
+    return { ok:true };
+  } catch {
+    return { ok:false, reason:'dm_fail' };
+  }
 }
 
 async function hintIfNeeded(bot,ctx,reason){
   if(!ME_USERNAME) return;
-  if(reason!=='dm_fail') return; // فقط وقتی DM واقعاً شکست خورد
+  if(reason!=='dm_fail') return; // فقط وقتی DM واقعاً شکست بخوره
   const chatId = ctx.chat.id;
-  const userId = ctx.from.id;
   const url=`https://t.me/${ME_USERNAME}?start=start-${chatId}`;
   const extra=Markup.inlineKeyboard([[Markup.button.url('📥 باز کردن پی‌وی ربات',url)]]);
   try{
@@ -68,15 +78,20 @@ function register(bot, me){
 }
 
 async function handleVorud(bot,ctx){
-  const chatId = `${ctx.chat.id}`; const userId = ctx.from.id;
-  const allowed = await isAllowed(chatId); if(!allowed) return;
+  const chatId = `${ctx.chat.id}`;
+  const userId = ctx.from.id;
+  const allowed = await isAllowed(chatId);
+  if(!allowed) return;
+
   const res = await sendPV(bot,userId,chatId);
   if(!res.ok) await hintIfNeeded(bot,ctx,res.reason);
 }
 
 async function handleKhoroj(ctx){
   const u=ctx.message?.from; if(!u||u.is_bot) return;
-  try{ await ctx.reply(`🧭┊سفر به سلامت ${u.first_name||''}`,{ reply_to_message_id: ctx.message.message_id }); }catch{}
+  try{
+    await ctx.reply(`🧭┊سفر به سلامت ${u.first_name||''}`,{ reply_to_message_id: ctx.message.message_id });
+  }catch{}
 }
 
 module.exports = { register };
