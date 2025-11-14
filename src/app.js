@@ -1,32 +1,47 @@
-// src/bot.js
-const { Telegraf } = require('telegraf');
+// src/app.js
+require('dotenv').config();
 
-// این requireها را برحسب پروژه‌ات نگه دار:
-try { global.botFeaturesLoaded = true; } catch (_) {}
+const { buildBot } = require('./bot');
+const { startServer } = require('./web/server');
 
-const triggers = require('./features/triggers');
-const gateActions = require('./features/actions/gateActions');
-const linkWizard = require('./features/commands/linkWizard');
-// اگر builder داری:
-// const builder = require('./features/commands/builder');
-
-function buildBot(config = {}) {
-  const token = config.botToken || process.env.BOT_TOKEN;
-  if (!token) {
-    throw new Error('BOT_TOKEN is missing (config.botToken یا ENV).');
+try {
+  // اگر initSupabase داری، اینجا مقداردهی می‌شود؛ نبود هم مشکلی نیست
+  const maybe = require('./infra/supabase');
+  if (typeof maybe.initSupabase === 'function') {
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    const SUPABASE_KEY =
+      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      console.warn('⚠️ SUPABASE_URL/SUPABASE_* تنظیم نشده.');
+    } else {
+      maybe.initSupabase(SUPABASE_URL, SUPABASE_KEY);
+    }
   }
-
-  const bot = new Telegraf(token, { handlerTimeout: 30_000 });
-  global.bot = bot;
-
-  // ثبت فیچرها — فقط نمونه، آنهایی که در پروژه‌ات هست را نگه دار
-  triggers.register(bot);
-  gateActions.register(bot);
-  linkWizard.register(bot);
-  // اگر builder داری: builder.register(bot);
-
-  // هیچ bot.launch() اینجا وجود ندارد. فقط وبهوک در server.js تنظیم می‌شود.
-  return bot;
+} catch (_) {
+  // فایل initSupabase موجود نبود؛ مشکلی نیست
 }
 
-module.exports = { buildBot };
+async function start() {
+  const config = {
+    botToken: process.env.BOT_TOKEN,
+    publicUrl: (process.env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, ''),
+    port: Number(process.env.PORT || 3000),
+  };
+
+  if (!config.botToken) {
+    console.error('❌ BOT_TOKEN تنظیم نشده.');
+    process.exit(1);
+  }
+
+  // Bot را بساز (بدون launch/polling)
+  const bot = buildBot(config);
+
+  // فقط Webhook (بدون polling)
+  startServer(bot, {
+    publicUrl: config.publicUrl,
+    port: config.port,
+  });
+}
+
+// اکسپورت پیش‌فرض: همین تابع
+module.exports = start;
