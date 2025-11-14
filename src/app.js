@@ -1,43 +1,32 @@
-// src/app.js
-require('dotenv').config();
+// src/bot.js
+const { Telegraf } = require('telegraf');
 
-const { buildBot } = require('./bot');
-const { startServer } = require('./web/server');
+// این requireها را برحسب پروژه‌ات نگه دار:
+try { global.botFeaturesLoaded = true; } catch (_) {}
 
-// اگر Supabase کلاینتت جای دیگری init می‌شود، این بخش را برحسب پروژه‌ات نگه‌دار/تغییر بده
-try {
-  const { initSupabase } = require('./infra/supabase');
-  const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-  if (!SUPABASE_URL || !SUPABASE_KEY) {
-    console.warn('⚠️ SUPABASE_URL / SUPABASE_* تنظیم نشده. اگر جای دیگری init می‌کنی، مشکلی نیست.');
-  } else {
-    initSupabase(SUPABASE_URL, SUPABASE_KEY);
-  }
-} catch (_) {
-  // اگر پروژه‌ات فایل initSupabase ندارد، مشکلی نیست.
-}
+const triggers = require('./features/triggers');
+const gateActions = require('./features/actions/gateActions');
+const linkWizard = require('./features/commands/linkWizard');
+// اگر builder داری:
+// const builder = require('./features/commands/builder');
 
-async function start() {
-  const config = {
-    botToken: process.env.BOT_TOKEN,
-    publicUrl: (process.env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, ''),
-    port: Number(process.env.PORT || 3000),
-  };
-
-  if (!config.botToken) {
-    console.error('❌ BOT_TOKEN تنظیم نشده. آن را در env Render ست کن.');
-    process.exit(1);
+function buildBot(config = {}) {
+  const token = config.botToken || process.env.BOT_TOKEN;
+  if (!token) {
+    throw new Error('BOT_TOKEN is missing (config.botToken یا ENV).');
   }
 
-  // ساخت Bot (بدون launch/polling)
-  const bot = buildBot(config);
+  const bot = new Telegraf(token, { handlerTimeout: 30_000 });
+  global.bot = bot;
 
-  // فقط Webhook (بدون fallback به polling)
-  startServer(bot, {
-    publicUrl: config.publicUrl,
-    port: config.port,
-  });
+  // ثبت فیچرها — فقط نمونه، آنهایی که در پروژه‌ات هست را نگه دار
+  triggers.register(bot);
+  gateActions.register(bot);
+  linkWizard.register(bot);
+  // اگر builder داری: builder.register(bot);
+
+  // هیچ bot.launch() اینجا وجود ندارد. فقط وبهوک در server.js تنظیم می‌شود.
+  return bot;
 }
 
-module.exports = { start };
+module.exports = { buildBot };
