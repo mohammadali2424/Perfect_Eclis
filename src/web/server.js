@@ -2,58 +2,42 @@
 const express = require('express');
 const axios = require('axios');
 
-/**
- * startServer(bot, config)
- *  - config: { port, publicUrl (RENDER_EXTERNAL_URL), dropPendingUpdates=true }
- */
 function startServer(bot, config = {}) {
   const app = express();
   app.use(express.json());
 
-  // health & keepalive
+  // Health
   app.get('/ping', (_req, res) => res.status(200).json({ ok: true }));
 
-  // وبهوک تلگرام
-  app.use(bot.webhookCallback('/webhook'));
-
-  // صفحه‌ی ساده‌ی روت
-  app.get('/', (_req, res) => res.send('<h3>RPG Telegram Bot — OK</h3>'));
+  // فقط وبهوک
+  app.use('/webhook', bot.webhookCallback('/webhook'));
 
   const PORT = Number(config.port || process.env.PORT || 3000);
-  const PUBLIC_URL = config.publicUrl || process.env.RENDER_EXTERNAL_URL || '';
+  const PUBLIC_URL_RAW = config.publicUrl || process.env.RENDER_EXTERNAL_URL || '';
+  const PUBLIC_URL = PUBLIC_URL_RAW.replace(/\/+$/, '');
 
-  function startKeepAlive() {
-    if (!PUBLIC_URL) return;
-    const url = `${PUBLIC_URL.replace(/\/+$/,'')}/ping`;
-    // هر 13:59 دقیقه یکبار
-    setInterval(() => {
-      axios.head(url).catch(() => {});
-    }, 13 * 60 * 1000 + 59 * 1000);
+  if (!PUBLIC_URL) {
+    console.error('❌ برای حالت webhook-only باید RENDER_EXTERNAL_URL تنظیم شود.');
+    process.exit(1);
   }
 
   app.listen(PORT, async () => {
     console.log('🚀 HTTP on', PORT);
-
-    // self-ping برای Render
-    startKeepAlive();
-
     try {
-      // وبهوک یا لانگ‌پول
       await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-      if (PUBLIC_URL) {
-        const url = `${PUBLIC_URL.replace(/\/+$/,'')}/webhook`;
-        await bot.telegram.setWebhook(url);
-        console.log('✅ Webhook:', url);
-      } else {
-        await bot.launch({ allowedUpdates: ['message','callback_query','chat_join_request','my_chat_member','chat_member'] });
-        console.log('✅ Long polling');
-      }
+      const url = `${PUBLIC_URL}/webhook`;
+      await bot.telegram.setWebhook(url);
+      console.log('✅ Webhook:', url);
     } catch (e) {
-      console.log('Startup warn:', e?.message || e);
+      console.error('Webhook error:', e?.message || e);
+      process.exit(1);
     }
+
+    // self-ping برای Render (هر ~14 دقیقه)
+    const pingUrl = `${PUBLIC_URL}/ping`;
+    setInterval(() => { axios.head(pingUrl).catch(() => {}); }, 14 * 60 * 1000);
   });
 
-  // امنیت: خاموش کردن نرمی
   process.once('SIGINT', () => bot.stop('SIGINT'));
   process.once('SIGTERM', () => bot.stop('SIGTERM'));
 }
