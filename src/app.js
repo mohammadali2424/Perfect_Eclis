@@ -1,3 +1,5 @@
+const http = require('http');
+const { URL } = require('url');
 const { buildBot } = require('./bot');
 
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
@@ -10,8 +12,17 @@ if (!OWNER_ID) {
 
 const NODE_ENV = process.env.NODE_ENV || 'production';
 
-// پینگ هر چند دقیقه یک‌بار (پیش‌فرض ۱۴ دقیقه)
-const PING_INTERVAL_MIN = Number(process.env.PING_INTERVAL_MIN || 14);
+// این آدرس باید آدرس سرویس Renderت باشه + یه مسیر مخفی
+// مثلا: https://my-rpg-bot.onrender.com/telegram/secret123
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
+
+if (!WEBHOOK_URL) {
+  throw new Error(
+    'WEBHOOK_URL در env تنظیم نشده. مثلا: https://<service>.onrender.com/telegram/<secret>',
+  );
+}
+
+const PORT = Number(process.env.PORT || 3000);
 
 const config = {
   token: BOT_TOKEN,
@@ -23,35 +34,53 @@ const config = {
   try {
     const bot = await buildBot(config);
 
-    await bot.launch({ dropPendingUpdates: true });
+    // مسیر webhook را از روی URL در می‌آوریم (فقط path)
+    const urlObj = new URL(WEBHOOK_URL);
+    const hookPath = urlObj.pathname || '/';
 
-    const me = await bot.telegram.getMe();
-    console.log(`🤖 Bot launched as @${me.username} (env: ${NODE_ENV})`);
+    console.log('🌐 Webhook URL:', WEBHOOK_URL);
+    console.log('📍 Webhook path:', hookPath);
+    console.log('📡 Listening on port:', PORT);
 
-    // 🔔 پینگ خودکار برای زنده نگه داشتن سرویس (Render)
-    const pingMs = PING_INTERVAL_MIN * 60 * 1000;
-    console.log(`⏱  Auto-ping every ${PING_INTERVAL_MIN} minutes فعال شد.`);
-    setInterval(() => {
-      bot.telegram
-        .getMe()
-        .then(() => {
-          console.log('✅ Ping OK');
-        })
-        .catch((err) => {
-          console.error('⚠️ Ping error:', err.message);
-        });
-    }, pingMs);
+    // هر webhook قدیمی را با URL جدید اووررایت کن
+    await bot.telegram.setWebhook(WEBHOOK_URL, {
+      drop_pending_updates: true,
+      allowed_updates: ['message', 'edited_message', 'callback_query'],
+    });
 
+    // هندلر خود Telegraf برای webhook
+    const callback = bot.webhookCallback(hookPath);
+
+    // سرور HTTP برای Render (باید روی PORT گوش بدهد)
+    const server = http.createServer((req, res) => {
+      if (req.method === 'POST' && req.url === hookPath) {
+        // اینجا updateهای تلگرام می‌آیند
+        return callback(req, res);
+      }
+
+      // برای health check و بقیه‌ی requestها
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.end('OK');
+    });
+
+    server.listen(PORT, () => {
+      console.log(
+        `🚀 Bot is running with webhook on ${WEBHOOK_URL} (env: ${NODE_ENV})`,
+      );
+    });
+
+    // خاموش کردن تمیز
     process.once('SIGINT', () => {
-      console.log('SIGINT received, stopping bot...');
-      bot.stop('SIGINT');
+      console.log('SIGINT received, closing server...');
+      server.close(() => process.exit(0));
     });
     process.once('SIGTERM', () => {
-      console.log('SIGTERM received, stopping bot...');
-      bot.stop('SIGTERM');
+      console.log('SIGTERM received, closing server...');
+      server.close(() => process.exit(0));
     });
   } catch (e) {
-    console.error('Failed to launch bot:', e);
+    console.error('Failed to launch bot (webhook mode):', e);
     process.exit(1);
   }
 })();
