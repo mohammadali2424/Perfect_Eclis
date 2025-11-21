@@ -1,61 +1,42 @@
-const { Markup } = require('telegraf');
-const { supa } = require('../../infra/supabase');
-const { getPages, insertPage } = require('../../domain/repositories/pagesRepo');
+--- a/src/features/commands/linkWizard.js
++++ b/src/features/commands/linkWizard.js
+@@ -1,6 +1,7 @@
+ const { Markup } = require('telegraf');
+ const { supa } = require('../../infra/supabase');
+ const { getPages, insertPage } = require('../../domain/repositories/pagesRepo');
++// ساختار فایل حفظ شده؛ فقط محافظ اضافه شده
 
-const wiz = new Map();
+ const wiz = new Map();
 
-function state(uid) { return wiz.get(`w:${uid}`) || null; }
-function setState(uid, patch) { const s = { ...(state(uid) || {}), ...patch }; wiz.set(`w:${uid}`, s); return s; }
-function clearState(uid) { wiz.delete(`w:${uid}`); }
-
-function ensureOwner(ctx, ownerId){
-  return `${ctx.from?.id}` === `${ownerId}`;
-}
-
-// 👇 تغییر اصلی اینجاست: config اختیاری شد و به ENV برمی‌گردد
-function register(bot, config = {}) {
-  const OWNER_ID = (
-    config.ownerId ??
-    Number(process.env.OWNER_ID || 0)
-  );
-
-  if (!OWNER_ID) {
-    // اگر OWNER_ID تنظیم نشده باشد، فرمان فقط پیام راهنما می‌دهد و کرش نمی‌کند
-    bot.command('linkwizard', async (ctx)=>{
-      return ctx.reply('OWNER_ID تنظیم نشده. متغیر محیطی OWNER_ID یا config.ownerId را مقداردهی کن.');
-    });
-    bot.command('cancel', async (ctx)=> ctx.reply('لغو شد.'));
-    return;
-  }
-
-  bot.command('linkwizard', async (ctx)=>{
-    if (!ensureOwner(ctx, OWNER_ID)) return ctx.reply('فقط مالک.');
-    setState(ctx.from.id, { step: 'ask_chat' });
-    return ctx.reply('شناسهٔ گروه مقصد را بفرست (chat_id). ارسال /cancel برای خروج.');
-  });
-
-  bot.command('cancel', async (ctx)=>{
-    clearState(ctx.from.id);
-    return ctx.reply('لغو شد.');
-  });
-
-  bot.on('text', async (ctx)=>{
-    const s = state(ctx.from.id);
-    if (!s) return;
-
-    if (s.step === 'ask_chat'){
-      const chatId = (ctx.message.text || '').trim();
-      setState(ctx.from.id, { step: 'ask_title', chatId });
-      return ctx.reply('عنوان صفحه؟');
-    }
-
-    if (s.step === 'ask_title'){
-      const title = (ctx.message.text || '').trim();
-      const { id } = await insertPage(s.chatId, title, '');
-      clearState(ctx.from.id);
-      return ctx.reply(`صفحه ساخته شد (ID: ${id}). از پنل دیتابیس، Gate ها را اضافه کن.`);
-    }
-  });
-}
-
-module.exports = { register };
+ function state(uid) { return wiz.get(`w:${uid}`) || null; }
+@@
+-function ensureOwner(ctx, ownerId){
++function ensureOwner(ctx, ownerId){
+   return `${ctx.from?.id}` === `${ownerId}`;
+ }
+ 
+-function register(bot, config){
+-  const OWNER_ID = config.ownerId;
++function register(bot, config = {}){
++  // Fallback به ENV اگر config پاس داده نشده باشد
++  const OWNER_ID = (config && config.ownerId) != null
++    ? config.ownerId
++    : Number(process.env.OWNER_ID || 0);
+ 
++  // اگر ست نشده بود، بات کرش نکند؛ فقط پیام راهنما بده
++  if (!OWNER_ID) {
++    bot.command('linkwizard', async (ctx) => {
++      return ctx.reply('OWNER_ID تنظیم نشده. در ENV یا config.ownerId مقداردهی کن.');
++    });
++    bot.command('cancel', async (ctx) => ctx.reply('لغو شد.'));
++    return;
++  }
++
+   bot.command('linkwizard', async (ctx)=>{
+     if (!ensureOwner(ctx, OWNER_ID)) return ctx.reply('فقط مالک.');
+     setState(ctx.from.id, { step: 'ask_chat' });
+@@
+   });
+ }
+ 
+ module.exports = { register };
