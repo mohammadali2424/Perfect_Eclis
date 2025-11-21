@@ -1,15 +1,18 @@
-const config = {
+require('dotenv').config();
+
+const cfg = {
   botToken: process.env.BOT_TOKEN,
-  ownerId: parseInt(process.env.OWNER_ID || '0', 10),
-  supabaseUrl: process.env.SUPABASE_URL,
-  supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY,
+  ownerId: Number(process.env.OWNER_ID || 0),
   renderUrl: process.env.RENDER_EXTERNAL_URL || '',
-  port: parseInt(process.env.PORT || '3000', 10)
+  port: Number(process.env.PORT || 3000),
 };
 
-if (!config.botToken || !config.ownerId || !config.supabaseUrl || !config.supabaseKey) {
-  console.error('❌ ENV ناقص: BOT_TOKEN, OWNER_ID, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY');
+if (!cfg.botToken) {
+  console.error('Missing BOT_TOKEN');
   process.exit(1);
 }
+if (!cfg.ownerId) {
+  console.warn('OWNER_ID not set; owner-only commands will be limited.');
+}
 
-module.exports = { config };
+module.exports = cfg;
