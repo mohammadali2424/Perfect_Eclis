@@ -1,42 +1,43 @@
-// src/infra/queue.js
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const queue = [];
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+const q = [];
 let pumping = false;
+
 function enqueue(fn) {
   return new Promise((resolve, reject) => {
-    queue.push({ fn, resolve, reject });
+    q.push({ fn, resolve, reject });
     if (!pumping) pump();
   });
 }
+
 async function pump() {
   pumping = true;
-  while (queue.length) {
-    const { fn, resolve, reject } = queue.shift();
+  while (q.length) {
+    const job = q.shift();
     try {
-      const res = await fn();
-      resolve(res);
-    } catch (err) {
-      reject(err);
+      const res = await job.fn();
+      job.resolve(res);
+    } catch (e) {
+      job.reject(e);
     }
     await sleep(80);
   }
   pumping = false;
 }
-async function safeSend(bot, chatId, text, extra = {}) {
+
+async function safeSend(bot, chatId, text, extra = {}, retries = 2) {
   try {
     return await enqueue(() => bot.telegram.sendMessage(chatId, text, extra));
   } catch (e) {
-    const m = String(e.message || e);
-    if ( /bot was blocked by the user|user is deactivated|chat not found|have no rights to send a message/i.test(m) ) {
-      return null;
-    }
-    const retryMatch = m.match(/retry after (\d+)/i);
-    if (retryMatch) {
-      const delaySec = parseInt(retryMatch[1], 10);
-      await sleep((delaySec + 1) * 1000);
-      try { return await bot.telegram.sendMessage(chatId, text, extra); } catch {}
+    const msg = String(e && e.message || e);
+    if (retries > 0 && /429|ETELEGRAM|timeout/i.test(msg)) {
+      const m = /retry after\s*(\d+)/i.exec(msg);
+      const wait = m ? (parseInt(m[1], 10) * 1000) : 1500;
+      try { await sleep(wait); } catch {}
+      return await enqueue(() => bot.telegram.sendMessage(chatId, text, extra));
     }
     throw e;
   }
 }
-module.exports = { safeSend };
+
+module.exports = { safeSend, enqueue };
