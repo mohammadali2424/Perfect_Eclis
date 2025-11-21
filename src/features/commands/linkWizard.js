@@ -12,8 +12,21 @@ function ensureOwner(ctx, ownerId){
   return `${ctx.from?.id}` === `${ownerId}`;
 }
 
-function register(bot, config){
-  const OWNER_ID = config.ownerId;
+// 👇 تغییر اصلی اینجاست: config اختیاری شد و به ENV برمی‌گردد
+function register(bot, config = {}) {
+  const OWNER_ID = (
+    config.ownerId ??
+    Number(process.env.OWNER_ID || 0)
+  );
+
+  if (!OWNER_ID) {
+    // اگر OWNER_ID تنظیم نشده باشد، فرمان فقط پیام راهنما می‌دهد و کرش نمی‌کند
+    bot.command('linkwizard', async (ctx)=>{
+      return ctx.reply('OWNER_ID تنظیم نشده. متغیر محیطی OWNER_ID یا config.ownerId را مقداردهی کن.');
+    });
+    bot.command('cancel', async (ctx)=> ctx.reply('لغو شد.'));
+    return;
+  }
 
   bot.command('linkwizard', async (ctx)=>{
     if (!ensureOwner(ctx, OWNER_ID)) return ctx.reply('فقط مالک.');
