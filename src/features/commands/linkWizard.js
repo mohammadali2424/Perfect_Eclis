@@ -8,10 +8,53 @@ const { insertGate } = require('../../domain/repositories/gatesRepo');
 const wiz = new NodeCache({ stdTTL: 1800, checkperiod: 120, maxKeys: 5000 }); // 30m
 
 function onlyOwnerPV(config, ctx) {
+  // اگر در گروه یا سوپرگروه استفاده شود، پیام را پاک کن و کاربر را به پی‌وی بفرست
   if (ctx.chat?.type !== 'private') {
-    try { ctx.reply('این فرمان فقط در پی‌وی ربات قابل استفاده است.'); } catch {}
+    const chatId = ctx.chat.id;
+    const msgId = ctx.message?.message_id;
+    const userId = ctx.from?.id;
+    const botUsername = ctx.botInfo?.username || ctx.me?.username;
+
+    // ۱) پاک کردن خود پیام /link_wizard در گروه
+    if (msgId) {
+      try { ctx.deleteMessage(msgId); } catch (e) {}
+    }
+
+    // اگر userId موجود بود، تلاش کنیم در پی‌وی پیام بدهیم
+    if (userId && botUsername) {
+      const url = `https://t.me/${botUsername}?start=linkwizard`;
+
+      ctx.telegram.sendMessage(
+        userId,
+        '🔧 ویزارد لینک فقط در پی‌وی ربات قابل استفاده است. از همینجا /link_wizard را بفرست.',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📥 باز کردن پی‌وی ربات', url }]
+            ]
+          }
+        }
+      ).catch(async () => {
+        // اگر نتوانست در پی‌وی پیام بدهد (یعنی کاربر هنوز /start نزده)
+        try {
+          const m = await ctx.reply(
+            'برای استفاده از ویزارد لینک، اول باید پی‌وی ربات را باز کنی و /start بزنی.',
+            Markup.inlineKeyboard([
+              [Markup.button.url('📥 باز کردن پی‌وی ربات', `https://t.me/${botUsername}`)]
+            ])
+          );
+          // پیام راهنما در گروه بعد از چند ثانیه پاک شود تا گروه شلوغ نشود
+          setTimeout(() => {
+            try { ctx.telegram.deleteMessage(chatId, m.message_id); } catch (e) {}
+          }, 8000);
+        } catch (e) {}
+      });
+    }
+
     return false;
   }
+
+  // اینجا یعنی در پی‌وی هستیم → فقط مالک اجازه دارد
   if (ctx.from?.id !== config.ownerId) {
     try { ctx.reply('به غیر از ارباب کسی نمیتونه به ما دستور بده'); } catch {}
     return false;
@@ -32,19 +75,6 @@ function clearState(uid) { wiz.del(`w:${uid}`); }
 function kbCancel() {
   return Markup.inlineKeyboard([[Markup.button.callback('❌ لغو ویزارد','lw:cancel')]]);
 }
-function kbTypes() {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback('🧭 مسیر اصلی (به گروه دیگر)','lw:type:main')],
-    [Markup.button.callback('🧩 مسیر فرعی (در همین گروه)','lw:type:sub')],
-    [Markup.button.callback('❌ لغو','lw:cancel')]
-  ]);
-}
-function pageButtons(pages) {
-  const rows = pages.slice(0, 24).map(p => [Markup.button.callback(`📜 ${p.title}`, `lw:page:${p.id}`)]);
-  rows.push([Markup.button.callback('➕ ساخت صفحه جدید','lw:page:new')]);
-  rows.push([Markup.button.callback('❌ لغو','lw:cancel')]);
-  return Markup.inlineKeyboard(rows, { columns: 1 });
-}
 
 async function hintSendChat(ctx){
   return ctx.reply(
@@ -56,76 +86,152 @@ async function hintSendChat(ctx){
   );
 }
 
-function extractChatIdFromMessage(msg){
-  const fwd = msg.forward_from_chat;
-  if (fwd && (fwd.type === 'group' || fwd.type === 'supergroup')) {
-    return `${fwd.id}`;
+function explainTypes(ctx){
+  return ctx.reply(
+    'گام ۲) نوع مسیر را انتخاب کن:\n\n'+
+    '• main = مسیر اصلی → کاربر را به *گروه دیگر* می‌برد\n'+
+    '• sub = مسیر فرعی → کاربر را در همین گروه، به *صفحه‌ی دیگر* می‌برد\n'+
+    '• micro = مسیر ریز → حالت سبک/داخلی در همان صفحه (بدون جابه‌جایی)\n\n'+
+    'مثال:\n'+
+    '`/lw_gate type=main from_page=1 to_chat=-100222 to_page=1 label=دروازه‌ی شهر emoji=🚪 time=5m`\n\n'+
+    'پیشنهاد: اول با sub شروع کن، منطق صفحه‌ها را بچین، بعد mainها را بساز.',
+    { parse_mode:'Markdown', ...kbCancel() }
+  );
+}
+
+async function listPages(ctx,chatId){
+  const pages=await getPages(chatId);
+  if(!pages.length) return ctx.reply('هیچ صفحه‌ای برای این گروه ثبت نشده. از /lw_page استفاده کن.');
+  const lines=['صفحه‌های این گروه:'];
+  for(const p of pages){
+    lines.push(`• #${p.id} ┊ ${p.title}`);
   }
-  const sc = msg.sender_chat;
-  if (sc && (sc.type === 'group' || sc.type === 'supergroup')) {
-    return `${sc.id}`;
+  return ctx.reply(lines.join('\n'));
+}
+
+async function handlePageCommand(ctx,config,params){
+  if(!onlyOwnerPV(config,ctx)) return;
+
+  const title = params.join(' ').trim();
+  if(!title) return ctx.reply('عنوان صفحه را بعد از /lw_page بنویس.\nمثال:\n`/lw_page میدان شهر`',{parse_mode:'Markdown'});
+
+  const fromChatId = ctx.chat.id; // در پی‌وی، اما صفحه مربوط به آخرین گروه انتخابی از ویزارد است
+  const st = state(ctx.from.id);
+
+  if(!st || !st.from_chat_id){
+    // اگر هنوز گروه مبدا مشخص نشده، اول ویزارد انتخاب گروه را برویم
+    await hintSendChat(ctx);
+    return;
   }
-  if (msg.text && /-?\d{6,20}/.test(msg.text.trim())) {
-    return msg.text.trim();
+
+  const chatId = st.from_chat_id;
+
+  const { id, error } = await insertPage(chatId, title, null);
+  if(error || !id){
+    return ctx.reply('❌ خطا در ساخت صفحه. بعداً در پنل دیتابیس چک کن.');
   }
+
+  await listPages(ctx,chatId);
+  return ctx.reply(`✅ صفحه‌ی جدید با شناسه‌ی #${id} ساخته شد.`);
+}
+
+function parseGateParams(args){
+  const obj={};
+  for(const part of args){
+    const [k,...rest]=part.split('=');
+    if(!k||!rest.length) continue;
+    obj[k.trim()]=rest.join('=').trim();
+  }
+  return obj;
+}
+
+async function ensureChatIdFromStateOrMessage(ctx){
+  const uId = ctx.from.id;
+  const st = state(uId);
+
+  if(st?.from_chat_id) return st.from_chat_id;
+
+  // اگر هنوز from_chat_id نداریم، از کاربر می‌خواهیم گروه را مشخص کند
+  await hintSendChat(ctx);
   return null;
 }
 
-async function askFromPage(ctx, from_chat_id){
-  const pages = await getPages(from_chat_id);
-  await ctx.reply(`گام ۲) کدام «صفحه مبدا»؟`, pageButtons(pages));
-  setState(ctx.from.id, { stage: 'from_page' });
-}
+async function handleGateCommand(ctx,config,args){
+  if(!onlyOwnerPV(config,ctx)) return;
 
-async function askType(ctx){
-  await ctx.reply('گام ۳) نوع مسیر را انتخاب کن:', kbTypes());
-  setState(ctx.from.id, { stage: 'type' });
-}
-
-async function askToChat(ctx, type, from_chat_id){
-  if (type === 'sub') {
-    return askToPage(ctx, from_chat_id, true);
+  const params = parseGateParams(args);
+  const type = (params.type||'').toLowerCase();
+  if(!['main','sub','micro'].includes(type)){
+    return ctx.reply(
+      'type نامعتبر.\nباید یکی از این‌ها باشد: main / sub / micro\nمثال:\n`/lw_gate type=main from_page=1 to_chat=-100222 to_page=1 label=دروازه emoji=🚪 time=5m`',
+      { parse_mode:'Markdown' }
+    );
   }
-  await ctx.reply(
-    'گام ۴) گروه مقصد:\n'+
-    '• یک پیام از گروه مقصد را فوروارد کن\n'+
-    'یا آیدی عددی مقصد را بفرست.',
-    kbCancel()
-  );
-  setState(ctx.from.id, { stage: 'to_chat' });
-}
 
-async function askToPage(ctx, chat_id, isSub){
-  const pages = await getPages(chat_id);
-  const head = isSub ? 'گام ۴) صفحهٔ مقصد (در همین گروه):' : 'گام ۵) صفحهٔ مقصد:';
-  await ctx.reply(head, pageButtons(pages));
-  setState(ctx.from.id, { stage: 'to_page' });
-}
+  let from_chat_id = params.from_chat || params.from_chat_id;
+  let to_chat_id = params.to_chat || params.to_chat_id;
+  const label = params.label || 'مسیر بدون نام';
+  const emoji = params.emoji || '';
+  const timeTxt = params.time || params.t || '5m';
 
-async function askLabel(ctx){
-  await ctx.reply('گام بعدی) متن برچسب مسیر را بفرست (مثلاً «ورود به بازار»):', kbCancel());
-  setState(ctx.from.id, { stage: 'label' });
-}
-async function askEmoji(ctx){
-  await ctx.reply('اختیاری) یک ایموجی (یا خالی) بفرست. برای رد کردن، «-» بفرست.', kbCancel());
-  setState(ctx.from.id, { stage: 'emoji' });
-}
-async function askEta(ctx){
-  await ctx.reply('زمان مسیر را بفرست (مثلاً 5m یا 120s). حداقل 10s:', kbCancel());
-  setState(ctx.from.id, { stage: 'eta' });
-}
+  const base_travel_sec = parseDur(timeTxt);
+  if(!base_travel_sec || base_travel_sec < 10){
+    return ctx.reply('زمان نامعتبر است. مثال: 5m یا 120s. حداقل 10 ثانیه.');
+  }
 
-async function summary(ctx, st){
-  const lines = [
-    '✅ مرور نهایی:',
-    `• نوع: ${st.type==='main'?'مسیر اصلی':'مسیر فرعی'}`,
+  const userId = ctx.from.id;
+  let st = state(userId) || {};
+
+  // اگر from_chat_id مشخص نشده، از state یا ویزارد قبلی بگیر
+  if(!from_chat_id){
+    if(st.from_chat_id) from_chat_id = st.from_chat_id;
+    else{
+      await hintSendChat(ctx);
+      return;
+    }
+  }
+
+  // اگر to_chat_id در type=sub یا micro خالی است، یعنی در همان گروه
+  if(type==='sub' || type==='micro'){
+    to_chat_id = from_chat_id;
+  }
+
+  // صفحه‌های from/to
+  const from_page_id = parseInt(params.from_page || params.from_page_id || '0',10) || null;
+  const to_page_id = parseInt(params.to_page || params.to_page_id || '0',10) || null;
+
+  if(!from_page_id){
+    return ctx.reply('from_page را مشخص کن. مثال: from_page=1');
+  }
+
+  if((type==='main' || type==='sub') && !to_page_id){
+    return ctx.reply('برای type=main یا sub، to_page را هم مشخص کن. مثال: to_page=2');
+  }
+
+  // ذخیره در state برای تأیید نهایی
+  st = setState(userId,{
+    type,
+    from_chat_id,
+    to_chat_id,
+    from_page_id,
+    to_page_id,
+    label,
+    emoji,
+    base_travel_sec
+  });
+
+  // خلاصه برای تأیید
+  const lines=[
+    'خلاصه‌ی گیت جدید:',
+    `• نوع: ${type}`,
     `• مبدا: ${st.from_chat_id} | صفحه: ${st.from_page_id}`,
     `• مقصد: ${st.to_chat_id} | صفحه: ${st.to_page_id}`,
     `• برچسب: ${st.label}`,
     `• ایموجی: ${st.emoji||'-'}`,
     `• زمان: ${st.base_travel_sec} ثانیه`
   ];
-  return ctx.reply(lines.join('\n'),
+  return ctx.reply(
+    lines.join('\n'),
     Markup.inlineKeyboard([
       [Markup.button.callback('✅ ذخیره','lw:save')],
       [Markup.button.callback('❌ لغو','lw:cancel')]
@@ -133,149 +239,116 @@ async function summary(ctx, st){
   );
 }
 
-function register(bot, config){
+async function handleSave(ctx){
+  const uId=ctx.from.id;
+  const st=state(uId);
+  if(!st) return ctx.reply('چیزی برای ذخیره کردن نیست. دوباره /lw_gate را بزن.');
 
+  const gate={
+    type: st.type,
+    from_chat_id: `${st.from_chat_id}`,
+    to_chat_id: st.to_chat_id ? `${st.to_chat_id}` : null,
+    from_page_id: st.from_page_id,
+    to_page_id: st.to_page_id,
+    label: st.label,
+    emoji: st.emoji || null,
+    base_travel_sec: st.base_travel_sec,
+    active: true,
+    meta_json: null
+  };
+
+  try{
+    await insertGate(gate);
+    clearState(uId);
+    return ctx.editMessageText('✅ گیت ذخیره شد.');
+  }catch(e){
+    return ctx.reply('❌ خطا در ذخیره‌ی گیت. بعداً لاگ سرور را چک کن.');
+  }
+}
+
+function register(bot,config){
+  // دستور اصلی ویزارد
   bot.command('link_wizard', async (ctx)=>{
     if(!onlyOwnerPV(config,ctx)) return;
-    clearState(ctx.from.id);
-    setState(ctx.from.id, { stage: 'from_chat' });
-    await ctx.reply('✨ ویزارد ساخت مسیر شروع شد.');
+
+    setState(ctx.from.id, { from_chat_id: null });
+    await ctx.reply(
+      '👋 خوش آمدی به ویزارد لینک.\n\n'+
+      'این ویزارد بهت کمک می‌کند صفحه‌ها و مسیرها را راحت بسازی.\n\n'+
+      'اول مشخص کن از کدام گروه می‌خواهی کار را شروع کنی.',
+      kbCancel()
+    );
+
     await hintSendChat(ctx);
   });
 
-  bot.action(/^lw:cancel$/i, async (ctx)=>{
-    clearState(ctx.from.id);
-    try{ await ctx.answerCbQuery('لغو شد'); }catch{}
-    try{ await ctx.editMessageReplyMarkup({inline_keyboard:[]}); }catch{}
+  // ساخت صفحه
+  bot.command('lw_page', async (ctx)=>{
+    const params = (ctx.message.text||'').split(' ').slice(1);
+    await handlePageCommand(ctx,config,params);
   });
 
-  bot.action(/^lw:type:(main|sub)$/i, async (ctx)=>{
-    const s = state(ctx.from.id); if(!s || s.stage!=='type') return ctx.answerCbQuery().catch(()=>{});
-    const type = ctx.match[1];
-    setState(ctx.from.id, { type });
-    try{ await ctx.answerCbQuery(type==='main'?'مسیر اصلی':'مسیر فرعی'); }catch{}
-    await askToChat(ctx, type, s.from_chat_id);
+  // ساخت گیت
+  bot.command('lw_gate', async (ctx)=>{
+    const parts = (ctx.message.text||'').split(' ').slice(1);
+    await handleGateCommand(ctx,config,parts);
   });
 
-  bot.action(/^lw:page:(new|\d+)$/i, async (ctx)=>{
-    const s = state(ctx.from.id); if(!s) return ctx.answerCbQuery().catch(()=>{});
-    const val = ctx.match[1];
-    if(val === 'new'){
-      setState(ctx.from.id, { stage: 'new_page_title' });
-      try{ await ctx.answerCbQuery('ساخت صفحه جدید'); }catch{}
-      return ctx.reply('عنوان صفحه جدید را بفرست:', kbCancel());
+  // کال‌بک‌ها برای ذخیره/لغو
+  bot.on('callback_query', async (ctx,next)=>{
+    const data = ctx.callbackQuery?.data || '';
+    const uId = ctx.from?.id;
+    if(!uId) return next();
+
+    if(data==='lw:cancel'){
+      clearState(uId);
+      try{ await ctx.editMessageText('🚫 ویزارد لغو شد.'); }catch{}
+      return;
     }
-    const pid = parseInt(val,10);
-    if(s.stage === 'from_page'){
-      setState(ctx.from.id, { from_page_id: pid });
-      try{ await ctx.answerCbQuery('صفحه مبدا انتخاب شد'); }catch{}
-      return askType(ctx);
+
+    if(data==='lw:save'){
+      await handleSave(ctx);
+      return;
     }
-    if(s.stage === 'to_page'){
-      setState(ctx.from.id, { to_page_id: pid });
-      try{ await ctx.answerCbQuery('صفحه مقصد انتخاب شد'); }catch{}
-      return askLabel(ctx);
-    }
-    return ctx.answerCbQuery().catch(()=>{});
+
+    return next();
   });
 
-  bot.action(/^lw:save$/i, async (ctx)=>{
-    const s = state(ctx.from.id); if(!s || s.stage!=='confirm') return ctx.answerCbQuery().catch(()=>{});
-    try{
-      const gate = {
-        type: s.type,
-        from_chat_id: s.from_chat_id,
-        from_page_id: s.from_page_id,
-        to_chat_id: s.to_chat_id,
-        to_page_id: s.to_page_id,
-        label: s.label,
-        emoji: s.emoji || null,
-        base_travel_sec: s.base_travel_sec,
-        active: true,
-        order_index: s.order_index || 0,
-        section: s.section || null
-      };
-      const error = await insertGate(gate);
-      if (error) {
-        await ctx.reply('❌ خطا در ذخیره مسیر: ' + (error.message || ''));
-      } else {
-        await ctx.reply('✅ مسیر ذخیره شد');
-      }
-    } catch (e){
-      await ctx.reply('❌ خطا در ذخیره');
-    }
-    clearState(ctx.from.id);
-    try{ await ctx.answerCbQuery('ذخیره شد'); }catch{}
-  });
-
-  bot.on('message', async (ctx, next)=>{
+  // اگر کاربر در میانه‌ی ویزارد بود و پیام متنی فرستاد، تشخیص دهیم در کدام مرحله است
+  bot.on('message', async (ctx,next)=>{
     if(ctx.chat?.type!=='private') return next();
-    const s = state(ctx.from.id);
-    if(!s) return next();
+    const uId = ctx.from?.id;
+    if(!uId) return next();
+    const st = state(uId);
+    if(!st) return next();
 
-    if(s.stage==='from_chat'){
-      const cid = extractChatIdFromMessage(ctx.message);
-      if(!cid) return ctx.reply('آیدی/فوروارد نامعتبر. دوباره بفرست.', kbCancel());
-      setState(ctx.from.id, { from_chat_id: cid });
-      await ctx.reply(`✅ گروه مبدا: ${cid}`);
-      return askFromPage(ctx, cid);
-    }
-
-    if(s.stage==='new_page_title'){
-      const title = (ctx.message.text||'').trim();
-      if(!title) return ctx.reply('عنوان نامعتبر.');
-      if(s.from_page_id==null && s.stage_from_page !== false){
-        const { id, error } = await insertPage(s.from_chat_id, title, '');
-        if(error) return ctx.reply('❌ خطا در ساخت صفحه: ' + (error.message||''));
-        setState(ctx.from.id, { from_page_id: id, stage_from_page:false });
-        await ctx.reply(`✅ صفحه مبدا ساخته شد: ${title}`);
-        return askType(ctx);
-      } else if (s.to_chat_id){
-        const { id, error } = await insertPage(s.to_chat_id, title, '');
-        if(error) return ctx.reply('❌ خطا در ساخت صفحه: ' + (error.message||''));
-        setState(ctx.from.id, { to_page_id: id });
-        await ctx.reply(`✅ صفحه مقصد ساخته شد: ${title}`);
-        return askLabel(ctx);
-      } else {
-        return ctx.reply('❌ حالت نامشخص؛ از اول /link_wizard بزن');
+    // اگر از او خواسته بودیم گروه را معرفی کند (forward یا id)
+    if(!st.from_chat_id && ctx.message){
+      if(ctx.message.forward_from_chat){
+        const c = ctx.message.forward_from_chat;
+        if(c.type!=='group' && c.type!=='supergroup'){
+          return ctx.reply('فوروارد باید از یک گروه یا سوپرگروپ باشد.');
+        }
+        setState(uId,{ from_chat_id: c.id });
+        await ctx.reply(`✅ گروه انتخاب شد: ${c.title||c.id}`);
+        await explainTypes(ctx);
+        await listPages(ctx,c.id);
+        return;
       }
-    }
 
-    if(s.stage==='to_chat'){
-      if(s.type==='sub'){
-        setState(ctx.from.id, { stage:'to_page' });
-        return askToPage(ctx, s.from_chat_id, true);
+      if(ctx.message.text){
+        const txt = ctx.message.text.trim();
+        if(/^-?\d+$/.test(txt)){
+          const id = BigInt(txt); // آیدی عددی
+          setState(uId,{ from_chat_id: id.toString() });
+          await ctx.reply(`✅ گروه انتخاب شد: ${id.toString()}`);
+          await explainTypes(ctx);
+          await listPages(ctx,id.toString());
+          return;
+        }
       }
-      const cid = extractChatIdFromMessage(ctx.message);
-      if(!cid) return ctx.reply('آیدی/فوروارد مقصد نامعتبر. دوباره بفرست.', kbCancel());
-      setState(ctx.from.id, { to_chat_id: cid });
-      await ctx.reply(`✅ گروه مقصد: ${cid}`);
-      return askToPage(ctx, cid, false);
-    }
 
-    if(s.stage==='label'){
-      const label = (ctx.message.text||'').trim();
-      if(!label) return ctx.reply('برچسب نامعتبر.');
-      setState(ctx.from.id, { label });
-      return askEmoji(ctx);
-    }
-
-    if(s.stage==='emoji'){
-      const emojiTxt = (ctx.message.text||'').trim();
-      const emoji = (emojiTxt==='-'||emojiTxt==='') ? null : emojiTxt.slice(0,2);
-      setState(ctx.from.id, { emoji });
-      return askEta(ctx);
-    }
-
-    if(s.stage==='eta'){
-      const durTxt = (ctx.message.text||'').trim();
-      const sec = parseDur(durTxt);
-      if(!sec || sec<10) return ctx.reply('زمان نامعتبر. مثال: 5m یا 120s. حداقل 10s');
-      if(s.type==='sub'){
-        setState(ctx.from.id, { to_chat_id: s.from_chat_id });
-      }
-      setState(ctx.from.id, { base_travel_sec: sec, stage:'confirm' });
-      return summary(ctx, state(ctx.from.id));
+      return ctx.reply('لطفاً یک پیام از گروه مبدا فوروارد کن یا آیدی عددی آن را بفرست.');
     }
 
     return next();
