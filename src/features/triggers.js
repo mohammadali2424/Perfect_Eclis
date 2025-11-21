@@ -1,105 +1,78 @@
-// src/features/triggers.js
-const { Markup } = require('telegraf');
+const { isTrigger } = require('../utils/text');
+const { isAllowed } = require('../services/moderationService');
+const { firstPage } = require('../services/pageService');
+const { buildPageViewForUser } = require('./helpers/pageUi');
 const { supa } = require('../infra/supabase');
-const { humanize } = require('../utils/text');
-const { putGateToken } = require('../utils/tokens'); // باید در پروژه‌ات باشد
+const { safeSend } = require('../infra/queue');
+const { Markup } = require('telegraf');
 
-async function getFirstPage(chatId) {
-  const { data } = await supa
-    .from('pages')
-    .select('id,title,order_index')
-    .eq('chat_id', `${chatId}`)
-    .order('order_index', { ascending: true })
-    .limit(1);
-  return data?.[0] || null;
-}
-async function getGatesFromPage(pageId) {
-  const { data } = await supa
-    .from('gates')
-    .select('id,type,label,emoji,base_travel_sec,to_page_id,to_chat_id')
-    .eq('from_page_id', pageId)
-    .eq('active', true)
-    .order('id', { ascending: true });
-  return data || [];
+let ME_USERNAME = null;
+
+async function ensureMe(bot){
+  if (ME_USERNAME) return ME_USERNAME;
+  try {
+    const me = await bot.telegram.getMe();
+    ME_USERNAME = me.username;
+  } catch { ME_USERNAME = null; }
+  return ME_USERNAME;
 }
 
-function gateRowButtons(uid, gates) {
-  const rows = [];
-  for (const g of gates) {
-    const tok = putGateToken({ gate_id: g.id, user_id: uid }); // تولید توکن اینلاین
-    // gateActions با الگوی /^g:(...)/ کار می‌کند → باید فقط suffix را بفرستیم
-    const suffix = String(tok).replace(/^g:/,'');
-    const title = `${g.emoji || ''} ${g.label || ''}`.trim() || (g.type==='micro'?'🪶 مسیر':'مسیر');
-    const timeS = (g.type==='micro' ? '' : ` • ${humanize(g.base_travel_sec||60)}`);
-    rows.push([ Markup.button.callback(`${title}${timeS}`, `g:${suffix}`) ]);
+async function sendStartHintInGroup(bot, chatId, userId, replyToMsgId){
+  const me = await ensureMe(bot);
+  if (!me) return;
+  const url = `https://t.me/${me}?start=start-${chatId}`;
+  const extra = { reply_to_message_id: replyToMsgId, ...Markup.inlineKeyboard([
+    [Markup.button.url('📥 باز کردن پی‌وی ربات', url)]
+  ])};
+  try {
+    await safeSend(bot, chatId, 'برای ادامه، ربات را در پی‌وی باز کنید:', extra);
+  } catch {}
+}
+
+async function sendCurrentPagePV(bot, userId, chatId){
+  const { data: player } = await supa.from('players').select('user_id,current_chat_id,current_page_id').eq('user_id', userId).maybeSingle();
+
+  let pageId = null;
+  if (player && `${player.current_chat_id}` === `${chatId}` && player.current_page_id) {
+    pageId = player.current_page_id;
+  } else {
+    const first = await firstPage(chatId);
+    if (!first) return false;
+    pageId = first.id;
+    await supa.from('players').upsert({ user_id: userId, current_chat_id: `${chatId}`, current_page_id: pageId, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
   }
-  return Markup.inlineKeyboard(rows, { columns: 1 });
-}
 
-async function sendMenuPV(tg, uid, chatId) {
-  const first = await getFirstPage(chatId);
-  if (!first) {
-    await tg.sendMessage(uid, 'برای این گروه هنوز صفحه‌ای ساخته نشده.');
-    return;
+  const view = await buildPageViewForUser(chatId, pageId);
+  if (!view) return false;
+
+  try {
+    await bot.telegram.sendMessage(userId, view.text, { reply_markup: view.kb.reply_markup });
+  } catch {
+    return false;
   }
-  const gates = await getGatesFromPage(first.id);
-  const head = `📜 ${first.title}\nمسیرهای شما:`;
-  const kb = gateRowButtons(uid, gates);
-  await tg.sendMessage(uid, head, { reply_markup: kb.reply_markup });
+  return true;
 }
 
-function register(bot) {
-  // #ورود
-  bot.hears(/^#ورود$/i, async (ctx) => {
-    const chat = ctx.chat;
-    if (!chat || !(chat.type==='group'||chat.type==='supergroup')) return;
-
-    // پیام کاربر را پاک کن
-    try { await ctx.deleteMessage(); } catch {}
-
-    // بازیکن را به این گروه ست کن (اگر صفحه اول هست)
-    const first = await getFirstPage(chat.id);
-    await supa.from('players').upsert({
-      user_id: ctx.from.id,
-      current_chat_id: `${chat.id}`,
-      current_page_id: first?.id || null,
-      status: 'idle',
-      updated_at: new Date().toISOString(),
-      created_at: new Date().toISOString()
-    }, { onConflict: 'user_id' });
-
-    // منو را در PV بفرست
-    try {
-      await sendMenuPV(ctx.telegram, ctx.from.id, chat.id);
-    } catch (e) {
-      // PV بسته است: دیپ‌لینک بده و پیام را خودپاک‌کن
-      const botUser = global.BOT_UNAME ? `https://t.me/${global.BOT_UNAME}?start=go` : 'پی‌وی ربات را استارت کن.';
-      const m = await ctx.reply(`برای ادامه، لطفاً پی‌وی را باز کن:\n${botUser}`);
-      setTimeout(async()=>{ try{ await ctx.deleteMessage(m.message_id); }catch{} }, 8000);
-      return;
-    }
-
-    // پیام کوتاه تایید در گروه (خودپاک‌کن)
-    const m2 = await ctx.reply('منوی شما در پی‌وی ارسال شد.');
-    setTimeout(async()=>{ try{ await ctx.deleteMessage(m2.message_id); }catch{} }, 5000);
+function register(bot){
+  bot.on('message', async (ctx) => {
+    const t = ctx.message?.text || '';
+    if (ctx.chat?.type === 'private') return; // PM را استارت هندل می‌کند
+    if (!isTrigger(t)) return;
+    return sendStartHintInGroup(bot, `${ctx.chat.id}`, ctx.from?.id, ctx.message?.message_id);
   });
 
-  // #خروج
-  bot.hears(/^#خروج$/i, async (ctx) => {
-    const chat = ctx.chat;
-    if (!chat || !(chat.type==='group'||chat.type==='supergroup')) return;
-    try { await ctx.deleteMessage(); } catch {}
+  bot.start(async (ctx) => {
+    if (ctx.chat?.type !== 'private') return;
+    const arg = (ctx.startPayload || '').trim();
+    const m = /^start-(\-?\d{6,20})$/.exec(arg);
+    const chatId = m ? m[1] : null;
+    if (!chatId) return ctx.reply('سلام! از داخل گروه لینک را بزنید تا سفر شروع شود.');
 
-    await supa.from('players').update({
-      status: 'idle',
-      current_chat_id: null,
-      current_page_id: null,
-      updated_at: new Date().toISOString()
-    }).eq('user_id', ctx.from.id);
+    const allowed = await isAllowed(chatId);
+    if (!allowed) return ctx.reply('این گروه مجاز نیست.');
 
-    try { await ctx.telegram.sendMessage(ctx.from.id, 'خارج شدی. هر زمان خواستی دوباره #ورود بزن.'); } catch {}
-    const m = await ctx.reply('خارج شدی (PV را ببین).');
-    setTimeout(async()=>{ try{ await ctx.deleteMessage(m.message_id); }catch{} }, 5000);
+    const ok = await sendCurrentPagePV(bot, ctx.from.id, chatId);
+    if (!ok) return ctx.reply('صفحه‌ای پیدا نشد.');
   });
 }
 
