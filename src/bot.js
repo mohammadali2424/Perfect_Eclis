@@ -1,38 +1,18 @@
-// src/bot.js
 const { Telegraf } = require('telegraf');
+const config = require('./config');
+const { register: registerTriggers } = require('./features/triggers');
+const { register: registerGateActions } = require('./features/actions/gateActions');
+const { register: registerLinkWizard } = require('./features/commands/linkWizard');
 
-function safeRequire(path) {
-  try { return require(path); }
-  catch (e) { console.warn(`⚠️ optional feature missing: ${path} (${e.code || e.message})`); return null; }
-}
+function buildBot(){
+  const bot = new Telegraf(config.botToken, { handlerTimeout: 9000 });
 
-const triggers    = safeRequire('./features/triggers');
-const gateActions = safeRequire('./features/actions/gateActions');
-const linkWizard  = safeRequire('./features/commands/linkWizard');
+  // حتماً config را پاس بده
+  registerTriggers(bot, config);
+  registerGateActions(bot, config);
+  registerLinkWizard(bot, config);
 
-function buildBot(config = {}) {
-  const token = config.botToken || process.env.BOT_TOKEN;
-  if (!token) throw new Error('BOT_TOKEN is missing');
-
-  const bot = new Telegraf(token, { handlerTimeout: 30_000 });
-  global.bot = bot;
-
-  bot.telegram.getMe()
-    .then(me => { global.BOT_UNAME = me.username; console.log('🤖 Bot:', `@${me.username}`, `id=${me.id}`); })
-    .catch(err => console.log('getMe failed:', err?.message || err));
-
-  if (process.env.LOG_UPDATES === '1') {
-    bot.use(async (ctx, next) => {
-      try { console.log('… update:', ctx.updateType, ctx.chat?.type, ctx.from?.id); } catch {}
-      return next();
-    });
-  }
-
-  if (triggers?.register)    triggers.register(bot);
-  if (gateActions?.register) gateActions.register(bot);
-  if (linkWizard?.register)  linkWizard.register(bot);
-
-  return bot; // launch ندارد؛ webhook در server.js تنظیم می‌شود
+  return bot;
 }
 
 module.exports = { buildBot };
