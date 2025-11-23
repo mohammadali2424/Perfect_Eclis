@@ -12,7 +12,6 @@ if (!BOT_TOKEN) {
 
 export const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// Attach services so all features can access Supabase & master id
 const services: Services = {
   supabase,
   masterId: MASTER_ID,
@@ -23,22 +22,25 @@ bot.use(async (ctx, next) => {
   await next();
 });
 
-// Simple in-memory session for now (grammy requirement)
 function initialSession(): SessionData {
   return {};
 }
 bot.use(session({ initial: initialSession }));
 
-// Register feature modules
 registerSecurityFeature(bot);
 registerTravelFeature(bot);
 registerWorldAdminFeature(bot);
 
-// Basic /start for users
+// تست ساده
+bot.command("ping", async (ctx) => {
+  await ctx.reply("pong");
+});
+
 bot.command("start", async (ctx) => {
   await ctx.reply(
     "به Pathweaver خوش اومدی.\n" +
       "من نقشه‌گرد جهان اکلیس هستم.\n" +
-      "رول‌هات رو تو گروه‌ها بزن، برای حرکت و مسیر از من توی پی‌وی کمک بگیر."
+      "برای دیدن مسیر فعلی: /path\n" +
+      "برای رسیدن به مقصد بعد از سفر: /arrive"
   );
 });
