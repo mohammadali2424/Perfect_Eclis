@@ -3,7 +3,6 @@ export const SUPABASE_URL = process.env.SUPABASE_URL || "";
 export const SUPABASE_KEY = process.env.SUPABASE_KEY || "";
 export const MASTER_ID = Number(process.env.MASTER_ID || 0);
 
-// Hard guard: fail fast if critical envs are missing in prod
 if (!BOT_TOKEN) {
   console.warn("[config] BOT_TOKEN is empty. Set it in your environment.");
 }
