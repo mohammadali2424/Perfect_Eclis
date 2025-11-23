@@ -18,7 +18,10 @@ export interface CharacterState {
 }
 
 export interface SessionData {
-  // بعداً برای پنل اینلاین مستر ازش استفاده می‌کنیم
+  mode?: "create_spot" | "create_edge_time";
+  pending_region_id?: string;
+  edge_from_spot_id?: string;
+  edge_to_spot_id?: string;
 }
 
 export type MyContext = Context &
