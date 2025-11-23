@@ -5,6 +5,7 @@ import { MyContext, SessionData, Services } from "./types";
 import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
+import { registerRegistrationFeature } from "../features/registration";
 
 if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is required");
@@ -28,6 +29,7 @@ function initialSession(): SessionData {
 bot.use(session({ initial: initialSession }));
 
 registerSecurityFeature(bot);
+registerRegistrationFeature(bot); // ثبت‌نام قبل از ادمین/مسیر
 registerTravelFeature(bot);
 registerWorldAdminFeature(bot);
 
@@ -41,6 +43,7 @@ bot.command("start", async (ctx) => {
     "به Pathweaver خوش اومدی.\n" +
       "من نقشه‌گرد جهان اکلیس هستم.\n" +
       "برای دیدن مسیر فعلی: /path\n" +
-      "برای رسیدن به مقصد بعد از سفر: /arrive"
+      "برای رسیدن به مقصد بعد از سفر: /arrive\n" +
+      "برای شروع ثبت‌نام کاراکتر: «ثبت من» یا /sabteman را در پی‌وی من بفرست."
   );
 });
