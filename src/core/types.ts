@@ -19,19 +19,17 @@ export interface CharacterState {
 }
 
 export interface SessionData {
-  // PM حذف پیام قبلی
+  // برای تمیز نگه داشتن PM
   __last_pm_id?: number;
 
-  // حالت‌های ساخت Spot
-  mode?: "create_spot" | "create_edge_time" | "edge_time" | undefined;
+  // حالت‌های ساخت دنیا
+  mode?: "create_spot" | "edge_time";
 
   pending_region_id?: string;
-
-  // Edge ساخت مسیر
   edge_from_spot_id?: string;
   edge_to_spot_id?: string;
 
-  // ویزارد ثبت نام
+  // ویزارد ثبت‌نام
   reg_step?: "name" | "clan";
   reg_name?: string;
   reg_clan?: string;
