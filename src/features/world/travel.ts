@@ -160,6 +160,9 @@ async function showPaths(ctx: MyContext) {
   );
 }
 
+/**
+ * ثبت پلیر با ریپلای /regplayer
+ */
 async function handleRegPlayer(ctx: MyContext) {
   if (ctx.from?.id !== MASTER_ID) {
     await ctx.reply("فقط اربابم میتونه پلیر ثبت کنه، حدتو بدون.");
@@ -216,7 +219,7 @@ async function handleRegPlayer(ctx: MyContext) {
     .eq("tg_id", target.id)
     .maybeSingle();
 
-  // اگر کوئری خطا داد، فقط تو لاگ سرور بنویس و ادامه بده
+  // اگر کوئری خطا داد، فقط لاگ بگیر و ادامه بده
   if (charErr) {
     console.error("characters check error:", charErr);
   }
@@ -269,9 +272,8 @@ async function handleRegPlayer(ctx: MyContext) {
   );
 }
 
-
 /**
- * هندل رسیدن به مقصد
+ * هندل رسیدن به مقصد + کیک از گروه قبلی + لینک ورود به گروه جدید
  */
 async function handleArrive(ctx: MyContext) {
   if (ctx.chat?.type !== "private") {
@@ -329,7 +331,7 @@ async function handleArrive(ctx: MyContext) {
 
   const oldRegionId = char.current_region_id;
 
-  // آپدیت وضعیت کاراکتر به مقصد جدید
+  // آپدیت وضعیت کاراکتر به مقصد جدید (قبل از لاجیک تلگرام)
   const { error: updErr } = await supabase
     .from("characters")
     .update({
@@ -347,11 +349,67 @@ async function handleArrive(ctx: MyContext) {
     return;
   }
 
-  // فعلاً فقط اطلاع می‌دیم؛ کیک از گروه قبلی و لینک گروه جدید رو می‌تونیم بعداً اضافه کنیم
-  await ctx.reply(
+  // حالا بخش تلگرام: اگر Region عوض شده و هر دو گروه تنظیم شده‌اند → کیک + لینک
+  let extraText = "";
+  let kb: InlineKeyboard | undefined = undefined;
+
+  if (oldRegionId && oldRegionId !== destRegion.id) {
+    try {
+      // گرفتن اطلاعات Region قبلی برای پیدا کردن chat_id
+      const { data: oldRegion, error: oldRegErr } = await supabase
+        .from("regions")
+        .select("id,title,telegram_chat_id")
+        .eq("id", oldRegionId)
+        .single();
+
+      const oldChatId = oldRegion?.telegram_chat_id;
+      const newChatId = destRegion.telegram_chat_id;
+
+      // اگر chat_id قدیم و جدید موجود باشند، تلاش برای کیک + لینک
+      if (!oldRegErr && oldChatId && newChatId) {
+        // کیک نرم: ban + unban
+        try {
+          await ctx.api.banChatMember(oldChatId, ctx.from!.id);
+          await ctx.api.unbanChatMember(oldChatId, ctx.from!.id);
+        } catch (kickErr) {
+          console.error("kick from old chat error:", kickErr);
+          extraText +=
+            "\n⚠️ نتونستم از گروه قبلی کیکت کنم (احتمالاً ادمین‌بودن یا پرمیشن کم دارم).";
+        }
+
+        // ساخت لینک دعوت گروه جدید
+        try {
+          const invite = await ctx.api.createChatInviteLink(newChatId, {
+            creates_join_request: false,
+          });
+
+          kb = new InlineKeyboard().url(
+            "ورود به مکان جدید",
+            invite.invite_link
+          );
+        } catch (invErr) {
+          console.error("create invite link error:", invErr);
+          extraText +=
+            "\n⚠️ نتونستم لینک ورود به گروه مقصد رو بسازم (احتمالاً دسترسی ساخت لینک ندارم).";
+        }
+      } else {
+        extraText +=
+          "\n⚠️ برای یکی از Regionها chat_id ثبت نشده؛ امکان مدیریت گروه‌ها وجود نداره.";
+      }
+    } catch (err) {
+      console.error("old region / telegram handling error:", err);
+      extraText += "\n⚠️ در مدیریت گروه‌های تلگرام خطایی رخ داد.";
+    }
+  }
+
+  // پیام نهایی
+  const baseText =
     `به مقصد رسیدی! ✅\n` +
-      `${destRegion.title} / ${destSpot.title}`
-  );
+    `${destRegion.title} / ${destSpot.title}`;
+
+  await ctx.reply(baseText + extraText, {
+    reply_markup: kb,
+  });
 }
 
 export function registerTravelFeature(bot: Bot<MyContext>) {
@@ -360,7 +418,7 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
     await showPaths(ctx);
   });
 
-  // برای سازگاری: /path هم همون کار «مسیر های من» رو می‌کنه
+  // برای سازگاری: /path هم همون کار «مسیر های من» رو می‌کند
   bot.command("path", async (ctx) => {
     await showPaths(ctx);
   });
@@ -448,7 +506,7 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
       .eq("tg_id", char.tg_id);
 
     if (updErr) {
-      console.error("characters update error:", updErr);
+      console.error("characters start travel update error:", updErr);
       await ctx.reply("در شروع سفر خطایی رخ داد.");
       return;
     }
