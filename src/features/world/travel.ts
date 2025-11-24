@@ -1,5 +1,6 @@
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
+import { MASTER_ID } from "../../core/config";
 
 async function ensureCharacter(ctx: MyContext) {
   const { supabase } = ctx.services;
@@ -57,6 +58,12 @@ async function showPaths(ctx: MyContext) {
     );
     return;
   }
+
+  export function registerTravelFeature(bot: Bot<MyContext>) {
+  // دکمه‌ی "مسیر های من" در پی‌وی
+  bot.hears("🧭 مسیر های من", async (ctx) => {
+    await showPaths(ctx);
+  });
 
   // گرفتن Spot فعلی
   const { data: spot, error: spotErr } = await supabase
