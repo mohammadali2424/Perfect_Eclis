@@ -1,4 +1,3 @@
-import { Bot, session } from "grammy";
 import { Bot, session, InlineKeyboard } from "grammy";
 import { BOT_TOKEN, MASTER_ID } from "./config";
 import { supabase } from "./supabase";
