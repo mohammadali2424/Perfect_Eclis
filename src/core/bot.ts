@@ -1,4 +1,5 @@
 import { Bot, session } from "grammy";
+import { Bot, session, InlineKeyboard } from "grammy";
 import { BOT_TOKEN, MASTER_ID } from "./config";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
@@ -33,17 +34,14 @@ registerRegistrationFeature(bot); // ثبت‌نام قبل از ادمین/مس
 registerTravelFeature(bot);
 registerWorldAdminFeature(bot);
 
-// تست ساده
-bot.command("ping", async (ctx) => {
-  await ctx.reply("pong");
-});
-
 bot.command("start", async (ctx) => {
+  const kb = new InlineKeyboard().text("🧭 مسیرهای من", "paths:open");
+
   await ctx.reply(
     "به Pathweaver خوش اومدی.\n" +
-      "من نقشه‌گرد جهان اکلیس هستم.\n" +
-      "برای دیدن مسیر فعلی: /path\n" +
-      "برای رسیدن به مقصد بعد از سفر: /arrive\n" +
-      "برای شروع ثبت‌نام کاراکتر: «ثبت من» یا /sabteman را در پی‌وی من بفرست."
+      "من مسیریاب جهان اکلیس‌ام.\n\n" +
+      "از دکمه‌ی «🧭 مسیرهای من» برای دیدن مقصدهای ممکن استفاده کن.\n" +
+      "وقتی در حال سفر بودی، بعد از تموم‌شدن زمان، می‌تونی از /arrive یا دکمه‌ی «رسیدم» استفاده کنی.",
+    { reply_markup: kb }
   );
 });
