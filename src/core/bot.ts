@@ -30,6 +30,7 @@ function initialSession(): SessionData {
 bot.use(session({ initial: initialSession }));
 
 registerSecurityFeature(bot);
+registerOnboardingFeature(bot);
 registerRegistrationFeature(bot); // ثبت‌نام قبل از ادمین/مسیر
 registerTravelFeature(bot);
 registerWorldAdminFeature(bot);
