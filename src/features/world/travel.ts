@@ -5,7 +5,7 @@ import { MASTER_ID } from "../../core/config";
 /**
  * ساخت یا برگرداندن رکورد کاراکتر برای یک tg_id خاص
  */
-async function ensureCharacterFor(ctx: MyContext, tgId: number) {
+async function ensureCharacterFor(ctx: MyContext, tgId: number): Promise<any> {
   const { supabase } = ctx.services;
 
   const { data: char, error } = await supabase
@@ -43,7 +43,7 @@ async function ensureCharacterFor(ctx: MyContext, tgId: number) {
 /**
  * نسخه‌ی راحت‌تر برای خود کاربر
  */
-async function ensureCharacter(ctx: MyContext) {
+async function ensureCharacter(ctx: MyContext): Promise<any> {
   const tgId = ctx.from!.id;
   return ensureCharacterFor(ctx, tgId);
 }
@@ -51,23 +51,24 @@ async function ensureCharacter(ctx: MyContext) {
 /**
  * گرفتن Region بر اساس chat_id گروه
  */
-async function getRegionByChatId(ctx: MyContext, chatId: number) {
+async function getRegionByChatId(ctx: MyContext, chatId: number): Promise<any | null> {
   const { supabase } = ctx.services;
   const { data, error } = await supabase
     .from("regions")
     .select("*")
     .eq("telegram_chat_id", chatId)
-    .single();
+    .maybeSingle();
 
   if (error || !data) return null;
   return data;
 }
+
 /**
  * نمایش مسیرهای قابل دسترس از لوکیشن فعلی کاربر
  */
-async function showPaths(ctx: MyContext) {
+async function showPaths(ctx: MyContext): Promise<void> {
   if (ctx.chat?.type !== "private") {
-    await ctx.reply("برای دیدن «مسیر های من» بیا توی پی‌وی بات.");
+    await ctx.reply("برای دیدن «مسیر های من» باید به پی‌وی من بیایی.");
     return;
   }
 
@@ -76,8 +77,8 @@ async function showPaths(ctx: MyContext) {
 
   if (!char.current_spot_id) {
     await ctx.reply(
-      "هنوز مسیری اینجا ساخته نشده.\n" +
-      
+      "هنوز لوکیشن اولیه‌ای برایت ثبت نشده.\n" +
+        "ارباب باید با دستور /regplayer تو را در یکی از گروه‌ها ثبت کند."
     );
     return;
   }
@@ -90,7 +91,7 @@ async function showPaths(ctx: MyContext) {
     .single();
 
   if (spotErr || !spot) {
-    await ctx.reply("لوکیشن فعلی‌ات در نقشه پیدا نشد.");
+    await ctx.reply("لوکیشن فعلی‌ات در دیتابیس پیدا نشد.");
     return;
   }
 
@@ -102,7 +103,7 @@ async function showPaths(ctx: MyContext) {
     .single();
 
   if (regErr || !region) {
-    await ctx.reply("منطقه فعلی‌ات در نقشه پیدا نشد.");
+    await ctx.reply("Region فعلی‌ات در دیتابیس پیدا نشد.");
     return;
   }
 
@@ -120,15 +121,17 @@ async function showPaths(ctx: MyContext) {
 
   if (!edges || edges.length === 0) {
     await ctx.reply(
-      `مکان فعلی:\n${region.title} / ${spot.title}\n\n` +
+      `📍 جایگاه اکنون تو:\n` +
+        `🏰 ${region.title}\n` +
+        `⬙ نقطه: ${spot.title}\n\n` +
         "از این نقطه هیچ مسیری تعریف نشده.\n" +
-        "ارباب باید از پنل /worldadmin برای این Spot Edge بسازد."
+        "ارباب باید از پنل /worldadmin برای این Spot مسیری بسازد."
     );
     return;
   }
 
   // اسم مقصدها
-  const toIds = edges.map((e: any) => e.to_spot_id);
+  const toIds = (edges as any[]).map((e) => e.to_spot_id);
   const { data: destSpots, error: destErr } = await supabase
     .from("spots")
     .select("id,title")
@@ -140,30 +143,32 @@ async function showPaths(ctx: MyContext) {
   }
 
   const destMap = new Map<number, string>();
-  for (const d of destSpots) {
+  for (const d of destSpots as any[]) {
     destMap.set(d.id, d.title);
   }
 
   const kb = new InlineKeyboard();
-  for (const e of edges) {
-    const destTitle = destMap.get(e.to_spot_id) || `Spot ${e.to_spot_id}`;
+  for (const e of edges as any[]) {
+    const destTitle = destMap.get(e.to_spot_id) || `نقطه ${e.to_spot_id}`;
     const label = `➤ ${destTitle} ~ ${e.travel_seconds} ثانیه‌ی سفر`;
     kb.text(label, `go:${e.id}`).row();
   }
   kb.text("🔄 تازه‌سازی", "paths:open");
 
   const headerText =
-  "🧭 صفحه‌ی مسیرها در اطلس باز شد…\n\n" +
-  `📍 جایگاه اکنون تو:\n` +
-  `🏰 ${region.title}\n` +
-  `⬙ نقطه: ${spot.title}\n\n` +
-  "در برابر تو این راه‌ها خودشان را آشکار می‌کنند:";
+    "🧭 صفحه‌ی مسیرها در اطلس باز شد…\n\n" +
+    `📍 جایگاه اکنون تو:\n` +
+    `🏰 ${region.title}\n` +
+    `⬙ نقطه: ${spot.title}\n\n` +
+    "در برابر تو این راه‌ها خودشان را آشکار می‌کنند:";
 
-await ctx.reply(headerText, { reply_markup: kb });
-
+  await ctx.reply(headerText, { reply_markup: kb });
 }
 
-async function showQuickMap(ctx: MyContext) {
+/**
+ * نقشه سریع من – فقط توضیح فانتزی از جایگاه فعلی
+ */
+async function showQuickMap(ctx: MyContext): Promise<void> {
   if (ctx.chat?.type !== "private") {
     await ctx.reply("نقشه‌ی درونی فقط در پی‌وی من باز می‌شود.");
     return;
@@ -218,20 +223,20 @@ async function showQuickMap(ctx: MyContext) {
 /**
  * ثبت پلیر با ریپلای /regplayer
  */
-async function handleRegPlayer(ctx: MyContext) {
+async function handleRegPlayer(ctx: MyContext): Promise<void> {
   if (ctx.from?.id !== MASTER_ID) {
     await ctx.reply("فقط اربابم میتونه پلیر ثبت کنه، حدتو بدون.");
     return;
   }
 
   if (!ctx.chat || ctx.chat.type === "private") {
-    await ctx.reply("دستور /regplayer رو باید داخل گروه و روی پیام پلیر بزنی (ریپلای).");
+    await ctx.reply("دستور /regplayer را باید داخل گروه و روی پیام پلیر بزنی (ریپلای).");
     return;
   }
 
   const reply = ctx.message?.reply_to_message;
   if (!reply || !reply.from) {
-    await ctx.reply("برای ثبت پلیر، باید روی پیام اون شخص ریپلای کنی و بعد /regplayer رو بفرستی.");
+    await ctx.reply("برای ثبت پلیر، باید روی پیام آن شخص ریپلای کنی و بعد /regplayer را بفرستی.");
     return;
   }
 
@@ -244,7 +249,7 @@ async function handleRegPlayer(ctx: MyContext) {
   if (!region) {
     await ctx.reply(
       "برای این گروه هنوز Region ثبت نشده.\n" +
-        "اول داخل همین گروه /worldadmin رو بزن و از پنل، Region این چت رو بساز."
+        "اول داخل همین گروه /worldadmin را بزن و از پنل، Region این چت را بساز."
     );
     return;
   }
@@ -260,12 +265,12 @@ async function handleRegPlayer(ctx: MyContext) {
   if (spErr || !spots || spots.length === 0) {
     await ctx.reply(
       "برای این Region هنوز هیچ Spotی تعریف نشده.\n" +
-        "از پنل /worldadmin → «ساخت Spot» رو بزن، بعد دوباره /regplayer رو اجرا کن."
+        "از پنل /worldadmin → «ساخت Spot» را بزن، بعد دوباره /regplayer را اجرا کن."
     );
     return;
   }
 
-  const spot = spots[0];
+  const spot = (spots as any[])[0];
 
   // آیا کاراکتر قبلاً وجود دارد؟
   const { data: existing, error: charErr } = await supabase
@@ -274,7 +279,6 @@ async function handleRegPlayer(ctx: MyContext) {
     .eq("tg_id", target.id)
     .maybeSingle();
 
-  // اگر کوئری خطا داد، فقط لاگ بگیر و ادامه بده
   if (charErr) {
     console.error("characters check error:", charErr);
   }
@@ -330,7 +334,7 @@ async function handleRegPlayer(ctx: MyContext) {
 /**
  * هندل رسیدن به مقصد + کیک از گروه قبلی + لینک ورود به گروه جدید
  */
-async function handleArrive(ctx: MyContext) {
+async function handleArrive(ctx: MyContext): Promise<void> {
   if (ctx.chat?.type !== "private") {
     await ctx.reply("برای تکمیل سفر، بیا توی پی‌وی من و /arrive بزن.");
     return;
@@ -349,7 +353,7 @@ async function handleArrive(ctx: MyContext) {
   }
 
   const now = new Date();
-  const ready = new Date(char.travel_ready_at);
+  const ready = new Date(char.travel_ready_at as string);
 
   if (now < ready) {
     const diffMs = ready.getTime() - now.getTime();
@@ -384,9 +388,9 @@ async function handleArrive(ctx: MyContext) {
     return;
   }
 
-  const oldRegionId = char.current_region_id;
+  const oldRegionId = char.current_region_id as number | null;
 
-  // آپدیت وضعیت کاراکتر به مقصد جدید (قبل از لاجیک تلگرام)
+  // آپدیت وضعیت کاراکتر به مقصد جدید
   const { error: updErr } = await supabase
     .from("characters")
     .update({
@@ -404,32 +408,30 @@ async function handleArrive(ctx: MyContext) {
     return;
   }
 
-  // حالا بخش تلگرام: اگر Region عوض شده و هر دو گروه تنظیم شده‌اند → کیک + لینک
   let extraText = "";
-  let kb: InlineKeyboard | undefined = undefined;
+  let kb: InlineKeyboard | undefined;
 
+  // اگر Region عوض شده، سعی کن از گروه قبلی کیک کنی و لینک گروه جدید را بفرستی
   if (oldRegionId && oldRegionId !== destRegion.id) {
     try {
-      // گرفتن اطلاعات Region قبلی برای پیدا کردن chat_id
       const { data: oldRegion, error: oldRegErr } = await supabase
         .from("regions")
         .select("id,title,telegram_chat_id")
         .eq("id", oldRegionId)
         .single();
 
-      const oldChatId = oldRegion?.telegram_chat_id;
-      const newChatId = destRegion.telegram_chat_id;
+      const oldChatId = oldRegion?.telegram_chat_id as number | undefined;
+      const newChatId = destRegion.telegram_chat_id as number | undefined;
 
-      // اگر chat_id قدیم و جدید موجود باشند، تلاش برای کیک + لینک
       if (!oldRegErr && oldChatId && newChatId) {
-        // کیک نرم: ban + unban
+        // کیک نرم از گروه قبلی
         try {
           await ctx.api.banChatMember(oldChatId, ctx.from!.id);
           await ctx.api.unbanChatMember(oldChatId, ctx.from!.id);
         } catch (kickErr) {
           console.error("kick from old chat error:", kickErr);
           extraText +=
-            "\n⚠️ نتونستم از گروه قبلی کیکت کنم (احتمالاً ادمین‌بودن یا پرمیشن کم دارم).";
+            "\n⚠️ نتوانستم از گروه قبلی کیکت کنم (احتمالاً ادمین‌بودن تو یا کم بودن دسترسی من).";
         }
 
         // ساخت لینک دعوت گروه جدید
@@ -438,18 +440,15 @@ async function handleArrive(ctx: MyContext) {
             creates_join_request: false,
           });
 
-          kb = new InlineKeyboard().url(
-            "ورود به مکان جدید",
-            invite.invite_link
-          );
+          kb = new InlineKeyboard().url("ورود به مکان جدید", invite.invite_link);
         } catch (invErr) {
           console.error("create invite link error:", invErr);
           extraText +=
-            "\n⚠️ نتونستم لینک ورود به گروه مقصد رو بسازم (احتمالاً دسترسی ساخت لینک ندارم).";
+            "\n⚠️ نتوانستم لینک ورود به گروه مقصد را بسازم (احتمالاً دسترسی ساخت لینک ندارم).";
         }
       } else {
         extraText +=
-          "\n⚠️ برای یکی از Regionها chat_id ثبت نشده؛ امکان مدیریت گروه‌ها وجود نداره.";
+          "\n⚠️ برای یکی از Regionها chat_id ثبت نشده؛ امکان مدیریت گروه‌ها وجود ندارد.";
       }
     } catch (err) {
       console.error("old region / telegram handling error:", err);
@@ -457,7 +456,6 @@ async function handleArrive(ctx: MyContext) {
     }
   }
 
-  // پیام نهایی
   const baseText =
     `به مقصد رسیدی! ✅\n` +
     `${destRegion.title} / ${destSpot.title}`;
@@ -467,15 +465,99 @@ async function handleArrive(ctx: MyContext) {
   });
 }
 
-export function registerTravelFeature(bot: Bot<MyContext>) {
-  // دکمه‌ی ریپلای‌کیبورد: «🧭 مسیر های من»
+/**
+ * ثبت سفر جدید از طریق Edge
+ */
+async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void> {
+  const { supabase } = ctx.services;
+  const char = await ensureCharacter(ctx);
+
+  // پیدا کردن Edge
+  const { data: edge, error: edgeErr } = await supabase
+    .from("edges")
+    .select("id,from_spot_id,to_spot_id,travel_seconds")
+    .eq("id", edgeId)
+    .single();
+
+  if (edgeErr || !edge) {
+    await ctx.reply("این مسیر دیگر وجود ندارد.");
+    return;
+  }
+
+  // مقصد این Edge
+  const { data: destSpot, error: destSpotErr } = await supabase
+    .from("spots")
+    .select("id,title,region_id")
+    .eq("id", edge.to_spot_id)
+    .single();
+
+  if (destSpotErr || !destSpot) {
+    await ctx.reply("مقصد این مسیر پیدا نشد.");
+    return;
+  }
+
+  const { data: destRegion, error: destRegErr } = await supabase
+    .from("regions")
+    .select("id,title")
+    .eq("id", destSpot.region_id)
+    .single();
+
+  if (destRegErr || !destRegion) {
+    await ctx.reply("Region مقصد پیدا نشد.");
+    return;
+  }
+
+  const now = new Date();
+  const ready = new Date(now.getTime() + (edge.travel_seconds as number) * 1000);
+
+  const { error: updErr } = await supabase
+    .from("characters")
+    .update({
+      pending_region_id: destRegion.id,
+      pending_spot_id: destSpot.id,
+      travel_ready_at: ready.toISOString(),
+      last_move_at: now.toISOString(),
+    })
+    .eq("tg_id", char.tg_id);
+
+  if (updErr) {
+    console.error("characters start travel update error:", updErr);
+    await ctx.reply("در شروع سفر خطایی رخ داد.");
+    return;
+  }
+
+  const kb = new InlineKeyboard().text("رسیدم؟", "travel:arrive");
+
+  await ctx.reply(
+    `در حال حرکت به سمت:\n${destRegion.title} / ${destSpot.title}\n` +
+      `⏳ زمان تقریبی سفر: ${edge.travel_seconds} ثانیه.\n\n` +
+      "وقتی فکر کردی زمانش گذشته، روی «رسیدم؟» بزن یا از /arrive استفاده کن.",
+    { reply_markup: kb }
+  );
+}
+
+/**
+ * رجیستر کردن همه‌ی هندلرهای مرتبط با سفر
+ */
+export function registerTravelFeature(bot: Bot<MyContext>): void {
+  // دکمه‌ی متنی «مسیر های من» در PV
   bot.hears("🧭 مسیر های من", async (ctx) => {
     await showPaths(ctx);
   });
 
-  // برای سازگاری: /path هم همون کار «مسیر های من» رو می‌کند
+  // برای سازگاری: /path هم همان کار را می‌کند
   bot.command("path", async (ctx) => {
     await showPaths(ctx);
+  });
+
+  // دکمه‌ی متنی «نقشه سریع من»
+  bot.hears("🗺 نقشه سریع من", async (ctx) => {
+    await showQuickMap(ctx);
+  });
+
+  // دستور /mymap نیز همان کار را انجام دهد
+  bot.command("mymap", async (ctx) => {
+    await showQuickMap(ctx);
   });
 
   // دستور ثبت پلیر (فقط ارباب، فقط روی ریپلای توی گروه)
@@ -483,7 +565,7 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
     await handleRegPlayer(ctx);
   });
 
-  // دکمه‌ی inline برای باز کردن دوباره لیست مسیرها
+  // باز کردن دوباره لیست مسیرها
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data || "";
     if (data === "paths:open") {
@@ -509,71 +591,7 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    const { supabase } = ctx.services;
-    const char = await ensureCharacter(ctx);
-
-    // پیدا کردن Edge
-    const { data: edge, error: edgeErr } = await supabase
-      .from("edges")
-      .select("id,from_spot_id,to_spot_id,travel_seconds")
-      .eq("id", edgeId)
-      .single();
-
-    if (edgeErr || !edge) {
-      await ctx.reply("این مسیر دیگر وجود ندارد.");
-      return;
-    }
-
-    // مقصد این Edge
-    const { data: destSpot, error: destSpotErr } = await supabase
-      .from("spots")
-      .select("id,title,region_id")
-      .eq("id", edge.to_spot_id)
-      .single();
-
-    if (destSpotErr || !destSpot) {
-      await ctx.reply("مقصد این مسیر پیدا نشد.");
-      return;
-    }
-
-    const { data: destRegion, error: destRegErr } = await supabase
-      .from("regions")
-      .select("id,title")
-      .eq("id", destSpot.region_id)
-      .single();
-
-    if (destRegErr || !destRegion) {
-      await ctx.reply("Region مقصد پیدا نشد.");
-      return;
-    }
-
-    const now = new Date();
-    const ready = new Date(now.getTime() + edge.travel_seconds * 1000);
-
-    const { error: updErr } = await supabase
-      .from("characters")
-      .update({
-        pending_region_id: destRegion.id,
-        pending_spot_id: destSpot.id,
-        travel_ready_at: ready.toISOString(),
-        last_move_at: now.toISOString(),
-      })
-      .eq("tg_id", char.tg_id);
-
-    if (updErr) {
-      console.error("characters start travel update error:", updErr);
-      await ctx.reply("در شروع سفر خطایی رخ داد.");
-      return;
-    }
-
-    const kb = new InlineKeyboard().text("رسیدم؟", "travel:arrive");
-
-    await ctx.reply(
-      `در حال حرکت به سمت:\n${destRegion.title} / ${destSpot.title}\n` +
-        `زمان تقریبی سفر: ${edge.travel_seconds} ثانیه.\n\n` +
-        "بعد از اتمام زمان، روی «رسیدم؟» بزن یا از /arrive استفاده کن.",
-      { reply_markup: kb }
-    );
+    await startTravelFromEdge(ctx, edgeId);
   });
 
   // /arrive برای تکمیل سفر
