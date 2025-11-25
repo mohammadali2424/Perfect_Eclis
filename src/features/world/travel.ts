@@ -62,6 +62,106 @@ async function getRegionByChatId(ctx: MyContext, chatId: number) {
   if (error || !data) return null;
   return data;
 }
+/**
+ * نمایش مسیرهای قابل دسترس از لوکیشن فعلی کاربر
+ */
+async function showPaths(ctx: MyContext) {
+  if (ctx.chat?.type !== "private") {
+    await ctx.reply("برای دیدن «مسیر های من» بیا توی پی‌وی بات.");
+    return;
+  }
+
+  const { supabase } = ctx.services;
+  const char = await ensureCharacter(ctx);
+
+  if (!char.current_spot_id) {
+    await ctx.reply(
+      "هنوز مسیری اینجا ساخته نشده.\n" +
+      
+    );
+    return;
+  }
+
+  // Spot فعلی
+  const { data: spot, error: spotErr } = await supabase
+    .from("spots")
+    .select("id,title,region_id")
+    .eq("id", char.current_spot_id)
+    .single();
+
+  if (spotErr || !spot) {
+    await ctx.reply("لوکیشن فعلی‌ات در نقشه پیدا نشد.");
+    return;
+  }
+
+  // Region فعلی
+  const { data: region, error: regErr } = await supabase
+    .from("regions")
+    .select("id,title")
+    .eq("id", spot.region_id)
+    .single();
+
+  if (regErr || !region) {
+    await ctx.reply("منطقه فعلی‌ات در نقشه پیدا نشد.");
+    return;
+  }
+
+  // Edgeهای خروجی از این Spot
+  const { data: edges, error: edgeErr } = await supabase
+    .from("edges")
+    .select("id,from_spot_id,to_spot_id,travel_seconds")
+    .eq("from_spot_id", spot.id);
+
+  if (edgeErr) {
+    console.error("edges select error:", edgeErr);
+    await ctx.reply("در خواندن مسیرها خطایی رخ داد.");
+    return;
+  }
+
+  if (!edges || edges.length === 0) {
+    await ctx.reply(
+      `مکان فعلی:\n${region.title} / ${spot.title}\n\n` +
+        "از این نقطه هیچ مسیری تعریف نشده.\n" +
+        "ارباب باید از پنل /worldadmin برای این Spot Edge بسازد."
+    );
+    return;
+  }
+
+  // اسم مقصدها
+  const toIds = edges.map((e: any) => e.to_spot_id);
+  const { data: destSpots, error: destErr } = await supabase
+    .from("spots")
+    .select("id,title")
+    .in("id", toIds);
+
+  if (destErr || !destSpots) {
+    await ctx.reply("در خواندن مقصدها خطایی رخ داد.");
+    return;
+  }
+
+  const destMap = new Map<number, string>();
+  for (const d of destSpots) {
+    destMap.set(d.id, d.title);
+  }
+
+  const kb = new InlineKeyboard();
+  for (const e of edges) {
+    const destTitle = destMap.get(e.to_spot_id) || `Spot ${e.to_spot_id}`;
+    const label = `${destTitle} (${e.travel_seconds}s)`;
+    kb.text(label, `go:${e.id}`).row();
+  }
+  kb.text("🔄 تازه‌سازی", "paths:open");
+
+  const headerText =
+  "🧭 صفحه‌ی مسیرها در اطلس باز شد…\n\n" +
+  `📍 جایگاه اکنون تو:\n` +
+  `🏰 ${region.title}\n` +
+  `⬙ نقطه: ${spot.title}\n\n` +
+  "در برابر تو این راه‌ها خودشان را آشکار می‌کنند:";
+
+await ctx.reply(headerText, { reply_markup: kb });
+
+}
 
 async function showQuickMap(ctx: MyContext) {
   if (ctx.chat?.type !== "private") {
@@ -113,103 +213,6 @@ async function showQuickMap(ctx: MyContext) {
     "برای دیدن راه‌های قابل پیمایش، از «🧭 مسیر های من» استفاده کن.";
 
   await ctx.reply(text);
-}
-
-/**
- * نمایش مسیرهای قابل دسترس از لوکیشن فعلی کاربر
- */
-async function showPaths(ctx: MyContext) {
-  if (ctx.chat?.type !== "private") {
-    await ctx.reply("برای دیدن «مسیر های من» بیا توی پی‌وی بات.");
-    return;
-  }
-
-  const { supabase } = ctx.services;
-  const char = await ensureCharacter(ctx);
-
-  if (!char.current_spot_id) {
-    await ctx.reply(
-      "هنوز لوکیشن اولیه‌ای برایت ثبت نشده.\n" +
-        "ارباب باید با دستور /regplayer توی یکی از گروه‌ها، تو رو ثبت کنه."
-    );
-    return;
-  }
-
-  // Spot فعلی
-  const { data: spot, error: spotErr } = await supabase
-    .from("spots")
-    .select("id,title,region_id")
-    .eq("id", char.current_spot_id)
-    .single();
-
-  if (spotErr || !spot) {
-    await ctx.reply("لوکیشن فعلی‌ات در دیتابیس پیدا نشد.");
-    return;
-  }
-
-  // Region فعلی
-  const { data: region, error: regErr } = await supabase
-    .from("regions")
-    .select("id,title")
-    .eq("id", spot.region_id)
-    .single();
-
-  if (regErr || !region) {
-    await ctx.reply("Region فعلی‌ات در دیتابیس پیدا نشد.");
-    return;
-  }
-
-  // Edgeهای خروجی از این Spot
-  const { data: edges, error: edgeErr } = await supabase
-    .from("edges")
-    .select("id,from_spot_id,to_spot_id,travel_seconds")
-    .eq("from_spot_id", spot.id);
-
-  if (edgeErr) {
-    console.error("edges select error:", edgeErr);
-    await ctx.reply("در خواندن مسیرها خطایی رخ داد.");
-    return;
-  }
-
-  if (!edges || edges.length === 0) {
-    await ctx.reply(
-      `مکان فعلی:\n${region.title} / ${spot.title}\n\n` +
-        "از این نقطه هیچ مسیری تعریف نشده.\n" +
-        "ارباب باید از پنل /worldadmin برای این Spot Edge بسازد."
-    );
-    return;
-  }
-
-  // اسم مقصدها
-  const toIds = edges.map((e: any) => e.to_spot_id);
-  const { data: destSpots, error: destErr } = await supabase
-    .from("spots")
-    .select("id,title")
-    .in("id", toIds);
-
-  if (destErr || !destSpots) {
-    await ctx.reply("در خواندن مقصدها خطایی رخ داد.");
-    return;
-  }
-
-  const destMap = new Map<number, string>();
-  for (const d of destSpots) {
-    destMap.set(d.id, d.title);
-  }
-
-  const kb = new InlineKeyboard();
-  for (const e of edges) {
-    const destTitle = destMap.get(e.to_spot_id) || `Spot ${e.to_spot_id}`;
-    const label = `${destTitle} (${e.travel_seconds}s)`;
-    kb.text(label, `go:${e.id}`).row();
-  }
-  kb.text("🔄 تازه‌سازی", "paths:open");
-
-  await ctx.reply(
-    `مکان فعلی:\n${region.title} / ${spot.title}\n\n` +
-      "مقصدهای در دسترس:",
-    { reply_markup: kb }
-  );
 }
 
 /**
