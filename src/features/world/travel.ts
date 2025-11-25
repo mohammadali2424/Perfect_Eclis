@@ -147,7 +147,7 @@ async function showPaths(ctx: MyContext) {
   const kb = new InlineKeyboard();
   for (const e of edges) {
     const destTitle = destMap.get(e.to_spot_id) || `Spot ${e.to_spot_id}`;
-    const label = `${destTitle} (${e.travel_seconds}s)`;
+    const label = `➤ ${destTitle} ~ ${e.travel_seconds} ثانیه‌ی سفر`;
     kb.text(label, `go:${e.id}`).row();
   }
   kb.text("🔄 تازه‌سازی", "paths:open");
