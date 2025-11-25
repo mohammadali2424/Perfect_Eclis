@@ -2,9 +2,9 @@ import { Bot, InlineKeyboard, Keyboard } from "grammy";
 import { MyContext } from "../../core/types";
 
 // فونت‌های فانتزی خاندان‌ها
-const CLAN_STELL = "🪽 𝓢𝓽𝓮𝓵𝓵𝓪𝓻𝓲𝓮𝓽𝓱 — تاجداران سپیده‌دم";
-const CLAN_WALK = "⚡ 𝕎𝕒𝕝𝕜𝕖𝕣 — وارثان نیرو";
-const CLAN_NECRO = "🖤 𝕹𝖊𝖈𝖗𝖔𝖘𝖍𝖆𝖉𝖊 — ندیمان سایه";
+const CLAN_STELL = "🪽 𝑺𝒕𝒆𝒍𝒍𝒂𝒓𝒊𝒆𝒕𝒉 — تاجداران سپیده‌دم";
+const CLAN_WALK = "⚡ 𝑾𝒂𝒍𝒌𝒆𝒓 — وارثان نیرو";
+const CLAN_NECRO = "🖤 𝑵𝒆𝒄𝒓𝒐𝒔𝒉𝒂𝒅𝒆 — ندیمان سایه";
 const CLAN_TORR = "🔥 𝑻𝒐𝒓𝒓𝒆𝒏𝒕𝒓𝒆𝒔𝒔 — وارثان شعله";
 
 // کلیدهای منطقی (برای ذخیره در دیتابیس)
