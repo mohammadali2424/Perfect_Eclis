@@ -1,4 +1,5 @@
 import { Bot, session, InlineKeyboard, Keyboard } from "grammy";
+import { registerOnboardingFeature } from "../features/world/onboarding";
 import { BOT_TOKEN, MASTER_ID } from "./config";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
