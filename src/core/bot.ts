@@ -36,9 +36,11 @@ registerTravelFeature(bot);
 registerWorldAdminFeature(bot);
 
 bot.command("start", async (ctx) => {
-  const kb = new Keyboard()
-    .text("🧭 مسیر های من")
-    .resized(); // کیبورد رو جمع‌وجور می‌کنه
+  const replyKb = new Keyboard()
+  .text("🧭 مسیر های من")
+  .row()
+  .text("🗺 نقشه سریع من")
+  .resized();
 
   await ctx.reply(
     "به Pathweaver خوش اومدی.\n" +
