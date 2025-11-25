@@ -126,17 +126,18 @@ async function showClanSelect(ctx: MyContext) {
   await sendUiPage(ctx, text, { reply_markup: kb });
 }
 
-// لودینگ بعد از انتخاب خاندان + درخواست نام
 async function showClanLoadingAndAskName(ctx: MyContext, clanKey: ClanKey) {
   const label = labelFromKey(clanKey);
 
   const text =
-    "⚙️ در حال سینک کردن خون خاندان…\n" +
+    "🩸 مهر خاندان بر صفحه‌ی اطلس ظاهر می‌شود…\n" +
     `${label}\n\n` +
-    "███▒▒▒▒▒▒▒▒ 30%\n" +
-    "██████▒▒▒▒ 60%\n" +
-    "██████████ 100%\n\n" +
-    "✨ اتصال روح باستانی کامل شد.\n\n" +
+    "✨ خونت با کتاب هم‌صدا می‌شود.\n" +
+    "ᚦᚱᚨ ᚹᚨ ᚱᚾ…\n\n" +
+    "▰▱▱▱▱▱▱▱▱▱ 10%\n" +
+    "▰▰▰▰▱▱▱▱▱▱ 50%\n" +
+    "▰▰▰▰▰▰▰▰▰▰ 100%\n\n" +
+    "📜 نامت بر لبه‌ی صفحه زمزمه می‌شود…\n" +
     "📝 حالا نام کاراکتر خود را بفرست:\n" +
     "(با همان فونتی که در رول پلی استفاده می‌کنی)";
 
@@ -145,6 +146,7 @@ async function showClanLoadingAndAskName(ctx: MyContext, clanKey: ClanKey) {
 
   await sendUiPage(ctx, text);
 }
+
 
 // اتمام ثبت‌نام: ذخیره نام + خاندان
 async function finishRegistration(ctx: MyContext, name: string) {
