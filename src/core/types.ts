@@ -29,10 +29,12 @@ export interface SessionData {
   edge_from_spot_id?: string;
   edge_to_spot_id?: string;
 
-  // ویزارد ثبت‌نام
-  reg_step?: "name" | "clan";
-  reg_name?: string;
-  reg_clan?: string;
+ ui_last_menu_id?: number;
+
+  // ویزارد ثبت‌نام بازیکن
+  reg_step?: "clan" | "name";
+  reg_clan?: string | null;
+  reg_name?: string | null;
 }
 
 export type MyContext = Context &
