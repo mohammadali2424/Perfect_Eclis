@@ -1,3 +1,4 @@
+
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
 import { MASTER_ID } from "../../core/config";
@@ -9,18 +10,16 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-// پاک کردن آخرین پیام مدیریتی توی پی‌وی ارباب
 async function deleteLastPm(ctx: MyContext) {
   try {
     if (ctx.session.__last_pm_id && ctx.from) {
       await ctx.api.deleteMessage(ctx.from.id, ctx.session.__last_pm_id);
     }
   } catch {
-    // مهم نیست اگر نتونست پاک کنه
+    // ignore
   }
 }
 
-// ارسال پیام پنل توی پی‌وی + ذخیره‌ی message_id
 async function sendManagedPm(
   ctx: MyContext,
   text: string,
@@ -37,9 +36,6 @@ async function sendManagedPm(
   ctx.session.__last_pm_id = msg.message_id;
 }
 
-/**
- * گرفتن Region بر اساس chat_id گروه
- */
 async function getRegionByChatId(ctx: MyContext, chatId: number) {
   const { supabase } = ctx.services;
   const { data, error } = await supabase
@@ -52,9 +48,6 @@ async function getRegionByChatId(ctx: MyContext, chatId: number) {
   return data as any;
 }
 
-/**
- * ساخت Region جدید برای یک گروه
- */
 async function ensureRegionForGroup(
   ctx: MyContext,
   chatId: number,
@@ -84,9 +77,6 @@ async function ensureRegionForGroup(
   return data as any;
 }
 
-/**
- * ساخت کیبورد اصلی پنل Region
- */
 function buildRegionMenu(region: any) {
   const kb = new InlineKeyboard();
 
@@ -107,10 +97,7 @@ function buildRegionMenu(region: any) {
   return { header, kb };
 }
 
-/**
- * گرفتن همه‌ی Spot های یک Region
- */
-async function getSpotsForRegion(ctx: MyContext, regionId: number) {
+async function getSpotsForRegion(ctx: MyContext, regionId: number | string) {
   const { supabase } = ctx.services;
   const { data, error } = await supabase
     .from("spots")
@@ -126,9 +113,6 @@ async function getSpotsForRegion(ctx: MyContext, regionId: number) {
   return (data || []) as { id: number; title: string }[];
 }
 
-/**
- * ساخت کیبورد انتخاب Spot
- */
 function buildSpotPickerKeyboard(
   spots: { id: number; title: string }[],
   mode: "from" | "to" | "delete_from"
@@ -153,9 +137,6 @@ function buildSpotPickerKeyboard(
   return kb;
 }
 
-/**
- * گرفتن Edge های خروجی از یک Spot
- */
 async function getEdgesFromSpot(ctx: MyContext, fromSpotId: number) {
   const { supabase } = ctx.services;
 
@@ -178,9 +159,6 @@ async function getEdgesFromSpot(ctx: MyContext, fromSpotId: number) {
   }[];
 }
 
-/**
- * ساخت کیبورد حذف Edge ها
- */
 async function buildDeleteEdgeKeyboard(ctx: MyContext, fromSpotId: number) {
   const edges = await getEdgesFromSpot(ctx, fromSpotId);
   const { supabase } = ctx.services;
@@ -194,7 +172,6 @@ async function buildDeleteEdgeKeyboard(ctx: MyContext, fromSpotId: number) {
     };
   }
 
-  // گرفتن عنوان Spot مقصد برای هر edge
   const toIds = Array.from(new Set(edges.map((e) => e.to_spot_id)));
   const { data: spots, error } = await supabase
     .from("spots")
@@ -224,11 +201,7 @@ async function buildDeleteEdgeKeyboard(ctx: MyContext, fromSpotId: number) {
   };
 }
 
-/**
- * ثبت فیچر مدیریت نقشه‌ی جهان (World Admin)
- */
 export function registerWorldAdminFeature(bot: Bot<MyContext>) {
-  // دستور /worldadmin فقط برای ارباب و فقط داخل گروه
   bot.command("worldadmin", async (ctx) => {
     if (!ctx.from) return;
 
@@ -249,19 +222,16 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     const chatId = chat.id;
     const title = chat.title ?? `Group ${chatId}`;
 
-    // حذف پیام دستور در گروه (اگر بشه)
     if (ctx.message) {
       try {
         await ctx.api.deleteMessage(chatId, ctx.message.message_id);
       } catch {
-        // مهم نیست
+        // ignore
       }
     }
 
-    // اطمینان از وجود Region برای این گروه
     const region = await ensureRegionForGroup(ctx, chatId, title);
 
-    // ذخیره‌ی وضعیت در سشن
     ctx.session.worldAdmin = {
       mode: "idle",
       regionChatId: chatId,
@@ -270,12 +240,10 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       toSpotId: null,
     };
 
-    // نمایش پنل در پی‌وی ارباب
     const { header, kb } = buildRegionMenu(region);
     await sendManagedPm(ctx, header, kb);
   });
 
-  // هندلر دکمه‌های inline مربوط به wa:*
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery?.data || "";
     if (!data.startsWith("wa:")) {
@@ -447,7 +415,6 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
           return;
         }
 
-        // بعد از حذف، اگر fromSpotId داریم، لیست رو رفرش کن
         if (ses.fromSpotId) {
           const { text, kb } = await buildDeleteEdgeKeyboard(
             ctx,
@@ -461,13 +428,11 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       }
 
       default: {
-        // ناشناخته
         await next();
       }
     }
   });
 
-  // هندل کردن پیام‌های متنی توی پی‌وی برای مراحل ساخت Spot و Edge time
   bot.on("message:text", async (ctx, next) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID) {
       await next();
@@ -496,6 +461,29 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       }
 
       const slug = slugify(text);
+
+      const { data: exists, error: checkErr } = await supabase
+        .from("spots")
+        .select("id")
+        .eq("region_id", regionId)
+        .eq("slug", slug)
+        .maybeSingle();
+
+      if (checkErr) {
+        console.error("spot check error:", checkErr);
+        await sendManagedPm(ctx, "خطایی در بررسی Spot رخ داد.");
+        return;
+      }
+
+      if (exists) {
+        await sendManagedPm(
+          ctx,
+          `⚠️ این Spot قبلاً در همین Region ثبت شده:\n\n<code>${text}</code>\n\n` +
+            "اگر نیاز داری Spot جدیدی بسازی، اسم متفاوتی انتخاب کن یا اول Spot قبلی را حذف کن."
+        );
+        ses.mode = "idle";
+        return;
+      }
 
       const { error } = await supabase.from("spots").insert({
         region_id: regionId,
@@ -580,7 +568,6 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    // اگر mode چیز دیگری بود، فعلاً نادیده بگیر
     await next();
   });
 }
