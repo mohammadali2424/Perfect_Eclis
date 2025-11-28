@@ -1,46 +1,55 @@
 import { Bot, session } from "grammy";
-import { BOT_TOKEN } from "./config";
-import { supabase } from "./supabase";
-import { MyContext, SessionData, Services } from "./types";
+import { createClient } from "@supabase/supabase-js";
+import type { MyContext, SessionData } from "./types";
 
-import { registerSecurityFeature } from "../features/security/guard";
-import { registerTravelFeature } from "../features/world/travel";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
-import { registerRegistrationFeature } from "../features/registration";
+import { registerTravelFeature } from "../features/world/travel";
 import { registerOnboardingFeature } from "../features/world/onboarding";
 
+// توکن بات از env
+const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
-  throw new Error("BOT_TOKEN is required");
+  throw new Error("BOT_TOKEN is not set in environment variables");
 }
 
-// خود بات اصلی
-export const bot = new Bot<MyContext>(BOT_TOKEN);
+// تنظیم Supabase از env
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
 
-// سشن گرامی (حافظه موقت برای هر یوزر)
-bot.use(
-  session({
-    initial: (): SessionData => ({
-      // هر چیزی توی SessionData هست می‌تونه اینجا مقدار اولیه بگیره
-      ui_last_menu_id: undefined,
-      reg_step: undefined,
-      reg_clan: null,
-      reg_name: null,
-      // اگر توی SessionData چیزای دیگه‌ای هم داری، گرامی خودش بعداً اضافه می‌کنه
-    }),
-  })
-);
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  throw new Error("SUPABASE_URL or SUPABASE_KEY is missing in env");
+}
 
-// تزریق سرویس‌ها (مثل supabase) داخل ctx.services
-bot.use((ctx, next) => {
-  ctx.services = {
-    supabase,
-  } as Services;
-  return next();
-});
+// کلاینت Supabase
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// فیچرهای مختلف ربات
-registerSecurityFeature(bot);        // محافظت: ارباب، لفت از گروه‌های اضافی و…
-registerOnboardingFeature(bot);      // اطلس، ثبت‌نام، انتخاب خاندان
-registerWorldAdminFeature(bot);      // پنل ساخت Region/Spot/Edge
-registerTravelFeature(bot);          // سفر بین مسیرها، مسیرهای من، نقشه سریع من
-registerRegistrationFeature(bot);    // هرچی توی registration.ts نوشتی
+// سشن اولیه همیشه یه آبجکت خالیه
+function initialSession(): SessionData {
+  return {};
+}
+
+// ساخت بات با تایپ MyContext
+export function createBot(): Bot<MyContext> {
+  const bot = new Bot<MyContext>(BOT_TOKEN);
+
+  // سشن in-memory (کافیه برای ربات تو)
+  bot.use(
+    session({
+      initial: initialSession,
+    })
+  );
+
+  // تزریق supabase به ctx.services
+  bot.use(async (ctx, next) => {
+    (ctx as any).services = { supabase };
+    await next();
+  });
+
+  // ثبت فیچرها
+  registerOnboardingFeature(bot);
+  registerWorldAdminFeature(bot);
+  registerTravelFeature(bot);
+
+  return bot;
+}
