@@ -2,7 +2,7 @@ import { Bot, session } from "grammy";
 import { BOT_TOKEN } from "./config";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
-
+import { registerWorldCharactersFeature } from "../features/world/characters";
 import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
@@ -40,6 +40,7 @@ bot.use((ctx, next) => {
 
 // فیچرهای مختلف ربات
 registerSecurityFeature(bot);        // محافظت: ارباب، لفت از گروه‌های اضافی و…
+registerWorldCharactersFeature(bot);
 registerOnboardingFeature(bot);      // اطلس، ثبت‌نام، انتخاب خاندان
 registerWorldAdminFeature(bot);      // پنل ساخت Region/Spot/Edge
 registerTravelFeature(bot);          // سفر بین مسیرها، مسیرهای من، نقشه سریع من
