@@ -1,7 +1,7 @@
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext, CharacterState } from "../../core/types";
 
-// کمکی: لود یا ساخت کاراکتر
+// لود یا ساخت کاراکتر
 async function getOrCreateCharacter(ctx: MyContext): Promise<CharacterState> {
   const { supabase } = ctx.services;
   const tgId = ctx.from!.id;
@@ -12,9 +12,7 @@ async function getOrCreateCharacter(ctx: MyContext): Promise<CharacterState> {
     .eq("tg_id", tgId)
     .single();
 
-  // اگر اررور از نوع "هیچ ردیفی نیست" باشه، Supabase معمولاً status 406 / 404 می‌ده
   if (error && error.code !== "PGRST116") {
-    // فقط لاگ می‌کنیم، چون ممکنه فقط "no rows" باشه
     console.log("Supabase get character error:", error.message);
   }
 
@@ -29,9 +27,7 @@ async function getOrCreateCharacter(ctx: MyContext): Promise<CharacterState> {
       pending_region_id: null,
       pending_spot_id: null,
     };
-    const { error: insertError } = await supabase
-      .from("characters")
-      .insert(emptyChar);
+    const { error: insertError } = await supabase.from("characters").insert(emptyChar);
     if (insertError) {
       console.error("Supabase insert character error:", insertError);
     }
@@ -41,7 +37,7 @@ async function getOrCreateCharacter(ctx: MyContext): Promise<CharacterState> {
   return data as CharacterState;
 }
 
-// کمکی: اگر کاراکتر مکان نداشت، سعی می‌کنیم یک spot دیفالت پیدا کنیم
+// اگر مکان نداره، سعی می‌کنیم اسپاونش کنیم روی یه spot دیفالت
 async function ensureCharacterHasLocation(
   ctx: MyContext,
   char: CharacterState
@@ -50,7 +46,6 @@ async function ensureCharacterHasLocation(
 
   const { supabase } = ctx.services;
 
-  // هر spotی که is_default = true باشه
   const { data: spots, error } = await supabase
     .from("spots")
     .select("id, region_id")
@@ -63,7 +58,6 @@ async function ensureCharacterHasLocation(
   }
 
   if (!spots || spots.length === 0) {
-    // هیچ نقطه شروعی تعریف نشده
     return char;
   }
 
@@ -93,12 +87,11 @@ async function ensureCharacterHasLocation(
 }
 
 export function registerTravelFeature(bot: Bot<MyContext>) {
-  // دستور اصلی مسیر
+  // دیدن مسیرهای قابل حرکت
   bot.command("path", async (ctx) => {
     if (!ctx.from) return;
     let char = await getOrCreateCharacter(ctx);
 
-    // اگر هنوز هیچ مکانی نداره، سعی کن یک نقطه شروع براش ست کنی
     char = await ensureCharacterHasLocation(ctx, char);
 
     if (!char.current_region_id || !char.current_spot_id) {
@@ -111,7 +104,6 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
 
     const { supabase } = ctx.services;
 
-    // لوکیشن فعلی
     const { data: spot, error: spotError } = await supabase
       .from("spots")
       .select("id, title")
@@ -124,7 +116,6 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    // همه مسیرهایی که از این spot شروع می‌شن
     const { data: edges, error: edgeError } = await supabase
       .from("edges")
       .select("id, to_spot_id, travel_seconds")
@@ -144,7 +135,6 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
     if (!edges || edges.length === 0) {
       text += "(هیچ مسیری در این نقطه ثبت نشده است.)";
     } else {
-      // برای گرفتن عنوان مقصد، اول همه to_spot_id ها رو جمع می‌کنیم
       const toIds = edges.map((e: any) => e.to_spot_id);
       const { data: destSpots, error: destErr } = await supabase
         .from("spots")
@@ -161,8 +151,7 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
       destSpots?.forEach((s: any) => mapTitle.set(s.id, s.title));
 
       for (const edge of edges as any[]) {
-        const title =
-          mapTitle.get(edge.to_spot_id) || "مسیر ناشناس";
+        const title = mapTitle.get(edge.to_spot_id) || "مسیر ناشناس";
         kb.text(`رفتن به ${title}`, `move:${edge.id}`).row();
       }
     }
@@ -170,7 +159,7 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
     await ctx.reply(text, { reply_markup: kb });
   });
 
-  // دکمه حرکت
+  // دکمهٔ حرکت
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data || "";
     if (!data.startsWith("move:")) {
@@ -187,7 +176,6 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
     const { supabase } = ctx.services;
     const char = await getOrCreateCharacter(ctx);
 
-    // خود edge
     const { data: edgeRow, error: edgeError } = await supabase
       .from("edges")
       .select("id, travel_seconds, to_spot_id")
@@ -203,7 +191,6 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    // spot مقصد
     const { data: destSpot, error: destSpotErr } = await supabase
       .from("spots")
       .select("id, title, region_id")
@@ -223,7 +210,6 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
     const now = Date.now();
     const readyAt = new Date(now + travelSeconds * 1000).toISOString();
 
-    // ست‌کردن سفر در حال انجام + مقصد
     const { error: updateError } = await supabase
       .from("characters")
       .update({
@@ -275,7 +261,6 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    // اطلاعات region مقصد
     const { data: destRegion, error: regionErr } = await supabase
       .from("regions")
       .select("id, title, telegram_chat_id")
@@ -290,7 +275,6 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    // spot مقصد برای نمایش اسم
     const { data: destSpot, error: spotErr } = await supabase
       .from("spots")
       .select("id, title")
@@ -306,9 +290,8 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
     }
 
     const oldRegionId = char.current_region_id;
-
-    // آپدیت مکان فعلی به مقصد
     const nowIso = new Date().toISOString();
+
     const { error: updCharErr } = await supabase
       .from("characters")
       .update({
@@ -329,17 +312,15 @@ export function registerTravelFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    // 🔜 اینجا جاییه که در نسخه بعد:
-    // - اگر oldRegionId != destRegion.id بود:
-    //   * از گروه منطقه قبلی کیکش می‌کنیم (ban+unban)
-    //   * یک invite link از destRegion.telegram_chat_id می‌گیریم
-    //   * با دکمه اینلاین براش می‌فرستیم
-    //
-    // فعلاً فقط پیام ساده می‌دهیم:
+    // 🔜 بعداً اینجا:
+    // اگر oldRegionId != destRegion.id
+    //   - از گروه قبلی کیک
+    //   - ساخت/گرفتن invite link برای destRegion.telegram_chat_id
+    //   - ارسال دکمه اینلاین با لینک
 
     await ctx.reply(
       `سفرت به پایان رسید.\nالان در منطقه «${destRegion.title}» و لوکیشن «${destSpot.title}» هستی.\n` +
-        "در گام بعدی، اینجا لینک دروازه‌ی چت مربوط به این منطقه هم برایت باز خواهد شد."
+        "در نسخه‌ی بعدی همین‌جا لینک چت مقصد هم برایت باز می‌شود."
     );
   });
 }
