@@ -57,8 +57,7 @@ async function getCurrentRegion(ctx: MyContext): Promise<any | null> {
 
   if (!regionChatId) {
     await ctx.reply(
-      "هنوز هیچ گروهی برای مدیریت انتخاب نشده.\n" +
-        "از داخل گروه موردنظر، /worldadmin را اجرا کن."
+      "هنوز این منطقه ساخته نشده.\n" +
     );
     return null;
   }
@@ -182,17 +181,17 @@ function registerWorldAdminCommand(bot: Bot<MyContext>) {
       toSpotId: null,
     });
 
-    // پیام به پی‌وی ارباب
     const text =
-      "🔧 پنل مدیریت جهان برای این گروه باز شد.\n\n" +
-      `نام گروه: ${chatTitle}\n` +
-      `chat_id: ${chatId}\n\n` +
-      "از دکمه‌های زیر برای ساخت Spot و مسیرها استفاده کن.";
+  "🔧 پنل مدیریت جهان برای این گروه باز شد.\n\n" +
+  `نام گروه: ${chatTitle}\n` +
+  `chat_id: ${chatId}\n\n` +
+  "از دکمه‌های زیر برای ساخت Spot و مسیرها استفاده کن.";
 
-    try {
-      await ctx.api.sendMessage(ctx.from.id, text, {
-        reply_markup: buildAdminMainKeyboard(),
-      });
+await ctx.api.sendMessage(ctx.from.id, text, {
+  reply_markup: buildAdminMainKeyboard(),
+
+});
+
     } catch (err) {
       console.error("send PM worldadmin error:", err);
       await ctx.reply(
