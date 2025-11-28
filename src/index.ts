@@ -1,3 +1,4 @@
+// src/index.ts
 import express from "express";
 import { bot } from "./core/bot.js";
 import { PORT } from "./core/config.js";
@@ -5,6 +6,7 @@ import { handleStart, handleMainMenuText } from "./features/world/onboarding.js"
 import {
   handleWorldAdminCommand,
   handleWorldAdminCallback,
+  handleWorldAdminText,
 } from "./features/world/admin-builder.js";
 import { handleNewChatMembers } from "./features/security/guard.js";
 import { handleTravelCallback } from "./features/world/travel.js";
@@ -12,7 +14,7 @@ import { handleTravelCallback } from "./features/world/travel.js";
 // دستورات پایه
 bot.command("start", handleStart);
 
-// تست زنده بودن ربات
+// تست
 bot.command("ping", async (ctx) => {
   await ctx.reply("pong 🧬");
 });
@@ -30,10 +32,10 @@ bot.hears(
   handleMainMenuText,
 );
 
-// پنل مدیریت جهان
-bot.command("worldadmin", handleWorldAdminCommand);
+// پنل مدیریت جهان: /aw
+bot.command("aw", handleWorldAdminCommand);
 
-// کال‌بک‌های اینلاین
+// callbackهای اینلاین
 bot.on("callback_query:data", async (ctx) => {
   const data = ctx.callbackQuery?.data ?? "";
   if (data.startsWith("wa:")) {
@@ -44,10 +46,13 @@ bot.on("callback_query:data", async (ctx) => {
   }
 });
 
+// تکست‌های پی‌وی برای ویزارد ریجن/Spot/Edge
+bot.on("message:text", handleWorldAdminText);
+
 // گارد اضافه‌شدن به گروه‌ها
 bot.on("message:new_chat_members", handleNewChatMembers);
 
-// لاگ ساده برای هر پیام
+// لاگ ساده
 bot.on("message", (ctx) => {
   console.log(
     "Incoming message from",
@@ -59,24 +64,24 @@ bot.on("message", (ctx) => {
   );
 });
 
-// هندل خطا
+// خطاها
 bot.catch((err) => {
   console.error("Bot error:", err.error);
 });
 
-// ---- سرور ساده برای Render (فقط برای پورت) ----
+// سرور ساده برای Render
 const app = express();
 
 app.get("/", (_req, res) => {
   res
     .status(200)
-    .send("Eclis Pathweaver bot is running (polling mode with travel).");
+    .send("Eclis Pathweaver bot is running (polling mode with admin panel).");
 });
 
 app.listen(PORT, () => {
   console.log(`HTTP server listening on port ${PORT}`);
 });
 
-// ---- شروع Polling ----
+// Polling
 bot.start();
 console.log("Bot started in long-polling mode");
