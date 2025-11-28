@@ -1,10 +1,7 @@
 // src/index.ts
 import express, { Request, Response } from "express";
-import { webhookCallback } from "grammy";
-
-// حواست باشه این .js آخر ایمپورت‌ها مهمه چون توی build به همین شکل استفاده میشه
 import { bot } from "./core/bot.js";
-import { BOT_TOKEN, PORT } from "./core/config.js";
+import { PORT } from "./core/config.js";
 
 import {
   handleStart,
@@ -23,16 +20,16 @@ import { handleNewChatMembers } from "./features/security/guard.js";
 
 // -------------------- ثبت هندلرها روی bot --------------------
 
-// /start فقط توی PV منطقیه
+// /start → ثبت‌نام / ورود به منوی اصلی
 bot.command("start", handleStart);
 
-// پنل مسیرسازی در گروه‌ها
+// پنل ساخت جهان در گروه‌ها
 bot.command("aw", handleWorldAdminCommand);
 
-// جوین جدید تو گروه‌ها → گارد
+// ورود یوزر جدید به گروه → گارد
 bot.on("message:new_chat_members", handleNewChatMembers);
 
-// کال‌بک‌ها (دکمه‌های اینلاین)
+// کال‌بک دکمه‌های اینلاین
 bot.on("callback_query:data", async (ctx) => {
   const data = ctx.callbackQuery?.data ?? "";
 
@@ -52,16 +49,16 @@ bot.on("callback_query:data", async (ctx) => {
 // متن‌ها
 bot.on("message:text", async (ctx) => {
   if (ctx.chat.type === "private") {
-    // منوی فانتزی PV (مسیرهای من، نقشه سریع من، حالت‌ها)
+    // منوی فانتزی PV: مسیرهای من، نقشه سریع، حالت‌ها
     await handleMainMenuText(ctx);
     return;
   }
 
-  // توی گروه‌ها: متن‌ها برای پنل world admin
+  // توی گروه‌ها → متن برای مود world admin
   await handleWorldAdminText(ctx);
 });
 
-// یک لاگ ساده برای همه پیام‌ها
+// لاگ ساده
 bot.on("message", (ctx) => {
   console.log(
     "[MSG]",
@@ -71,31 +68,25 @@ bot.on("message", (ctx) => {
   );
 });
 
-// هندلر کلی ارور
+// هندل ارورهای گرامی
 bot.catch((err) => {
   console.error("Bot error:", err.error);
 });
 
-// -------------------- بخش وبهوک (Express) --------------------
+// -------------------- Polling + Express برای Render --------------------
 
+// این خط، همون long-polling معروفه
+bot.start();
+console.log("🤖 Bot started in long-polling mode");
+
+// برای اینکه Render گیر نده «port باز نیست»، یه Express سبک میاریم بالا
 const app = express();
 const port = PORT || process.env.PORT || 3000;
 
-// یک مسیر مخفی‌تر برای وبهوک
-const secretPath = `/bot/${BOT_TOKEN.split(":")[0]}`;
-
-app.use(express.json());
-
-// روت تست
 app.get("/", (_req: Request, res: Response) => {
-  res.send("Eclis Pathweaver Bot (Webhook) is running.");
+  res.send("Eclis Pathweaver Bot is running (long-polling).");
 });
 
-// مسیر وبهوک که تلگرام بهش POST می‌فرسته
-app.post(secretPath, webhookCallback(bot, "express"));
-
-// ران شدن سرور HTTP
 app.listen(port, () => {
-  console.log(`🚀 Webhook server running on port ${port}`);
-  console.log(`🔗 Webhook path: ${secretPath}`);
+  console.log(`🌐 HTTP server listening on port ${port}`);
 });
