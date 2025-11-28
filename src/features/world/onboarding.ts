@@ -4,8 +4,7 @@ import { showMainMenu, setMovementMode } from "../../core/bot.js";
 import { InlineKeyboard } from "grammy";
 import { supabase } from "../../core/supabase.js";
 
-// اگر ClanId رو جایی تعریف نکردی، اینو همون‌جا بذار تو core/types.ts
-// ولی اینجا لوکال دوباره تعریف می‌کنیم که قطعی کار کنه
+// اگر ClanId رو جای دیگه نداری، این رو با همون مقادیر استفاده می‌کنیم
 type ClanId = "walker" | "stellarieth" | "necroshade" | "torrentress";
 
 interface Player {
@@ -140,23 +139,21 @@ export async function handleOnboardingCallback(ctx: EclisContext) {
 
     if (error) {
       console.error("Supabase players upsert error:", error);
-      return ctx.reply("در ثبت اطلاعاتت مشکلی پیش اومد. یه کم بعد دوباره امتحان کن.");
+      return ctx.reply(
+        "در ثبت اطلاعاتت مشکلی پیش اومد. یه کم بعد دوباره امتحان کن.",
+      );
     }
 
     const player = data as Player;
 
-    // برای آینده، می‌تونیم همین‌جا player_locations بسازیم اگر وجود نداره
+    // ساخت لوکیشن اولیه؛ اگر قبلاً وجود داشته، خطاش رو نادیده می‌گیریم
     try {
-      await supabase
-        .from("player_locations")
-        .insert({
-          player_id: player.id,
-          movement_mode: "walk",
-        })
-        .onConflict("player_id")
-        .ignore();
+      await supabase.from("player_locations").insert({
+        player_id: player.id,
+        movement_mode: "walk",
+      });
     } catch (e) {
-      console.error("Supabase player_locations insert error:", e);
+      console.warn("player_locations insert (maybe already exists):", e);
     }
 
     // پیام قبلی رو ادیت کنیم که خوشگل باشه
@@ -215,13 +212,17 @@ export async function handleMainMenuText(ctx: EclisContext) {
 
   if (txt === "🧭 مسیرهای من") {
     // اینجا بعداً لیست مسیرها / لوکیشن فعلی رو می‌چسبونیم
-    await ctx.reply("هنوز سیستم مسیرهای شخصی‌ات رو نچسبوندیم. به‌زودی اضافه می‌شه.");
+    await ctx.reply(
+      "هنوز سیستم مسیرهای شخصی‌ات رو نچسبوندیم. به‌زودی اضافه می‌شه.",
+    );
     return;
   }
 
   if (txt === "🗺 نقشهٔ سریع من") {
     // وقتی لوکیشن واقعی وصل شد اینجا لوکیشن رو نشون می‌دیم
-    await ctx.reply("به‌زودی، اینجا لوکیشن دقیق شخصیتت روی نقشه اکلیس نمایش داده می‌شه.");
+    await ctx.reply(
+      "به‌زودی، اینجا لوکیشن دقیق شخصیتت روی نقشه اکلیس نمایش داده می‌شه.",
+    );
     return;
   }
 }
