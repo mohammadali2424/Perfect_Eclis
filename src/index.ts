@@ -1,7 +1,6 @@
 import express from "express";
-import { webhookCallback } from "grammy";
 import { bot } from "./core/bot.js";
-import { PORT, WEBHOOK_SECRET } from "./core/config.js";
+import { PORT } from "./core/config.js";
 import { handleStart, handleMainMenuText } from "./features/world/onboarding.js";
 import {
   handleWorldAdminCommand,
@@ -61,22 +60,17 @@ bot.catch((err) => {
   console.error("Bot error:", err.error);
 });
 
-// وب‌سرور برای Webhook (سازگار با Render)
+// ---- سرور فیک برای Render (فقط برای اینکه بگه پورت بازه) ----
 const app = express();
 
-app.use(express.json());
-
-// مسیر وبهوک
-const webhookPath = `/bot/${WEBHOOK_SECRET || "no-secret"}`;
-console.log("Using webhook path:", webhookPath);
-
-app.use(webhookPath, webhookCallback(bot, "express"));
-
-// روت ساده برای چک سلامت
 app.get("/", (_req, res) => {
-  res.status(200).send("Eclis Pathweaver bot is running.");
+  res.status(200).send("Eclis Pathweaver bot is running (polling mode).");
 });
 
 app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT} (webhook mode)`);
+  console.log(`HTTP server listening on port ${PORT}`);
 });
+
+// ---- شروع Polling ----
+bot.start();
+console.log("Bot started in long-polling mode");
