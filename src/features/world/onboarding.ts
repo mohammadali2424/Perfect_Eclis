@@ -1,16 +1,14 @@
-import { Bot, InlineKeyboard, Keyboard } from "grammy";
+import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
 
-// فونت‌های فانتزی خاندان‌ها
-const CLAN_STELL = "🪽 𝓢𝓽𝓮𝓵𝓵𝓪𝓻𝓲𝓮𝓽𝓱 — تاجداران سپیده‌دم";
-const CLAN_WALK = "⚡ 𝕎𝕒𝕝𝕜𝕖𝕣 — وارثان نیرو";
-const CLAN_NECRO = "🖤 𝕹𝖊𝖈𝖗𝖔𝖘𝖍𝖆𝖉𝖊 — ندیمان سایه";
-const CLAN_TORR = "🔥 𝑻𝒐𝒓𝒓𝒆𝒏𝒕𝒓𝒆𝒔𝒔 — وارثان شعله";
+// فونت‌های unified برای خاندان‌ها (همه تو استایل Torrentress)
+const CLAN_STELL = "🪽 𝑺𝒕𝒆𝒍𝒍𝒂𝒓𝒊𝒆𝒕𝒉";
+const CLAN_WALK = "⚡ 𝑾𝒂𝒍𝒌𝒆𝒓";
+const CLAN_NECRO = "🖤 𝑵𝒆𝒄𝒓𝒐𝒔𝒉𝒂𝒅𝒆";
+const CLAN_TORR = "🔥 𝑻𝒐𝒓𝒓𝒆𝒏𝒕𝒓𝒆𝒔𝒔";
 
-// کلیدهای منطقی (برای ذخیره در دیتابیس)
 type ClanKey = "Stellarieth" | "Walker" | "Necroshade" | "Torrentress";
 
-// map برای نمایشی و منطقی
 const CLAN_LABELS: Record<ClanKey, string> = {
   Stellarieth: CLAN_STELL,
   Walker: CLAN_WALK,
@@ -22,19 +20,19 @@ function labelFromKey(key: ClanKey): string {
   return CLAN_LABELS[key];
 }
 
-// پاک کردن صفحه‌ی قبلی منو در PV
+// پاک کردن آخرین «صفحه منو» توی PV
 async function deleteUiPage(ctx: MyContext) {
   try {
     if (ctx.chat?.type === "private" && ctx.session.ui_last_menu_id) {
       await ctx.api.deleteMessage(ctx.chat.id, ctx.session.ui_last_menu_id);
     }
   } catch {
-    // اگر اجازه نداشت، مهم نیست
+    // اگر دسترسی حذف نداشت، مهم نیست
   }
   ctx.session.ui_last_menu_id = undefined;
 }
 
-// ارسال صفحه‌ی جدید منو + ذخیره‌ی message_id
+// ارسال صفحه جدید و ذخیره message_id
 async function sendUiPage(
   ctx: MyContext,
   text: string,
@@ -45,7 +43,7 @@ async function sendUiPage(
   ctx.session.ui_last_menu_id = msg.message_id;
 }
 
-// ساخت یا گرفتن کاراکتر بر اساس tg_id
+// ساخت/گرفتن کاراکتر از Supabase
 async function ensureCharacterFor(ctx: MyContext, tgId: number) {
   const { supabase } = ctx.services;
 
@@ -82,11 +80,10 @@ async function ensureCharacterFor(ctx: MyContext, tgId: number) {
 }
 
 async function ensureCharacter(ctx: MyContext) {
-  const tgId = ctx.from!.id;
-  return ensureCharacterFor(ctx, tgId);
+  return ensureCharacterFor(ctx, ctx.from!.id);
 }
 
-// صفحه‌ی اصلی Arcane Atlas برای کسی که ثبت‌نام شده
+// منوی اصلی اطلس بعد از ثبت‌نام
 async function showMainAtlasMenu(ctx: MyContext) {
   const char = await ensureCharacter(ctx);
 
@@ -98,24 +95,14 @@ async function showMainAtlasMenu(ctx: MyContext) {
     "📜✨ 𝑨𝒓𝒄𝒂𝒏𝒆 𝑨𝒕𝒍𝒂𝒔 — اطلس باستانی سفر\n\n" +
     "صفحه‌های تو اکنون روشن‌اند، مسافر اکلیس.\n\n" +
     `🧬 خون تو ثبت شده است:\n${clanLabel}\n\n` +
-    "چه می‌خواهی انجام دهی؟";
+    "از اینجا می‌توانی به مسیرها و جهان دسترسی بگیری.\n\n" +
+    "برای دیدن مسیرهایت، از دکمه‌ی «🧭 مسیر های من» در پایین استفاده کن.\n" +
+    "در نسخه‌های بعدی، اینجا صفحات بیشتری باز خواهد شد…";
 
-  const kb = new InlineKeyboard()
-    .text("📍 مکان فعلی من", "atlas:where")
-    .row()
-    .text("🧭 مسیر های من", "atlas:paths")
-    .row()
-    .text("📜 وضعیت من", "atlas:profile");
-
-  // کیبورد پایینی برای راحتی
-  const replyKb = new Keyboard().text("🧭 مسیر های من").resized();
-
-  await sendUiPage(ctx, text, { reply_markup: replyKb });
-  // دکمه‌های اینلاین را در یک پیام جدا می‌فرستیم تا تداخلی با کیبورد نداشته باشد
-  await ctx.reply("یک گزینه را انتخاب کن:", { reply_markup: kb });
+  await sendUiPage(ctx, text);
 }
 
-// صفحه‌ی انتخاب خاندان
+// صفحه انتخاب خاندان
 async function showClanSelect(ctx: MyContext) {
   const text =
     "🜂 انتخاب خاندان\n" +
@@ -124,13 +111,13 @@ async function showClanSelect(ctx: MyContext) {
     "از کدام خاندانی هستی؟";
 
   const kb = new InlineKeyboard()
-    .text("🪽 𝓢𝓽𝓮𝓵𝓵𝓪𝓻𝓲𝓮𝓽𝓱", "reg_clan:Stellarieth")
+    .text(CLAN_STELL, "reg_clan:Stellarieth")
     .row()
-    .text("⚡ 𝕎𝕒𝕝𝕜𝕖𝕣", "reg_clan:Walker")
+    .text(CLAN_WALK, "reg_clan:Walker")
     .row()
-    .text("🖤 𝕹𝖊𝖈𝖗𝖔𝖘𝖍𝖆𝖉𝖊", "reg_clan:Necroshade")
+    .text(CLAN_NECRO, "reg_clan:Necroshade")
     .row()
-    .text("🔥 𝑻𝒐𝒓𝒓𝒆𝒏𝒕𝒓𝒆𝒔𝒔", "reg_clan:Torrentress");
+    .text(CLAN_TORR, "reg_clan:Torrentress");
 
   ctx.session.reg_step = "clan";
   ctx.session.reg_clan = null;
@@ -159,7 +146,7 @@ async function showClanLoadingAndAskName(ctx: MyContext, clanKey: ClanKey) {
   await sendUiPage(ctx, text);
 }
 
-// تکمیل ثبت‌نام با نام و خاندان
+// اتمام ثبت‌نام: ذخیره نام + خاندان
 async function finishRegistration(ctx: MyContext, name: string) {
   const { supabase } = ctx.services;
   const tgId = ctx.from!.id;
@@ -207,16 +194,16 @@ async function finishRegistration(ctx: MyContext, name: string) {
 }
 
 export function registerOnboardingFeature(bot: Bot<MyContext>) {
-  // /start — نقطه‌ی ورود اصلی
+  // /start — نقطه ورود اصلی بازیکن
   bot.command("start", async (ctx) => {
     if (!ctx.from || ctx.chat?.type !== "private") {
-      // فقط در PV مهم است
+      // ثبت‌نام فقط در PV
       return;
     }
 
     const char = await ensureCharacter(ctx);
 
-    // اگر هنوز خاندان ندارد → ثبت نام
+    // اگر هنوز خاندان نداره → ویزارد ثبت‌نام
     if (!char.clan_name) {
       const introText =
         "📜✨ 𝑨𝒓𝒄𝒂𝒏𝒆 𝑨𝒕𝒍𝒂𝒔 — اطلس باستانی سفر\n\n" +
@@ -229,19 +216,11 @@ export function registerOnboardingFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    // در غیر این صورت، مستقیم وارد منوی اصلی اطلس شود
+    // اگر قبلاً ثبت‌نام شده بود، مستقیم منوی اصلی اطلس
     await showMainAtlasMenu(ctx);
   });
 
-  // دکمه‌ی پایین «🧭 مسیر های من» اگر کاربر همیشه بخواد مسیرها را ببیند
-  bot.hears("🧭 مسیر های من", async (ctx) => {
-    if (ctx.chat?.type !== "private") return;
-    // این فقط منوی اصلی اطلس را بالا می‌آورد، نمایش مسیر واقعی را
-    // همچنان همان feature travel.ts انجام می‌دهد.
-    await showMainAtlasMenu(ctx);
-  });
-
-  // انتخاب خاندان
+  // انتخاب خاندان با دکمه‌های اینلاین
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data || "";
     if (!data.startsWith("reg_clan:")) {
@@ -264,7 +243,7 @@ export function registerOnboardingFeature(bot: Bot<MyContext>) {
     await showClanLoadingAndAskName(ctx, key);
   });
 
-  // گرفتن نام کاراکتر در مرحله‌ی ثبت نام
+  // گرفتن نام کاراکتر در مرحله‌ی name
   bot.on("message:text", async (ctx, next) => {
     if (ctx.chat?.type !== "private") {
       await next();
