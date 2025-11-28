@@ -21,8 +21,8 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
   throw new Error("SUPABASE_URL or SUPABASE_KEY is missing in env");
 }
 
-// کلاینت Supabase
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// اینجا به‌صورت صریح cast می‌کنیم که TS غر نزنه
+const supabase = createClient(SUPABASE_URL as string, SUPABASE_KEY as string);
 
 // سشن اولیه همیشه یه آبجکت خالیه
 function initialSession(): SessionData {
@@ -33,7 +33,7 @@ function initialSession(): SessionData {
 export function createBot(): Bot<MyContext> {
   const bot = new Bot<MyContext>(BOT_TOKEN);
 
-  // سشن in-memory (کافیه برای ربات تو)
+  // سشن in-memory
   bot.use(
     session({
       initial: initialSession,
@@ -46,7 +46,7 @@ export function createBot(): Bot<MyContext> {
     await next();
   });
 
-  // ثبت فیچرها
+  // ثبت فیچرهای جهان اکلیس
   registerOnboardingFeature(bot);
   registerWorldAdminFeature(bot);
   registerTravelFeature(bot);
