@@ -3,7 +3,7 @@ import { MyContext } from "../../core/types";
 import { supabase } from "../../core/supabase";
 
 /**
- * گرفتن یا ساختن کاراکتر بر اساس tg_id (همون telegram user id)
+ * گرفتن یا ساختن کاراکتر بر اساس tg_id (همون user id تلگرام)
  */
 async function upsertCharacterByTelegramId(telegramId: number, displayName: string) {
   // ببینیم قبلاً هست یا نه
@@ -19,7 +19,6 @@ async function upsertCharacterByTelegramId(telegramId: number, displayName: stri
   }
 
   if (existing) {
-    // اگر وجود داشت، فقط display_name و tg_id رو آپدیت کن
     const { error: updateErr } = await supabase
       .from("characters")
       .update({
@@ -36,7 +35,6 @@ async function upsertCharacterByTelegramId(telegramId: number, displayName: stri
     return existing.id as number;
   }
 
-  // اگر نبود، یه کاراکتر جدید بساز
   const { data: inserted, error: insertErr } = await supabase
     .from("characters")
     .insert({
@@ -58,23 +56,21 @@ async function upsertCharacterByTelegramId(telegramId: number, displayName: stri
 
 /**
  * /regplayer – فقط وقتی روی پیام کسی ریپلای بشه
- * اون شخص رو تو جدول characters ثبت / آپدیت می‌کنه
+ * اون شخص رو تو جدول characters ثبت / آپدیت می‌کند.
  */
 async function handleRegPlayer(ctx: MyContext) {
   if (!ctx.chat || ctx.chat.type === "private") {
-    await ctx.reply("این دستور را باید داخل گروه و روی ریپلای یک پیام استفاده کنی.");
+    await ctx.reply("این ورد را باید داخل گروه و روی ریپلای یک پیام استفاده کنی.");
     return;
   }
 
   const reply = ctx.msg?.reply_to_message;
   if (!reply || !reply.from) {
-    await ctx.reply("برای ثبت پلیر باید روی پیام شخص مورد نظر ریپلای کنی.");
+    await ctx.reply("برای مهر کردن نام یک نفر در دفتر راه‌ها، باید روی پیامش ریپلای کنی.");
     return;
   }
 
   const target = reply.from;
-
-  // بعداً می‌تونیم اینجا محدودش کنیم که فقط ارباب/ادمین بتونن بزنن
 
   const displayName = target.first_name
     ? `${target.first_name}${target.last_name ? " " + target.last_name : ""}`
@@ -86,58 +82,56 @@ async function handleRegPlayer(ctx: MyContext) {
     const charId = await upsertCharacterByTelegramId(target.id, displayName);
 
     await ctx.reply(
-      `✅ پلیر برای سیستم مسیر ثبت شد.\n\n` +
-        `کاراکتر: ${displayName}\n` +
-        `tg_id: ${target.id}\n` +
-        `character_id: ${charId}\n\n` +
-        `از این به بعد این پلیر برای /path و /arrive قابل شناسایی است.`
+      `✅ نام این روح در نقشه راه‌های اکلیس ثبت شد.\n\n` +
+        `👤 کاراکتر: ${displayName}\n` +
+        `🧾 شناسه مسیر: ${charId}\n\n` +
+        `از این به بعد، این نفر می‌تواند از جادوی «مسیر های من» و سفر بین نقاط استفاده کند.`
     );
   } catch (e) {
-    await ctx.reply("در ثبت پلیر برای سیستم مسیر مشکلی پیش آمد. لاگ سرور را چک کن.");
+    await ctx.reply(
+      "⚠️ رشته‌ای از سرنوشت گیر کرد و ثبت انجام نشد.\n" +
+        "چند لحظه بعد دوباره امتحان کن، و اگر تکرار شد، ارباب جهان لاگ‌ها را چک کند."
+    );
   }
 }
 
 /**
- * /whoami – هرکس ببینه در جدول characters چی ذخیره شده
+ * /whoami – فقط برای دیباگ خودت، متنت فانتزی اما بدون ستون‌های عجیب
  */
 async function handleWhoAmI(ctx: MyContext) {
   if (!ctx.from) {
-    await ctx.reply("هویت تلگرام مشخص نیست.");
+    await ctx.reply("روح تو را تشخیص نمی‌دهم.");
     return;
   }
 
   const { data, error } = await supabase
     .from("characters")
-    .select("id, display_name, current_region_id, current_spot_id, movement_mode")
+    .select("id, display_name, movement_mode")
     .eq("tg_id", ctx.from.id)
     .maybeSingle();
 
   if (error) {
     console.error("whoami select error", error);
-    await ctx.reply("در واکشی اطلاعات کاراکتر مشکلی پیش آمد.");
+    await ctx.reply("در خواندن دفتر اسامی مشکلی پیش آمد.");
     return;
   }
 
   if (!data) {
-    await ctx.reply("تو هنوز برای سیستم مسیر ثبت نشده‌ای. ادمین باید /regplayer روی پیامت بزند.");
+    await ctx.reply("نامت هنوز در دفتر راه‌ها نوشته نشده. ادمین باید روی پیامت /regplayer بزند.");
     return;
   }
 
   const d = data as {
     id: number;
     display_name: string | null;
-    current_region_id: string | null;
-    current_spot_id: string | null;
     movement_mode: string | null;
   };
 
   await ctx.reply(
-    `🧾 اطلاعات کاراکتر تو (سیستم مسیر):\n\n` +
-      `ID: ${d.id}\n` +
-      `نام نمایشی: ${d.display_name || "ثبت نشده"}\n` +
-      `region_id: ${d.current_region_id || "نامشخص"}\n` +
-      `spot_id: ${d.current_spot_id || "نامشخص"}\n` +
-      `حالت حرکت: ${d.movement_mode || "walk"}`
+    `🧾 شناسنامه مسیر تو:\n\n` +
+      `🔹 ID: ${d.id}\n` +
+      `🔹 نام: ${d.display_name || "نام‌گذاری نشده"}\n` +
+      `🔹 حالت حرکت فعلی: ${d.movement_mode || "walk"}`
   );
 }
 
