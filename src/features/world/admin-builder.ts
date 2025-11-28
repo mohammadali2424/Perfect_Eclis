@@ -7,13 +7,13 @@ import { MASTER_ID } from "../../core/config";
  */
 // @ts-ignore
 function getAdminSession(ctx: MyContext): any {
-  // ساختن شیء پیش‌فرض اگر نبود
   // @ts-ignore
   if (!ctx.session.worldAdmin) {
     // @ts-ignore
     ctx.session.worldAdmin = {
       mode: "idle",
       regionChatId: null,
+      regionId: null,
       fromSpotId: null,
       toSpotId: null,
     };
@@ -90,7 +90,7 @@ async function sendAdminHome(ctx: MyContext, extra?: string) {
   let header = "🔧 پنل مدیریت جهان اکلیس\n\n";
 
   if (regionChatId) {
-    header += `گروه در حال مدیریت: \`${regionChatId}\`\n`;
+    header += `گروه در حال مدیریت: ${regionChatId}\n`;
   }
 
   if (extra) {
@@ -99,7 +99,6 @@ async function sendAdminHome(ctx: MyContext, extra?: string) {
 
   await ctx.reply(header, {
     reply_markup: buildAdminMainKeyboard(),
-    parse_mode: "Markdown",
   });
 }
 
@@ -129,7 +128,7 @@ function registerWorldAdminCommand(bot: Bot<MyContext>) {
     try {
       await ctx.deleteMessage();
     } catch {
-      // مهم نیست اگر نتوانست
+      // اگر نتوانست حذف کند مهم نیست
     }
 
     // Region را برای این گروه بساز / آپدیت کن
@@ -187,13 +186,12 @@ function registerWorldAdminCommand(bot: Bot<MyContext>) {
     const text =
       "🔧 پنل مدیریت جهان برای این گروه باز شد.\n\n" +
       `نام گروه: ${chatTitle}\n` +
-      `chat_id: \`${chatId}\`\n\n` +
+      `chat_id: ${chatId}\n\n` +
       "از دکمه‌های زیر برای ساخت Spot و مسیرها استفاده کن.";
 
     try {
       await ctx.api.sendMessage(ctx.from.id, text, {
         reply_markup: buildAdminMainKeyboard(),
-        parse_mode: "Markdown",
       });
     } catch (err) {
       console.error("send PM worldadmin error:", err);
@@ -342,10 +340,9 @@ async function handleEdgeNew(ctx: MyContext) {
   }
   kb.text("🔙 بازگشت", "wa:home");
 
-  await ctx.reply(
-    "برای ساخت مسیر جدید، ابتدا Spot مبدا را انتخاب کن:",
-    { reply_markup: kb }
-  );
+  await ctx.reply("برای ساخت مسیر جدید، ابتدا Spot مبدا را انتخاب کن:", {
+    reply_markup: kb,
+  });
 }
 
 /**
@@ -465,10 +462,9 @@ async function handleEdgeList(ctx: MyContext) {
   }
 
   if (!edges || edges.length === 0) {
-    await ctx.reply(
-      "برای این Region هنوز هیچ مسیری ساخته نشده.",
-      { reply_markup: buildAdminMainKeyboard() }
-    );
+    await ctx.reply("برای این Region هنوز هیچ مسیری ساخته نشده.", {
+      reply_markup: buildAdminMainKeyboard(),
+    });
     return;
   }
 
@@ -524,10 +520,9 @@ function registerAdminTextHandlers(bot: Bot<MyContext>) {
 
       setAdminSession(ctx, { mode: "idle" });
 
-      await ctx.reply(
-        `Spot جدید ساخته شد: ${text}`,
-        { reply_markup: buildAdminMainKeyboard() }
-      );
+      await ctx.reply(`Spot جدید ساخته شد: ${text}`, {
+        reply_markup: buildAdminMainKeyboard(),
+      });
       return;
     }
 
@@ -566,10 +561,9 @@ function registerAdminTextHandlers(bot: Bot<MyContext>) {
         toSpotId: null,
       });
 
-      await ctx.reply(
-        `مسیر جدید با زمان ${seconds} ثانیه ثبت شد.`,
-        { reply_markup: buildAdminMainKeyboard() }
-      );
+      await ctx.reply(`مسیر جدید با زمان ${seconds} ثانیه ثبت شد.`, {
+        reply_markup: buildAdminMainKeyboard(),
+      });
       return;
     }
 
