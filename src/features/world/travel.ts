@@ -7,7 +7,7 @@ type MovementMode = "walk" | "ride" | "drive" | "transport";
 
 interface CharacterRow {
   id: number;
-  telegram_id: number;
+  tg_id: number;
   current_region_id: string | null; // uuid
   current_spot_id: string | null;   // uuid
   movement_mode: MovementMode;
@@ -55,7 +55,7 @@ interface TransportLineRow {
 const MIN_TRAVEL_SECONDS = 20;
 
 /**
- * گرفتن کاراکتر از روی telegram_id
+ * گرفتن کاراکتر از روی tg_id
  */
 async function getCharacter(ctx: MyContext): Promise<CharacterRow | null> {
   if (!ctx.from) return null;
@@ -65,7 +65,7 @@ async function getCharacter(ctx: MyContext): Promise<CharacterRow | null> {
     .select(
       `
       id,
-      telegram_id,
+      tg_id,
       current_region_id,
       current_spot_id,
       movement_mode,
@@ -76,7 +76,7 @@ async function getCharacter(ctx: MyContext): Promise<CharacterRow | null> {
       travel_to_spot_id
     `
     )
-    .eq("telegram_id", ctx.from.id)
+    .eq("tg_id", ctx.from.id)
     .maybeSingle();
 
   if (error) {
@@ -275,7 +275,7 @@ function formatDuration(sec: number): string {
 async function handleShowPaths(ctx: MyContext) {
   const char = await getCharacter(ctx);
   if (!char) {
-    await ctx.reply("شما هنوز در ثبت احوال اکلیس ثبت نشدید.");
+    await ctx.reply("شما هنوز برای سیستم مسیر اکلیس ثبت نشده‌اید.");
     return;
   }
   if (!char.current_spot_id) {
@@ -388,7 +388,7 @@ async function handleEdgeTravelCallback(ctx: MyContext) {
   const char = await getCharacter(ctx);
   if (!char) {
     await ctx.answerCallbackQuery({
-      text: "ابتدا باید در جهان ثبت شده باشی.",
+      text: "ابتدا باید برای سیستم مسیر ثبت شده باشی (/regplayer).",
       show_alert: true,
     });
     return;
@@ -528,7 +528,7 @@ async function handleEdgeTravelCallback(ctx: MyContext) {
 async function handleArrive(ctx: MyContext) {
   const char = await getCharacter(ctx);
   if (!char) {
-    await ctx.reply("هنوز در جهان ثبت نشده‌ای.");
+    await ctx.reply("هنوز برای سیستم مسیر ثبت نشده‌ای.");
     return;
   }
 
@@ -571,8 +571,6 @@ async function handleArrive(ctx: MyContext) {
     travel_duration_seconds: null,
     travel_from_spot_id: null,
     travel_to_spot_id: null,
-    // NOTE: movement_mode اینجا دست نمی‌زنیم؛
-    // اگر transport بود، بعداً می‌تونی تو یک مرحله بعدی اینجا resetش کنی.
   });
 
   if (!ok) {
@@ -587,11 +585,6 @@ async function handleArrive(ctx: MyContext) {
   await ctx.reply(
     `✅ به مقصد رسیدی.\n\nمکان فعلی‌ات اکنون:\n${targetName}`
   );
-
-  // این‌جا بعداً می‌تونی منطق:
-  // - ارسال لینک گروه مقصد
-  // - کیک کردن از گروه قبلی
-  // رو بر اساس ساختار قبلی‌ات اضافه کنی.
 }
 
 /**
@@ -684,9 +677,6 @@ async function handleTransportCallback(ctx: MyContext) {
 
   const line = data as TransportLineRow;
 
-  // TODO: چک کردن سولن و کم کردن هزینه
-  // در این نسخه اسکلت را خالی می‌گذاریم.
-
   const nowIso = new Date().toISOString();
 
   const ok = await updateCharacter(char.id, {
@@ -718,25 +708,14 @@ async function handleTransportCallback(ctx: MyContext) {
 
 /**
  * ثبت فیچر سفر روی بات
- * (اسم این تابع باید با bot.ts بخواند)
  */
 export function registerTravelFeature(bot: Bot<MyContext>) {
-  // دستور متنی /path
   bot.command("path", handleShowPaths);
-
-  // دکمه متنی «🧭 مسیر های من»
   bot.hears("🧭 مسیر های من", handleShowPaths);
-
-  // دکمه متنی «🗺 نقشه سریع من»
   bot.hears("🗺 نقشه سریع من", handleQuickMap);
-
-  // دستور /arrive
   bot.command("arrive", handleArrive);
-
-  // دستور /transport برای دیدن خطوط حمل‌ونقل
   bot.command("transport", handleTransport);
 
-  // کال‌بک‌های سفر عادی و حمل‌ونقل
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery?.data;
     if (!data) return;
