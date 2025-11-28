@@ -1,49 +1,46 @@
-import { Bot, session, InlineKeyboard, Keyboard } from "grammy";
-import { BOT_TOKEN, MASTER_ID } from "./config";
+import { Bot, session } from "grammy";
+import { BOT_TOKEN } from "./config";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
+
 import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
 import { registerRegistrationFeature } from "../features/registration";
+import { registerOnboardingFeature } from "../features/world/onboarding";
 
 if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is required");
 }
 
+// خود بات اصلی
 export const bot = new Bot<MyContext>(BOT_TOKEN);
 
-const services: Services = {
-  supabase,
-  masterId: MASTER_ID,
-};
+// سشن گرامی (حافظه موقت برای هر یوزر)
+bot.use(
+  session({
+    initial: (): SessionData => ({
+      // هر چیزی توی SessionData هست می‌تونه اینجا مقدار اولیه بگیره
+      ui_last_menu_id: undefined,
+      reg_step: undefined,
+      reg_clan: null,
+      reg_name: null,
+      // اگر توی SessionData چیزای دیگه‌ای هم داری، گرامی خودش بعداً اضافه می‌کنه
+    }),
+  })
+);
 
-bot.use(async (ctx, next) => {
-  ctx.services = services;
-  await next();
+// تزریق سرویس‌ها (مثل supabase) داخل ctx.services
+bot.use((ctx, next) => {
+  ctx.services = {
+    supabase,
+  } as Services;
+  return next();
 });
 
-function initialSession(): SessionData {
-  return {};
-}
-bot.use(session({ initial: initialSession }));
-
-registerSecurityFeature(bot);
-registerRegistrationFeature(bot); // ثبت‌نام قبل از ادمین/مسیر
-registerTravelFeature(bot);
-registerWorldAdminFeature(bot);
-
-bot.command("start", async (ctx) => {
-  const kb = new Keyboard()
-    .text("🧭 مسیر های من")
-    .resized(); // کیبورد رو جمع‌وجور می‌کنه
-
-  await ctx.reply(
-    "به Pathweaver خوش اومدی.\n" +
-      "من مسیریاب جهان اکلیس‌ام.\n\n" +
-      "از دکمه‌ی «🧭 مسیر های من» برای دیدن مقصدهای قابل دسترس استفاده کن.",
-    { reply_markup: kb }
-  );
-});
-
-
+// فیچرهای مختلف ربات
+registerSecurityFeature(bot);        // محافظت: ارباب، لفت از گروه‌های اضافی و…
+registerOnboardingFeature(bot);      // اطلس، ثبت‌نام، انتخاب خاندان
+registerWorldAdminFeature(bot);      // پنل ساخت Region/Spot/Edge
+registerTravelFeature(bot);          // سفر بین مسیرها، مسیرهای من، نقشه سریع من
+registerRegistrationFeature(bot);    // هرچی توی registration.ts نوشتی
