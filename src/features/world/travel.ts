@@ -1,526 +1,612 @@
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
-import { supabase } from "../../core/supabase";
+import { MASTER_ID } from "../../core/config";
 
-type MovementMode = "walk" | "ride" | "drive" | "transport";
+/**
+ * ساخت یا برگرداندن رکورد کاراکتر برای یک tg_id خاص
+ */
+async function ensureCharacterFor(ctx: MyContext, tgId: number): Promise<any> {
+  const { supabase } = ctx.services;
 
-interface CharacterRow {
-  id: number;
-  tg_id: number;
-  current_region_id: string | null; // uuid
-  current_spot_id: string | null;   // uuid
-  movement_mode: MovementMode;
-  travel_state: "idle" | "in_travel" | null;
-  travel_started_at: string | null;
-  travel_duration_seconds: number | null;
-  travel_from_spot_id: string | null; // uuid
-  travel_to_spot_id: string | null;   // uuid
+  const { data: char, error } = await supabase
+    .from("characters")
+    .select("*")
+    .eq("tg_id", tgId)
+    .maybeSingle();
+
+  if (!error && char) return char;
+
+  const { data: inserted, error: insErr } = await supabase
+    .from("characters")
+    .insert({
+      tg_id: tgId,
+      char_name: null,
+      clan_name: null,
+      current_region_id: null,
+      current_spot_id: null,
+      last_move_at: null,
+      travel_ready_at: null,
+      pending_region_id: null,
+      pending_spot_id: null,
+    })
+    .select("*")
+    .single();
+
+  if (insErr || !inserted) {
+    console.error("characters insert error:", insErr);
+    throw new Error("cannot init character");
+  }
+
+  return inserted;
 }
 
-interface SpotRow {
-  id: string;
-  name: string | null;
-  region_id: string;
+/**
+ * نسخه‌ی راحت‌تر برای خود کاربر
+ */
+async function ensureCharacter(ctx: MyContext): Promise<any> {
+  const tgId = ctx.from!.id;
+  return ensureCharacterFor(ctx, tgId);
 }
 
-interface RegionRow {
-  id: string;
-  name: string | null;
-}
-
-interface EdgeRow {
-  id: number;
-  from_spot_id: string;
-  to_spot_id: string;
-  name: string | null;
-  base_seconds: number;
-  ride_seconds: number | null;
-  drive_seconds: number | null;
-  can_walk: boolean;
-  can_ride: boolean;
-  can_drive: boolean;
-}
-
-const MIN_TRAVEL_SECONDS = 20;
-
-/** گرفتن کاراکتر از روی tg_id */
-async function getCharacter(ctx: MyContext): Promise<CharacterRow | null> {
-  if (!ctx.from) return null;
-
+/**
+ * گرفتن Region بر اساس chat_id گروه
+ */
+async function getRegionByChatId(ctx: MyContext, chatId: number): Promise<any | null> {
+  const { supabase } = ctx.services;
   const { data, error } = await supabase
-    .from("characters")
-    .select(
-      `
-      id,
-      tg_id,
-      current_region_id,
-      current_spot_id,
-      movement_mode,
-      travel_state,
-      travel_started_at,
-      travel_duration_seconds,
-      travel_from_spot_id,
-      travel_to_spot_id
-    `
-    )
-    .eq("tg_id", ctx.from.id)
-    .maybeSingle();
-
-  if (error) {
-    console.error("getCharacter error", error);
-    return null;
-  }
-  return data as CharacterRow | null;
-}
-
-async function updateCharacter(
-  id: number,
-  patch: Partial<CharacterRow>
-): Promise<boolean> {
-  const { error } = await supabase
-    .from("characters")
-    .update(patch)
-    .eq("id", id);
-
-  if (error) {
-    console.error("updateCharacter error", error);
-    return false;
-  }
-  return true;
-}
-
-/** گرفتن spot + region برای نمایش قشنگ */
-async function getSpotAndRegion(
-  spotId: string | null
-): Promise<{ spot: SpotRow | null; region: RegionRow | null }> {
-  if (!spotId) return { spot: null, region: null };
-
-  const { data: spot, error: spotErr } = await supabase
-    .from("spots")
-    .select("id, name, region_id")
-    .eq("id", spotId)
-    .maybeSingle();
-
-  if (spotErr || !spot) {
-    if (spotErr) console.error("getSpotAndRegion spot error", spotErr);
-    return { spot: null, region: null };
-  }
-
-  const s = spot as SpotRow;
-
-  const { data: region, error: regErr } = await supabase
     .from("regions")
-    .select("id, name")
-    .eq("id", s.region_id)
+    .select("*")
+    .eq("telegram_chat_id", chatId)
     .maybeSingle();
 
-  if (regErr || !region) {
-    if (regErr) console.error("getSpotAndRegion region error", regErr);
-    return { spot: s, region: null };
-  }
-
-  return {
-    spot: s,
-    region: region as RegionRow,
-  };
+  if (error || !data) return null;
+  return data;
 }
 
-/** گرفتن edgeهای قابل حرکت */
-async function getAvailableEdges(
-  currentSpotId: string,
-  mode: MovementMode
-): Promise<EdgeRow[]> {
-  const { data, error } = await supabase
-    .from("edges")
-    .select(
-      `
-      id,
-      from_spot_id,
-      to_spot_id,
-      name,
-      base_seconds,
-      ride_seconds,
-      drive_seconds,
-      can_walk,
-      can_ride,
-      can_drive
-    `
-    )
-    .eq("from_spot_id", currentSpotId);
-
-  if (error || !data) {
-    if (error) console.error("getAvailableEdges error", error);
-    return [];
-  }
-
-  const edges = data as EdgeRow[];
-
-  return edges.filter((e) => {
-    if (mode === "walk") return e.can_walk;
-    if (mode === "ride") return e.can_ride;
-    if (mode === "drive") return e.can_drive;
-    return false;
-  });
-}
-
-function computeTravelSeconds(edge: EdgeRow, mode: MovementMode): number {
-  const base = edge.base_seconds;
-
-  switch (mode) {
-    case "walk":
-      return base;
-    case "ride":
-      if (edge.ride_seconds != null) return edge.ride_seconds;
-      return Math.max(1, Math.round(base * 0.6));
-    case "drive":
-      if (edge.drive_seconds != null) return edge.drive_seconds;
-      return Math.max(1, Math.round(base * 0.4));
-    default:
-      return base;
-  }
-}
-
-function computeBorrowedDuration(
-  previousDuration: number,
-  startedAtIso: string
-): { elapsed: number; credit: number } {
-  const startedAt = new Date(startedAtIso).getTime();
-  const now = Date.now();
-
-  if (Number.isNaN(startedAt)) {
-    return { elapsed: 0, credit: 0 };
-  }
-
-  const elapsedSeconds = Math.max(
-    0,
-    Math.floor((now - startedAt) / 1000)
-  );
-
-  const clamped = Math.min(elapsedSeconds, previousDuration);
-
-  return {
-    elapsed: clamped,
-    credit: clamped,
-  };
-}
-
-function formatDuration(sec: number): string {
-  if (sec < 60) return `${sec} ثانیه`;
-  const minutes = Math.round(sec / 60);
-  return `${minutes} دقیقه`;
-}
-
-function modeLabel(mode: MovementMode): string {
-  switch (mode) {
-    case "walk":
-      return "پیاده‌روِ جهان";
-    case "ride":
-      return "سوارکارِ جانوران";
-    case "drive":
-      return "راننده‌ی آهن و بخار";
-    case "transport":
-      return "مسافر قطارها و بالن‌ها";
-    default:
-      return mode;
-  }
-}
-
-/** /path و دکمه «🧭 مسیر های من» */
-async function handleShowPaths(ctx: MyContext) {
-  const char = await getCharacter(ctx);
-  if (!char) {
-    await ctx.reply(
-      "نامت هنوز در دفتر راه‌های اکلیس ثبت نشده.\n" +
-        "ادمین باید روی پیامت در یک گروه، ورد /regplayer را بخواند."
-    );
+/**
+ * نمایش مسیرهای قابل دسترس از لوکیشن فعلی کاربر
+ */
+async function showPaths(ctx: MyContext): Promise<void> {
+  if (ctx.chat?.type !== "private") {
+    await ctx.reply("برای دیدن «مسیر های من» باید به پی‌وی من بیایی.");
     return;
   }
+
+  const { supabase } = ctx.services;
+  const char = await ensureCharacter(ctx);
+
   if (!char.current_spot_id) {
     await ctx.reply(
-      "جهان هنوز نمی‌داند تو کجای آن ایستاده‌ای.\n" +
-        "این یک خطای تنظیماتیه و باید توسط ارباب نقشه‌ها درست شود."
+      "هنوز لوکیشن اولیه‌ای برایت ثبت نشده.\n" +
+        "ارباب باید با دستور /regplayer تو را در یکی از گروه‌ها ثبت کند."
     );
     return;
   }
 
-  const mode: MovementMode = char.movement_mode || "walk";
+  // Spot فعلی
+  const { data: spot, error: spotErr } = await supabase
+    .from("spots")
+    .select("id,title,region_id")
+    .eq("id", char.current_spot_id)
+    .single();
 
-  const edges = await getAvailableEdges(char.current_spot_id, mode);
-  const { spot, region } = await getSpotAndRegion(char.current_spot_id);
+  if (spotErr || !spot) {
+    await ctx.reply("لوکیشن فعلی‌ات در دیتابیس پیدا نشد.");
+    return;
+  }
 
-  const regionName = region?.name || "سرزمین نام‌گذاری‌نشده";
-  const spotName = spot?.name || "نقطه‌ی بی‌نام";
+  // Region فعلی
+  const { data: region, error: regErr } = await supabase
+    .from("regions")
+    .select("id,title")
+    .eq("id", spot.region_id)
+    .single();
 
-  let header =
-    `📍 اکنون در این نقطه‌ای:\n` +
-    `🏞 ریجن: ${regionName}\n` +
-    `📌 مکان: ${spotName}\n\n` +
-    `🧭 راه‌هایی که از اینجا پیش رویت باز است:\n\n`;
+  if (regErr || !region) {
+    await ctx.reply("Region فعلی‌ات در دیتابیس پیدا نشد.");
+    return;
+  }
 
-  if (edges.length === 0) {
+  // Edgeهای خروجی از این Spot
+  const { data: edges, error: edgeErr } = await supabase
+    .from("edges")
+    .select("id,from_spot_id,to_spot_id,travel_seconds")
+    .eq("from_spot_id", spot.id);
+
+  if (edgeErr) {
+    console.error("edges select error:", edgeErr);
+    await ctx.reply("در خواندن مسیرها خطایی رخ داد.");
+    return;
+  }
+
+  if (!edges || edges.length === 0) {
     await ctx.reply(
-      header +
-        "در اطرافت هیچ راهی برای حالت حرکت فعلی‌ات باز نیست.\n" +
-        "شاید باید از راه دیگری به اینجا متصل شوی یا از ارباب نقشه‌ها کمک بگیری."
+      `📍 جایگاه اکنون تو:\n` +
+        `🏰 ${region.title}\n` +
+        `⬙ نقطه: ${spot.title}\n\n` +
+        "از این نقطه هیچ مسیری تعریف نشده.\n" +
+        "ارباب باید از پنل /worldadmin برای این Spot مسیری بسازد."
     );
     return;
+  }
+
+  // اسم مقصدها
+  const toIds = (edges as any[]).map((e) => e.to_spot_id);
+  const { data: destSpots, error: destErr } = await supabase
+    .from("spots")
+    .select("id,title")
+    .in("id", toIds);
+
+  if (destErr || !destSpots) {
+    await ctx.reply("در خواندن مقصدها خطایی رخ داد.");
+    return;
+  }
+
+  const destMap = new Map<number, string>();
+  for (const d of destSpots as any[]) {
+    destMap.set(d.id, d.title);
   }
 
   const kb = new InlineKeyboard();
+  for (const e of edges as any[]) {
+    const destTitle = destMap.get(e.to_spot_id) || `نقطه ${e.to_spot_id}`;
+    const label = `➤ ${destTitle} ~ ${e.travel_seconds} ثانیه‌ی سفر`;
+    kb.text(label, `go:${e.id}`).row();
+  }
+  kb.text("🔄 تازه‌سازی", "paths:open");
 
-  edges.forEach((e) => {
-    const dur = computeTravelSeconds(e, mode);
-    const title = e.name || "مسیر ناشناس";
-    const label = `➤ ${title} · ${formatDuration(dur)}`;
-    kb.text(label, `travel:edge:${e.id}`).row();
-  });
+  const headerText =
+    "🧭 صفحه‌ی مسیرها در اطلس باز شد…\n\n" +
+    `📍 جایگاه اکنون تو:\n` +
+    `🏰 ${region.title}\n` +
+    `⬙ نقطه: ${spot.title}\n\n` +
+    "در برابر تو این راه‌ها خودشان را آشکار می‌کنند:";
 
-  await ctx.reply(header, { reply_markup: kb });
+  await ctx.reply(headerText, { reply_markup: kb });
 }
 
-/** دکمه «🗺 نقشه سریع من» */
-async function handleQuickMap(ctx: MyContext) {
-  const char = await getCharacter(ctx);
-  if (!char || !char.current_spot_id) {
-    await ctx.reply("نمی‌توانم تو را روی نقشه پیدا کنم. شاید هنوز در مرزهای جهان ثبت نشده‌ای.");
+/**
+ * نقشه سریع من – فقط توضیح فانتزی از جایگاه فعلی
+ */
+async function showQuickMap(ctx: MyContext): Promise<void> {
+  if (ctx.chat?.type !== "private") {
+    await ctx.reply("نقشه‌ی درونی فقط در پی‌وی من باز می‌شود.");
     return;
   }
 
-  const { spot, region } = await getSpotAndRegion(char.current_spot_id);
+  const { supabase } = ctx.services;
+  const char = await ensureCharacter(ctx);
 
-  const regionName = region?.name || "سرزمین ناشناخته";
-  const spotName = spot?.name || "نقطه‌ای بی‌نام";
+  if (!char.current_spot_id || !char.current_region_id) {
+    await ctx.reply(
+      "هنوز مکان مشخصی برایت ثبت نشده.\n" +
+        "ارباب باید ابتدا تو را در یکی از مناطق با /regplayer ثبت کند."
+    );
+    return;
+  }
 
-  const mode = char.movement_mode || "walk";
+  const { data: spot, error: spotErr } = await supabase
+    .from("spots")
+    .select("id,title,region_id")
+    .eq("id", char.current_spot_id)
+    .single();
+
+  if (spotErr || !spot) {
+    await ctx.reply("نقشه نتوانست نقطه‌ی فعلی‌ات را پیدا کند.");
+    return;
+  }
+
+  const { data: region, error: regErr } = await supabase
+    .from("regions")
+    .select("id,title")
+    .eq("id", spot.region_id)
+    .single();
+
+  if (regErr || !region) {
+    await ctx.reply("نقشه نتوانست قلمروی فعلی‌ات را پیدا کند.");
+    return;
+  }
+
+  const clan = char.clan_name as string | null;
 
   const text =
-    `🗺 نقشه‌ی جیبی تو:\n\n` +
-    `🏞 ریجن: ${regionName}\n` +
-    `📍 مکان: ${spotName}\n` +
-    `🚶 حالت حرکت: ${modeLabel(mode)}\n`;
+    "🗺 نقشه‌ی درونی فعال شد…\n\n" +
+    (clan ? `🧬 خون تو: ${clan}\n\n` : "") +
+    `🏰 قلمرو: ${region.title}\n` +
+    `⬙ نقطه: ${spot.title}\n\n` +
+    "خطوط نامرئی مسیرها در ذهن تو روشن می‌شوند.\n" +
+    "برای دیدن راه‌های قابل پیمایش، از «🧭 مسیر های من» استفاده کن.";
 
   await ctx.reply(text);
 }
 
-/** شروع سفر روی edge – callback_data = travel:edge:<id> */
-async function handleEdgeTravelCallback(ctx: MyContext) {
-  if (!ctx.callbackQuery?.data) return;
-  const parts = ctx.callbackQuery.data.split(":");
-  if (parts.length !== 3) return;
-  const [, kind, idStr] = parts;
-  if (kind !== "edge") return;
-
-  const edgeId = Number(idStr);
-  if (!Number.isFinite(edgeId)) return;
-
-  const char = await getCharacter(ctx);
-  if (!char) {
-    await ctx.answerCallbackQuery({
-      text: "نامت هنوز در دفتر راه‌ها ثبت نشده.",
-      show_alert: true,
-    });
+/**
+ * ثبت پلیر با ریپلای /regplayer
+ */
+async function handleRegPlayer(ctx: MyContext): Promise<void> {
+  if (ctx.from?.id !== MASTER_ID) {
+    await ctx.reply("فقط اربابم میتونه پلیر ثبت کنه، حدتو بدون.");
     return;
   }
 
-  if (!char.current_spot_id) {
-    await ctx.answerCallbackQuery({
-      text: "مکان فعلی‌ات در نقشه تنظیم نشده.",
-      show_alert: true,
-    });
+  if (!ctx.chat || ctx.chat.type === "private") {
+    await ctx.reply("دستور /regplayer را باید داخل گروه و روی پیام پلیر بزنی (ریپلای).");
     return;
   }
 
-  const mode: MovementMode = char.movement_mode || "walk";
+  const reply = ctx.message?.reply_to_message;
+  if (!reply || !reply.from) {
+    await ctx.reply("برای ثبت پلیر، باید روی پیام آن شخص ریپلای کنی و بعد /regplayer را بفرستی.");
+    return;
+  }
 
-  const { data: edgeData, error: edgeErr } = await supabase
-    .from("edges")
-    .select(
-      `
-      id,
-      from_spot_id,
-      to_spot_id,
-      name,
-      base_seconds,
-      ride_seconds,
-      drive_seconds,
-      can_walk,
-      can_ride,
-      can_drive
-    `
-    )
-    .eq("id", edgeId)
+  const target = reply.from;
+  const chatId = ctx.chat.id;
+  const { supabase } = ctx.services;
+
+  // Region مربوط به این گروه
+  const region = await getRegionByChatId(ctx, chatId);
+  if (!region) {
+    await ctx.reply(
+      "برای این گروه هنوز Region ثبت نشده.\n" +
+        "اول داخل همین گروه /worldadmin را بزن و از پنل، Region این چت را بساز."
+    );
+    return;
+  }
+
+  // پیدا کردن یک Spot پیش‌فرض (اولین Spot در این Region)
+  const { data: spots, error: spErr } = await supabase
+    .from("spots")
+    .select("id,title")
+    .eq("region_id", region.id)
+    .order("id", { ascending: true })
+    .limit(1);
+
+  if (spErr || !spots || spots.length === 0) {
+    await ctx.reply(
+      "برای این Region هنوز هیچ Spotی تعریف نشده.\n" +
+        "از پنل /worldadmin → «ساخت Spot» را بزن، بعد دوباره /regplayer را اجرا کن."
+    );
+    return;
+  }
+
+  const spot = (spots as any[])[0];
+
+  // آیا کاراکتر قبلاً وجود دارد؟
+  const { data: existing, error: charErr } = await supabase
+    .from("characters")
+    .select("id")
+    .eq("tg_id", target.id)
     .maybeSingle();
 
-  if (edgeErr || !edgeData) {
-    if (edgeErr) console.error("edge not found", edgeErr);
-    await ctx.answerCallbackQuery({
-      text: "این راه دیگر روی نقشه وجود ندارد.",
-      show_alert: true,
-    });
-    return;
+  if (charErr) {
+    console.error("characters check error:", charErr);
   }
 
-  const edge = edgeData as EdgeRow;
+  if (existing && !charErr) {
+    // آپدیت لوکیشن
+    const { error: updErr } = await supabase
+      .from("characters")
+      .update({
+        current_region_id: region.id,
+        current_spot_id: spot.id,
+        pending_region_id: null,
+        pending_spot_id: null,
+        travel_ready_at: null,
+      })
+      .eq("tg_id", target.id);
 
-  if (mode === "walk" && !edge.can_walk) {
-    await ctx.answerCallbackQuery({
-      text: "با پای پیاده نمی‌توانی از این راه عبور کنی.",
-      show_alert: true,
-    });
-    return;
-  }
-  if (mode === "ride" && !edge.can_ride) {
-    await ctx.answerCallbackQuery({
-      text: "این مسیر برای سوارکاران بسته است.",
-      show_alert: true,
-    });
-    return;
-  }
-  if (mode === "drive" && !edge.can_drive) {
-    await ctx.answerCallbackQuery({
-      text: "وسیله‌ی آهنی‌ات اجازه‌ی عبور از این راه را ندارد.",
-      show_alert: true,
-    });
-    return;
-  }
-
-  let duration = computeTravelSeconds(edge, mode);
-
-  if (
-    char.travel_state === "in_travel" &&
-    char.travel_started_at &&
-    char.travel_duration_seconds
-  ) {
-    const { credit } = computeBorrowedDuration(
-      char.travel_duration_seconds,
-      char.travel_started_at
-    );
-
-    const newDuration = duration - credit;
-    duration = Math.max(MIN_TRAVEL_SECONDS, newDuration);
-
-    await ctx.answerCallbackQuery({
-      text: `رد پای سفرت روی راه قبلی، بخشی از مسیر جدید را کوتاه کرد.`,
-      show_alert: false,
-    });
+    if (updErr) {
+      console.error("characters update error:", updErr);
+      await ctx.reply("در آپدیت لوکیشن پلیر خطایی رخ داد.");
+      return;
+    }
   } else {
-    await ctx.answerCallbackQuery().catch(() => undefined);
+    // ساخت کاراکتر جدید
+    const { error: insErr } = await supabase.from("characters").insert({
+      tg_id: target.id,
+      char_name: null,
+      clan_name: null,
+      current_region_id: region.id,
+      current_spot_id: spot.id,
+      last_move_at: null,
+      travel_ready_at: null,
+      pending_region_id: null,
+      pending_spot_id: null,
+    });
+
+    if (insErr) {
+      console.error("characters insert error:", insErr);
+      await ctx.reply("در ساخت پلیر جدید خطایی رخ داد.");
+      return;
+    }
   }
-
-  const nowIso = new Date().toISOString();
-
-  const ok = await updateCharacter(char.id, {
-    travel_state: "in_travel",
-    travel_started_at: nowIso,
-    travel_duration_seconds: duration,
-    travel_from_spot_id: edge.from_spot_id,
-    travel_to_spot_id: edge.to_spot_id,
-  });
-
-  if (!ok) {
-    await ctx.reply("جریان زمان در ثبت این سفر گیر کرد. دوباره تلاش کن.");
-    return;
-  }
-
-  const { spot: toSpot, region: toRegion } = await getSpotAndRegion(
-    edge.to_spot_id
-  );
-
-  const targetRegion = toRegion?.name || "سرزمین مبهم";
-  const targetSpot = toSpot?.name || "نقطه‌ای بی‌نام";
-
-  const text =
-    `🧭 سفر آغاز شد.\n\n` +
-    `🎭 حالت حرکت: ${modeLabel(mode)}\n` +
-    `🎯 مقصد: ${targetRegion} / ${targetSpot}\n` +
-    `⏳ زمان تقریبی: ${formatDuration(duration)}\n\n` +
-    `هر وقت فکر کردی به انتهای این راه رسیدی، ورد /arrive را بخوان.`;
-
-  await ctx.reply(text);
-}
-
-/** /arrive – رسیدن به مقصد */
-async function handleArrive(ctx: MyContext) {
-  const char = await getCharacter(ctx);
-  if (!char) {
-    await ctx.reply("هنوز در دفتر راه‌ها ثبت نشده‌ای.");
-    return;
-  }
-
-  if (
-    char.travel_state !== "in_travel" ||
-    !char.travel_started_at ||
-    !char.travel_duration_seconds ||
-    !char.travel_to_spot_id
-  ) {
-    await ctx.reply("الان در میانه‌ی هیچ مسیری ثبت نشده‌ای. خبری از سفر فعال نیست.");
-    return;
-  }
-
-  const startedAt = new Date(char.travel_started_at).getTime();
-  const now = Date.now();
-  const elapsed = Math.max(
-    0,
-    Math.floor((now - startedAt) / 1000)
-  );
-
-  if (elapsed < char.travel_duration_seconds) {
-    const remaining = char.travel_duration_seconds - elapsed;
-    await ctx.reply(
-      `هنوز کمی از این راه باقی مانده…\n` +
-        `حدود ${formatDuration(remaining)} دیگر در مسیر خواهی بود.`
-    );
-    return;
-  }
-
-  const newSpotId = char.travel_to_spot_id;
-  const { spot, region } = await getSpotAndRegion(newSpotId);
-
-  const ok = await updateCharacter(char.id, {
-    current_spot_id: newSpotId,
-    current_region_id: spot ? spot.region_id : char.current_region_id,
-    travel_state: "idle",
-    travel_started_at: null,
-    travel_duration_seconds: null,
-    travel_from_spot_id: null,
-    travel_to_spot_id: null,
-  });
-
-  if (!ok) {
-    await ctx.reply("ثبت رسیدنت در دفتر نقشه به مشکل خورد.");
-    return;
-  }
-
-  const regionName = region?.name || "سرزمین نامعلوم";
-  const spotName = spot?.name || "نقطه‌ی بی‌نام";
 
   await ctx.reply(
-    `✅ به مقصد رسیدی.\n\n` +
-      `🏞 ریجن: ${regionName}\n` +
-      `📍 مکان: ${spotName}`
+    `پلیر ثبت شد ✅\n` +
+      `کاربر: ${target.first_name}${
+        target.username ? ` (@${target.username})` : ""
+      }\n` +
+      `مکان اولیه: ${region.title} / ${spot.title}`
   );
 }
 
-/** رجیستر فیچر سفر */
-export function registerTravelFeature(bot: Bot<MyContext>) {
-  // دستور متنی /path
-  bot.command("path", handleShowPaths);
+/**
+ * هندل رسیدن به مقصد + کیک از گروه قبلی + لینک ورود به گروه جدید
+ */
+async function handleArrive(ctx: MyContext): Promise<void> {
+  if (ctx.chat?.type !== "private") {
+    await ctx.reply("برای تکمیل سفر، بیا توی پی‌وی من و /arrive بزن.");
+    return;
+  }
 
-  // دکمه متنی «🧭 مسیر های من»
-  bot.hears("🧭 مسیر های من", handleShowPaths);
+  const { supabase } = ctx.services;
+  const char = await ensureCharacter(ctx);
 
-  // دکمه متنی «🗺 نقشه سریع من»
-  bot.hears("🗺 نقشه سریع من", handleQuickMap);
+  if (
+    !char.pending_region_id ||
+    !char.pending_spot_id ||
+    !char.travel_ready_at
+  ) {
+    await ctx.reply("الان در حال سفر نیستی.");
+    return;
+  }
 
-  // دستور /arrive
-  bot.command("arrive", handleArrive);
+  const now = new Date();
+  const ready = new Date(char.travel_ready_at as string);
 
-  // کال‌بک مسیرها
-  bot.on("callback_query:data", async (ctx) => {
-    const data = ctx.callbackQuery?.data;
-    if (!data) return;
-    if (data.startsWith("travel:edge:")) {
-      await handleEdgeTravelCallback(ctx);
+  if (now < ready) {
+    const diffMs = ready.getTime() - now.getTime();
+    const diffSec = Math.ceil(diffMs / 1000);
+    await ctx.reply(
+      `هنوز به مقصد نرسیدی.\n` +
+        `زمان تقریبی باقی‌مانده: حدود ${diffSec} ثانیه.`
+    );
+    return;
+  }
+
+  // مقصد
+  const { data: destSpot, error: destSpotErr } = await supabase
+    .from("spots")
+    .select("id,title,region_id")
+    .eq("id", char.pending_spot_id)
+    .single();
+
+  if (destSpotErr || !destSpot) {
+    await ctx.reply("مقصد در دیتابیس پیدا نشد.");
+    return;
+  }
+
+  const { data: destRegion, error: destRegErr } = await supabase
+    .from("regions")
+    .select("id,title,telegram_chat_id")
+    .eq("id", destSpot.region_id)
+    .single();
+
+  if (destRegErr || !destRegion) {
+    await ctx.reply("Region مقصد پیدا نشد.");
+    return;
+  }
+
+  const oldRegionId = char.current_region_id as number | null;
+
+  // آپدیت وضعیت کاراکتر به مقصد جدید
+  const { error: updErr } = await supabase
+    .from("characters")
+    .update({
+      current_region_id: destRegion.id,
+      current_spot_id: destSpot.id,
+      pending_region_id: null,
+      pending_spot_id: null,
+      travel_ready_at: null,
+    })
+    .eq("tg_id", ctx.from!.id);
+
+  if (updErr) {
+    console.error("characters arrive update error:", updErr);
+    await ctx.reply("خطا در ثبت رسیدن به مقصد.");
+    return;
+  }
+
+  let extraText = "";
+  let kb: InlineKeyboard | undefined;
+
+  // اگر Region عوض شده، سعی کن از گروه قبلی کیک کنی و لینک گروه جدید را بفرستی
+  if (oldRegionId && oldRegionId !== destRegion.id) {
+    try {
+      const { data: oldRegion, error: oldRegErr } = await supabase
+        .from("regions")
+        .select("id,title,telegram_chat_id")
+        .eq("id", oldRegionId)
+        .single();
+
+      const oldChatId = oldRegion?.telegram_chat_id as number | undefined;
+      const newChatId = destRegion.telegram_chat_id as number | undefined;
+
+      if (!oldRegErr && oldChatId && newChatId) {
+        // کیک نرم از گروه قبلی
+        try {
+          await ctx.api.banChatMember(oldChatId, ctx.from!.id);
+          await ctx.api.unbanChatMember(oldChatId, ctx.from!.id);
+        } catch (kickErr) {
+          console.error("kick from old chat error:", kickErr);
+          extraText +=
+            "\n⚠️ نتوانستم از گروه قبلی کیکت کنم (احتمالاً ادمین‌بودن تو یا کم بودن دسترسی من).";
+        }
+
+        // ساخت لینک دعوت گروه جدید
+        try {
+          const invite = await ctx.api.createChatInviteLink(newChatId, {
+            creates_join_request: false,
+          });
+
+          kb = new InlineKeyboard().url("ورود به مکان جدید", invite.invite_link);
+        } catch (invErr) {
+          console.error("create invite link error:", invErr);
+          extraText +=
+            "\n⚠️ نتوانستم لینک ورود به گروه مقصد را بسازم (احتمالاً دسترسی ساخت لینک ندارم).";
+        }
+      } else {
+        extraText +=
+          "\n⚠️ برای یکی از Regionها chat_id ثبت نشده؛ امکان مدیریت گروه‌ها وجود ندارد.";
+      }
+    } catch (err) {
+      console.error("old region / telegram handling error:", err);
+      extraText += "\n⚠️ در مدیریت گروه‌های تلگرام خطایی رخ داد.";
     }
+  }
+
+  const baseText =
+    `به مقصد رسیدی! ✅\n` +
+    `${destRegion.title} / ${destSpot.title}`;
+
+  await ctx.reply(baseText + extraText, {
+    reply_markup: kb,
+  });
+}
+
+/**
+ * ثبت سفر جدید از طریق Edge
+ */
+async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void> {
+  const { supabase } = ctx.services;
+  const char = await ensureCharacter(ctx);
+
+  // پیدا کردن Edge
+  const { data: edge, error: edgeErr } = await supabase
+    .from("edges")
+    .select("id,from_spot_id,to_spot_id,travel_seconds")
+    .eq("id", edgeId)
+    .single();
+
+  if (edgeErr || !edge) {
+    await ctx.reply("این مسیر دیگر وجود ندارد.");
+    return;
+  }
+
+  // مقصد این Edge
+  const { data: destSpot, error: destSpotErr } = await supabase
+    .from("spots")
+    .select("id,title,region_id")
+    .eq("id", edge.to_spot_id)
+    .single();
+
+  if (destSpotErr || !destSpot) {
+    await ctx.reply("مقصد این مسیر پیدا نشد.");
+    return;
+  }
+
+  const { data: destRegion, error: destRegErr } = await supabase
+    .from("regions")
+    .select("id,title")
+    .eq("id", destSpot.region_id)
+    .single();
+
+  if (destRegErr || !destRegion) {
+    await ctx.reply("Region مقصد پیدا نشد.");
+    return;
+  }
+
+  const now = new Date();
+  const ready = new Date(now.getTime() + (edge.travel_seconds as number) * 1000);
+
+  const { error: updErr } = await supabase
+    .from("characters")
+    .update({
+      pending_region_id: destRegion.id,
+      pending_spot_id: destSpot.id,
+      travel_ready_at: ready.toISOString(),
+      last_move_at: now.toISOString(),
+    })
+    .eq("tg_id", char.tg_id);
+
+  if (updErr) {
+    console.error("characters start travel update error:", updErr);
+    await ctx.reply("در شروع سفر خطایی رخ داد.");
+    return;
+  }
+
+  const kb = new InlineKeyboard().text("رسیدم؟", "travel:arrive");
+
+  await ctx.reply(
+    `در حال حرکت به سمت:\n${destRegion.title} / ${destSpot.title}\n` +
+      `⏳ زمان تقریبی سفر: ${edge.travel_seconds} ثانیه.\n\n` +
+      "وقتی فکر کردی زمانش گذشته، روی «رسیدم؟» بزن یا از /arrive استفاده کن.",
+    { reply_markup: kb }
+  );
+}
+
+/**
+ * رجیستر کردن همه‌ی هندلرهای مرتبط با سفر
+ */
+export function registerTravelFeature(bot: Bot<MyContext>): void {
+  // دکمه‌ی متنی «مسیر های من» در PV
+  bot.hears("🧭 مسیر های من", async (ctx) => {
+    await showPaths(ctx);
+  });
+
+  // برای سازگاری: /path هم همان کار را می‌کند
+  bot.command("path", async (ctx) => {
+    await showPaths(ctx);
+  });
+
+  // دکمه‌ی متنی «نقشه سریع من»
+  bot.hears("🗺 نقشه سریع من", async (ctx) => {
+    await showQuickMap(ctx);
+  });
+
+  // دستور /mymap نیز همان کار را انجام دهد
+  bot.command("mymap", async (ctx) => {
+    await showQuickMap(ctx);
+  });
+
+  // دستور ثبت پلیر (فقط ارباب، فقط روی ریپلای توی گروه)
+  bot.command("regplayer", async (ctx) => {
+    await handleRegPlayer(ctx);
+  });
+
+  // باز کردن دوباره لیست مسیرها
+  bot.on("callback_query:data", async (ctx, next) => {
+    const data = ctx.callbackQuery.data || "";
+    if (data === "paths:open") {
+      await ctx.answerCallbackQuery();
+      await showPaths(ctx);
+      return;
+    }
+    await next();
+  });
+
+  // شروع سفر روی دکمه‌ی مقصد: go:<edgeId>
+  bot.on("callback_query:data", async (ctx, next) => {
+    const data = ctx.callbackQuery.data || "";
+    if (!data.startsWith("go:")) {
+      await next();
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
+    const edgeId = Number(data.split(":")[1]);
+    if (!Number.isFinite(edgeId)) {
+      return;
+    }
+
+    await startTravelFromEdge(ctx, edgeId);
+  });
+
+  // /arrive برای تکمیل سفر
+  bot.command("arrive", async (ctx) => {
+    await handleArrive(ctx);
+  });
+
+  // دکمه‌ی inline «رسیدم؟»
+  bot.on("callback_query:data", async (ctx, next) => {
+    const data = ctx.callbackQuery.data || "";
+    if (data === "travel:arrive") {
+      await ctx.answerCallbackQuery();
+      await handleArrive(ctx);
+      return;
+    }
+    await next();
   });
 }
