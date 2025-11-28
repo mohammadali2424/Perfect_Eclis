@@ -1,7 +1,9 @@
+// src/core/bot.ts
 import { Bot, session } from "grammy";
 import { BOT_TOKEN } from "./config";
 import { supabase } from "./supabase";
-import { MyContext, SessionData, Services } from "./types";
+import type { MyContext, SessionData, Services } from "./types";
+
 import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
@@ -13,24 +15,38 @@ if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is required");
 }
 
-// خود بات اصلی
+/**
+ * خود بات اصلی اکلیس
+ */
 export const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// سشن گرامی (حافظه موقت برای هر یوزر)
+/**
+ * سشن گرامی (حافظه‌ی موقت برای هر یوزر)
+ */
 bot.use(
   session({
     initial: (): SessionData => ({
-      // هر چیزی توی SessionData هست می‌تونه اینجا مقدار اولیه بگیره
+      // پیام آخر توی پی‌وی برای تمیز نگه داشتن چت
+      __last_pm_id: undefined,
+
+      // وضعیت پنل دنیاسازی (world admin)
+      worldAdmin: undefined,
+
+      // آخرین منوی UI (اگر خواستی بعداً ازش استفاده کنی)
       ui_last_menu_id: undefined,
+
+      // ویزارد ثبت‌نام
       reg_step: undefined,
       reg_clan: null,
       reg_name: null,
-      // اگر توی SessionData چیزای دیگه‌ای هم داری، گرامی خودش بعداً اضافه می‌کنه
     }),
   })
 );
 
-// تزریق سرویس‌ها (مثل supabase) داخل ctx.services
+/**
+ * تزریق سرویس‌ها داخل ctx.services
+ * الان فقط supabase داریم، بعداً هرچی خواستی اضافه می‌کنی.
+ */
 bot.use((ctx, next) => {
   ctx.services = {
     supabase,
@@ -38,10 +54,12 @@ bot.use((ctx, next) => {
   return next();
 });
 
-// فیچرهای مختلف ربات
-registerSecurityFeature(bot);// محافظت: ارباب، لفت از گروه‌های اضافی و…
-registerMainMenuFeature(bot);
-registerOnboardingFeature(bot);      // اطلس، ثبت‌نام، انتخاب خاندان
-registerWorldAdminFeature(bot);      // پنل ساخت Region/Spot/Edge
-registerTravelFeature(bot);          // سفر بین مسیرها، مسیرهای من، نقشه سریع من
-registerRegistrationFeature(bot);    // هرچی توی registration.ts نوشتی
+/**
+ * رجیستر کردن همه‌ی فیچرها
+ */
+registerSecurityFeature(bot);       // محافظت: ارباب، لفت از گروه‌های اضافی و…
+registerMainMenuFeature(bot);      // کیبورد «مسیرهای من» و «نقشه سریع من»
+registerOnboardingFeature(bot);    // ورودی اولیه‌ی جهان، انتخاب خاندان و…
+registerWorldAdminFeature(bot);    // پنل ساخت Region/Spot/Edge در پی‌وی ارباب
+registerTravelFeature(bot);        // سفر بین مسیرها، /path، مسیرهای من، نقشه‌ی سریع
+registerRegistrationFeature(bot);  // ثبت‌نام بازیکنان و تایید توسط ارباب
