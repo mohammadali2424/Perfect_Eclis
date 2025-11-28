@@ -9,7 +9,6 @@ import { registerTravelFeature } from "../features/world/travel";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
 import { registerRegistrationFeature } from "../features/registration";
 import { registerMainMenuFeature } from "../features/ui/main-menu";
-import { registerOnboardingFeature } from "../features/world/onboarding";
 
 if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is required");
@@ -59,7 +58,6 @@ bot.use((ctx, next) => {
  */
 registerSecurityFeature(bot);       // محافظت: ارباب، لفت از گروه‌های اضافی و…
 registerMainMenuFeature(bot);      // کیبورد «مسیرهای من» و «نقشه سریع من»
-registerOnboardingFeature(bot);    // ورودی اولیه‌ی جهان، انتخاب خاندان و…
 registerWorldAdminFeature(bot);    // پنل ساخت Region/Spot/Edge در پی‌وی ارباب
 registerTravelFeature(bot);        // سفر بین مسیرها، /path، مسیرهای من، نقشه‌ی سریع
 registerRegistrationFeature(bot);  // ثبت‌نام بازیکنان و تایید توسط ارباب
