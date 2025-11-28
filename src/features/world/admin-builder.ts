@@ -5,7 +5,8 @@ import { supabase } from "../../core/supabase.js";
 import { InlineKeyboard } from "grammy";
 import type { ClanId, WorldRegion, WorldSpot, WorldEdge } from "../../core/types.js";
 
-// کمکی‌ها
+// --- کمک‌ها و ثابت‌ها ---
+
 const CLAN_LABELS: Record<ClanId, string> = {
   walker: "⚡ Walker",
   stellarieth: "🪽 Stellarieth",
@@ -31,6 +32,19 @@ function parseDurationToSeconds(input: string): number | null {
   return null;
 }
 
+function mainAdminKeyboard(): InlineKeyboard {
+  const kb = new InlineKeyboard()
+    .text("🏳️ ریجن این گروه", "wa:region:current")
+    .row()
+    .text("📍 Spot جدید", "wa:spot:new")
+    .text("🔗 Edge جدید", "wa:edge:new")
+    .row()
+    .text("🗑 حذف", "wa:delete")
+    .row()
+    .text("📜 لیست مناطق", "wa:regions:list");
+  return kb;
+}
+
 // -------------- /aw در گروه --------------
 
 // /aw در گروه → پاک کردن پیام + باز کردن پنل در PV
@@ -54,13 +68,16 @@ export async function handleWorldAdminCommand(ctx: EclisContext) {
 
   // پیدا کردن ریجن مربوط به این گروه
   const chatIdStr = String(chat.id);
-  const { data: region, error } = await supabase
-    .from("world_regions")
-    .select("*")
-    .eq("chat_id", chatIdStr)
-    .maybeSingle();
+  let region: WorldRegion | null = null;
+  try {
+    const { data } = await supabase
+      .from("world_regions")
+      .select("*")
+      .eq("chat_id", chatIdStr)
+      .maybeSingle();
 
-  if (error) {
+    region = (data as WorldRegion) ?? null;
+  } catch (error) {
     console.error("Error loading region:", error);
   }
 
@@ -68,32 +85,21 @@ export async function handleWorldAdminCommand(ctx: EclisContext) {
   ctx.session.worldBuilderRegionTitle = chat.title ?? `Region ${chatIdStr}`;
   ctx.session.worldBuilderRegionId = region ? region.id : null;
 
-const clan = region.clan as ClanId;
+  let info = "هنوز به‌عنوان ریجن ثبت نشده.";
+  if (region) {
+    const clan = region.clan as ClanId;
+    info = `ریجن ثبت‌شده است (${CLAN_LABELS[clan]}).`;
+  }
 
-await ctx.api.sendMessage(
-  ctx.from!.id,
-  `🌐 پنل مدیریت جهان برای گروه:\n«${ctx.session.worldBuilderRegionTitle}»\n\n` +
-    (region
-      ? `ریجن ثبت‌شده است (${CLAN_LABELS[clan]}).`
-      : "هنوز به‌عنوان ریجن ثبت نشده."),
-  {
-    reply_markup: mainAdminKeyboard(),
-  },
-);
-
-}
-
-function mainAdminKeyboard(): InlineKeyboard {
-  const kb = new InlineKeyboard()
-    .text("🏳️ ریجن این گروه", "wa:region:current")
-    .row()
-    .text("📍 Spot جدید", "wa:spot:new")
-    .text("🔗 Edge جدید", "wa:edge:new")
-    .row()
-    .text("🗑 حذف", "wa:delete")
-    .row()
-    .text("📜 لیست مناطق", "wa:regions:list");
-  return kb;
+  // پنل را در PV ارباب بفرست
+  await ctx.api.sendMessage(
+    ctx.from!.id,
+    `🌐 پنل مدیریت جهان برای گروه:\n«${ctx.session.worldBuilderRegionTitle}»\n\n` +
+      info,
+    {
+      reply_markup: mainAdminKeyboard(),
+    },
+  );
 }
 
 // -------------- callbackهای wa: --------------
@@ -194,10 +200,9 @@ async function handleRegionCurrent(ctx: EclisContext) {
     .row()
     .text(CLAN_LABELS.torrentress, "wa:region:setclan:torrentress");
 
-  await ctx.reply(
-    "این گروه را زیر کدام خاندان ثبت می‌کنی؟",
-    { reply_markup: kb },
-  );
+  await ctx.reply("این گروه را زیر کدام خاندان ثبت می‌کنی؟", {
+    reply_markup: kb,
+  });
 }
 
 async function handleRegionSetClan(ctx: EclisContext, clan: ClanId) {
@@ -211,58 +216,75 @@ async function handleRegionSetClan(ctx: EclisContext, clan: ClanId) {
     );
   }
 
-  const { data: existing, error: loadErr } = await supabase
-    .from("world_regions")
-    .select("*")
-    .eq("chat_id", chatId)
-    .maybeSingle();
+  let existing: WorldRegion | null = null;
+  try {
+    const { data } = await supabase
+      .from("world_regions")
+      .select("*")
+      .eq("chat_id", chatId)
+      .maybeSingle();
 
-  if (loadErr) {
-    console.error(loadErr);
+    existing = (data as WorldRegion) ?? null;
+  } catch (error) {
+    console.error(error);
   }
 
   if (existing) {
-    const { data, error } = await supabase
-      .from("world_regions")
-      .update({
-        clan,
-        name: title,
-      })
-      .eq("id", existing.id)
-      .select()
-      .single();
+    try {
+      const { data } = await supabase
+        .from("world_regions")
+        .update({
+          clan,
+          name: title,
+        })
+        .eq("id", existing.id)
+        .select()
+        .single();
 
-    if (error || !data) {
+      if (!data) {
+        return ctx.reply("در به‌روزرسانی ریجن خطایی رخ داد.");
+      }
+
+      const updated = data as WorldRegion;
+      ctx.session.worldBuilderRegionId = updated.id;
+      const c = updated.clan as ClanId;
+
+      await ctx.reply(
+        `✅ ریجن این گروه به‌روزرسانی شد:\n«${updated.name}»\n${CLAN_LABELS[c]}`,
+        { reply_markup: mainAdminKeyboard() },
+      );
+    } catch (error) {
       console.error(error);
       return ctx.reply("در به‌روزرسانی ریجن خطایی رخ داد.");
     }
-
-    ctx.session.worldBuilderRegionId = data.id;
-    await ctx.reply(
-      `✅ ریجن این گروه به‌روزرسانی شد:\n«${data.name}»\n${CLAN_LABELS[data.clan]}`,
-      { reply_markup: mainAdminKeyboard() },
-    );
   } else {
-    const { data, error } = await supabase
-      .from("world_regions")
-      .insert({
-        clan,
-        name: title,
-        chat_id: chatId,
-      })
-      .select()
-      .single();
+    try {
+      const { data } = await supabase
+        .from("world_regions")
+        .insert({
+          clan,
+          name: title,
+          chat_id: chatId,
+        })
+        .select()
+        .single();
 
-    if (error || !data) {
+      if (!data) {
+        return ctx.reply("در ثبت ریجن خطایی رخ داد.");
+      }
+
+      const created = data as WorldRegion;
+      ctx.session.worldBuilderRegionId = created.id;
+      const c = created.clan as ClanId;
+
+      await ctx.reply(
+        `✅ ریجن جدید ثبت شد:\n«${created.name}»\n${CLAN_LABELS[c]}`,
+        { reply_markup: mainAdminKeyboard() },
+      );
+    } catch (error) {
       console.error(error);
       return ctx.reply("در ثبت ریجن خطایی رخ داد.");
     }
-
-    ctx.session.worldBuilderRegionId = data.id;
-    await ctx.reply(
-      `✅ ریجن جدید ثبت شد:\n«${data.name}»\n${CLAN_LABELS[data.clan]}`,
-      { reply_markup: mainAdminKeyboard() },
-    );
   }
 }
 
@@ -279,7 +301,9 @@ async function startCreateSpot(ctx: EclisContext) {
 
   ctx.session.worldBuilderMode = "create_spot_name";
   ctx.session.worldBuilderPayload = { regionId };
-  await ctx.reply("نام Spot جدید را بنویس (مثلاً: ورودی شهر، بازار مرکزی، دروازه شمالی و...)");
+  await ctx.reply(
+    "نام Spot جدید را بنویس (مثلاً: ورودی شهر، بازار مرکزی، دروازه شمالی و...)",
+  );
 }
 
 async function actuallyCreateSpot(ctx: EclisContext, title: string) {
@@ -292,39 +316,50 @@ async function actuallyCreateSpot(ctx: EclisContext, title: string) {
   }
 
   // پیدا کردن ریجن تا chat_id آن را برای Spot هم استفاده کنیم
-  const { data: region, error } = await supabase
-    .from("world_regions")
-    .select("*")
-    .eq("id", regionId)
-    .single();
+  let region: WorldRegion | null = null;
+  try {
+    const { data } = await supabase
+      .from("world_regions")
+      .select("*")
+      .eq("id", regionId)
+      .single();
 
-  if (error || !region) {
+    region = data as WorldRegion;
+  } catch (error) {
     console.error(error);
     return ctx.reply("در یافتن ریجن خطایی رخ داد.");
   }
 
-  const { data: spot, error: spotErr } = await supabase
-    .from("world_spots")
-    .insert({
-      title,
-      region_id: regionId,
-      chat_id: region.chat_id, // فعلاً هر Spot در همین گروه
-    })
-    .select()
-    .single();
+  try {
+    const { data } = await supabase
+      .from("world_spots")
+      .insert({
+        title,
+        region_id: regionId,
+        chat_id: region.chat_id, // فعلاً هر Spot در همین گروه
+      })
+      .select()
+      .single();
 
-  ctx.session.worldBuilderMode = "idle";
-  ctx.session.worldBuilderPayload = null;
+    ctx.session.worldBuilderMode = "idle";
+    ctx.session.worldBuilderPayload = null;
 
-  if (spotErr || !spot) {
-    console.error(spotErr);
+    if (!data) {
+      return ctx.reply("در ساخت Spot مشکل پیش آمد.");
+    }
+
+    const spot = data as WorldSpot;
+
+    await ctx.reply(
+      `📍 Spot جدید ثبت شد:\n«${spot.title}»\nدر ریجن «${region.name}».`,
+      { reply_markup: mainAdminKeyboard() },
+    );
+  } catch (error) {
+    console.error(error);
+    ctx.session.worldBuilderMode = "idle";
+    ctx.session.worldBuilderPayload = null;
     return ctx.reply("در ساخت Spot مشکل پیش آمد.");
   }
-
-  await ctx.reply(
-    `📍 Spot جدید ثبت شد:\n«${spot.title}»\nدر ریجن «${region.name}».`,
-    { reply_markup: mainAdminKeyboard() },
-  );
 }
 
 // -------------- EDGE --------------
@@ -338,21 +373,27 @@ async function startCreateEdge(ctx: EclisContext) {
     );
   }
 
-  const { data: spots, error } = await supabase
-    .from("world_spots")
-    .select("*")
-    .eq("region_id", regionId)
-    .order("title", { ascending: true });
+  let spots: WorldSpot[] = [];
+  try {
+    const { data } = await supabase
+      .from("world_spots")
+      .select("*")
+      .eq("region_id", regionId)
+      .order("title", { ascending: true });
 
-  if (error || !spots || !spots.length) {
+    spots = (data as WorldSpot[]) ?? [];
+  } catch (error) {
     console.error(error);
+  }
+
+  if (!spots.length) {
     return ctx.reply(
       "برای این ریجن هیچ Spotی ثبت نشده.\nاول چند Spot بساز، بعد Edge ایجاد کن.",
     );
   }
 
   const kb = new InlineKeyboard();
-  for (const s of spots as WorldSpot[]) {
+  for (const s of spots) {
     kb.text(`↩ از «${s.title}»`, `wa:edge:from:${s.id}`).row();
   }
 
@@ -370,18 +411,24 @@ async function pickEdgeFrom(ctx: EclisContext, fromSpotId: string) {
     return ctx.reply("ریجن مشخص نیست. دوباره /aw و سپس Edge جدید را بزن.");
   }
 
-  const { data: spots, error } = await supabase
-    .from("world_spots")
-    .select("*")
-    .order("title", { ascending: true });
+  let spots: WorldSpot[] = [];
+  try {
+    const { data } = await supabase
+      .from("world_spots")
+      .select("*")
+      .order("title", { ascending: true });
 
-  if (error || !spots || !spots.length) {
+    spots = (data as WorldSpot[]) ?? [];
+  } catch (error) {
     console.error(error);
+  }
+
+  if (!spots.length) {
     return ctx.reply("هیچ Spotی یافت نشد.");
   }
 
   const kb = new InlineKeyboard();
-  for (const s of spots as WorldSpot[]) {
+  for (const s of spots) {
     kb.text(`⇢ به «${s.title}»`, `wa:edge:to:${s.id}`).row();
   }
 
@@ -426,44 +473,65 @@ async function actuallyCreateEdge(ctx: EclisContext, durationInput: string) {
     return ctx.reply("فرمت زمان اشتباه است. فقط عدد، یا عدد+`s` یا عدد+`m`.");
   }
 
-  const { data: fromSpot } = await supabase
-    .from("world_spots")
-    .select("*")
-    .eq("id", fromSpotId)
-    .single();
+  let fromSpot: WorldSpot | null = null;
+  let toSpot: WorldSpot | null = null;
 
-  const { data: toSpot } = await supabase
-    .from("world_spots")
-    .select("*")
-    .eq("id", toSpotId)
-    .single();
+  try {
+    const { data: fromData } = await supabase
+      .from("world_spots")
+      .select("*")
+      .eq("id", fromSpotId)
+      .single();
 
-  const { data: edge, error } = await supabase
-    .from("world_edges")
-    .insert({
-      from_spot_id: fromSpotId,
-      to_spot_id: toSpotId,
-      base_travel_seconds: seconds,
-      can_walk: true, // فعلاً فقط پیاده؛ بعداً برای سوارکار/راننده/حمل‌ونقل هم UI می‌چسبونیم
-      can_ride: false,
-      can_drive: false,
-      can_transport: false,
-    })
-    .select()
-    .single();
+    fromSpot = fromData as WorldSpot;
+  } catch (error) {
+    console.error(error);
+  }
 
-  if (error || !edge) {
+  try {
+    const { data: toData } = await supabase
+      .from("world_spots")
+      .select("*")
+      .eq("id", toSpotId)
+      .single();
+
+    toSpot = toData as WorldSpot;
+  } catch (error) {
+    console.error(error);
+  }
+
+  try {
+    const { data } = await supabase
+      .from("world_edges")
+      .insert({
+        from_spot_id: fromSpotId,
+        to_spot_id: toSpotId,
+        base_travel_seconds: seconds,
+        can_walk: true, // فعلاً فقط پیاده؛ بعداً برای بقیه حالت‌ها UI می‌چسبونیم
+        can_ride: false,
+        can_drive: false,
+        can_transport: false,
+      })
+      .select()
+      .single();
+
+    if (!data) {
+      return ctx.reply("در ساخت Edge مشکل پیش آمد.");
+    }
+
+    const edge = data as WorldEdge;
+
+    await ctx.reply(
+      `🔗 Edge جدید ثبت شد:\n` +
+        `از «${fromSpot?.title ?? fromSpotId}»\n` +
+        `به «${toSpot?.title ?? toSpotId}»\n` +
+        `زمان پایه: ${seconds} ثانیه`,
+      { reply_markup: mainAdminKeyboard() },
+    );
+  } catch (error) {
     console.error(error);
     return ctx.reply("در ساخت Edge مشکل پیش آمد.");
   }
-
-  await ctx.reply(
-    `🔗 Edge جدید ثبت شد:\n` +
-      `از «${fromSpot?.title ?? fromSpotId}»\n` +
-      `به «${toSpot?.title ?? toSpotId}»\n` +
-      `زمان پایه: ${seconds} ثانیه`,
-    { reply_markup: mainAdminKeyboard() },
-  );
 }
 
 // -------------- DELETE --------------
@@ -486,19 +554,25 @@ async function showDeleteSpotList(ctx: EclisContext) {
     );
   }
 
-  const { data: spots, error } = await supabase
-    .from("world_spots")
-    .select("*")
-    .eq("region_id", regionId)
-    .order("title", { ascending: true });
+  let spots: WorldSpot[] = [];
+  try {
+    const { data } = await supabase
+      .from("world_spots")
+      .select("*")
+      .eq("region_id", regionId)
+      .order("title", { ascending: true });
 
-  if (error || !spots || !spots.length) {
+    spots = (data as WorldSpot[]) ?? [];
+  } catch (error) {
     console.error(error);
+  }
+
+  if (!spots.length) {
     return ctx.reply("Spotای برای این ریجن یافت نشد.");
   }
 
   const kb = new InlineKeyboard();
-  for (const s of spots as WorldSpot[]) {
+  for (const s of spots) {
     kb.text(`حذف «${s.title}»`, `wa:delete:spot:${s.id}`).row();
   }
 
@@ -508,22 +582,18 @@ async function showDeleteSpotList(ctx: EclisContext) {
 async function deleteSpotById(ctx: EclisContext, spotId: string) {
   if (!requirePrivate(ctx)) return;
 
-  // اول Edgeهایی که به این Spot وصل‌اند حذف شوند
-  const { error: edgeErr } = await supabase
-    .from("world_edges")
-    .delete()
-    .or(`from_spot_id.eq.${spotId},to_spot_id.eq.${spotId}`);
-
-  if (edgeErr) {
-    console.error(edgeErr);
+  try {
+    await supabase
+      .from("world_edges")
+      .delete()
+      .or(`from_spot_id.eq.${spotId},to_spot_id.eq.${spotId}`);
+  } catch (error) {
+    console.error(error);
   }
 
-  const { error } = await supabase
-    .from("world_spots")
-    .delete()
-    .eq("id", spotId);
-
-  if (error) {
+  try {
+    await supabase.from("world_spots").delete().eq("id", spotId);
+  } catch (error) {
     console.error(error);
     return ctx.reply("در حذف Spot مشکل پیش آمد.");
   }
@@ -540,34 +610,45 @@ async function showDeleteEdgeList(ctx: EclisContext) {
     );
   }
 
-  // اول Spotهای این ریجن را بگیریم
-  const { data: spots, error: spotErr } = await supabase
-    .from("world_spots")
-    .select("*")
-    .eq("region_id", regionId);
+  let spots: WorldSpot[] = [];
+  try {
+    const { data } = await supabase
+      .from("world_spots")
+      .select("*")
+      .eq("region_id", regionId);
 
-  if (spotErr || !spots || !spots.length) {
-    console.error(spotErr);
+    spots = (data as WorldSpot[]) ?? [];
+  } catch (error) {
+    console.error(error);
+  }
+
+  if (!spots.length) {
     return ctx.reply("Spotای برای این ریجن یافت نشد.");
   }
 
-  const spotIds = (spots as WorldSpot[]).map((s) => s.id);
+  const spotIds = spots.map((s) => s.id);
 
-  const { data: edges, error: edgeErr } = await supabase
-    .from("world_edges")
-    .select("*")
-    .in("from_spot_id", spotIds);
+  let edges: WorldEdge[] = [];
+  try {
+    const { data } = await supabase
+      .from("world_edges")
+      .select("*")
+      .in("from_spot_id", spotIds);
 
-  if (edgeErr || !edges || !edges.length) {
-    console.error(edgeErr);
+    edges = (data as WorldEdge[]) ?? [];
+  } catch (error) {
+    console.error(error);
+  }
+
+  if (!edges.length) {
     return ctx.reply("هیچ Edgeای برای این ریجن ثبت نشده.");
   }
 
   const kb = new InlineKeyboard();
 
-  for (const e of edges as WorldEdge[]) {
-    const from = (spots as WorldSpot[]).find((s) => s.id === e.from_spot_id);
-    const to = (spots as WorldSpot[]).find((s) => s.id === e.to_spot_id);
+  for (const e of edges) {
+    const from = spots.find((s) => s.id === e.from_spot_id);
+    const to = spots.find((s) => s.id === e.to_spot_id);
     const label = `«${from?.title ?? "?"}» ⇢ «${to?.title ?? "?"}»`;
 
     kb.text(label, `wa:delete:edge:${e.id}`).row();
@@ -579,12 +660,9 @@ async function showDeleteEdgeList(ctx: EclisContext) {
 async function deleteEdgeById(ctx: EclisContext, edgeId: string) {
   if (!requirePrivate(ctx)) return;
 
-  const { error } = await supabase
-    .from("world_edges")
-    .delete()
-    .eq("id", edgeId);
-
-  if (error) {
+  try {
+    await supabase.from("world_edges").delete().eq("id", edgeId);
+  } catch (error) {
     console.error(error);
     return ctx.reply("در حذف Edge مشکل پیش آمد.");
   }
@@ -611,20 +689,26 @@ async function showRegionClans(ctx: EclisContext) {
 async function listRegionsByClan(ctx: EclisContext, clan: ClanId) {
   if (!requirePrivate(ctx)) return;
 
-  const { data: regions, error } = await supabase
-    .from("world_regions")
-    .select("*")
-    .eq("clan", clan)
-    .order("name", { ascending: true });
+  let regions: WorldRegion[] = [];
+  try {
+    const { data } = await supabase
+      .from("world_regions")
+      .select("*")
+      .eq("clan", clan)
+      .order("name", { ascending: true });
 
-  if (error || !regions || !regions.length) {
+    regions = (data as WorldRegion[]) ?? [];
+  } catch (error) {
     console.error(error);
+  }
+
+  if (!regions.length) {
     return ctx.reply("برای این خاندان هیچ ریجنی ثبت نشده.");
   }
 
   const kb = new InlineKeyboard();
 
-  for (const r of regions as WorldRegion[]) {
+  for (const r of regions) {
     kb.text(`«${r.name}»`, `wa:regions:setctx:${r.id}`).row();
   }
 
@@ -634,13 +718,16 @@ async function listRegionsByClan(ctx: EclisContext, clan: ClanId) {
 async function setRegionContext(ctx: EclisContext, regionId: string) {
   if (!requirePrivate(ctx)) return;
 
-  const { data: region, error } = await supabase
-    .from("world_regions")
-    .select("*")
-    .eq("id", regionId)
-    .single();
+  let region: WorldRegion | null = null;
+  try {
+    const { data } = await supabase
+      .from("world_regions")
+      .select("*")
+      .eq("id", regionId)
+      .single();
 
-  if (error || !region) {
+    region = data as WorldRegion;
+  } catch (error) {
     console.error(error);
     return ctx.reply("در یافتن ریجن مشکل پیش آمد.");
   }
@@ -649,8 +736,10 @@ async function setRegionContext(ctx: EclisContext, regionId: string) {
   ctx.session.worldBuilderRegionChatId = region.chat_id;
   ctx.session.worldBuilderRegionTitle = region.name;
 
+  const c = region.clan as ClanId;
+
   await ctx.reply(
-    `✅ ریجن فعال تنظیم شد:\n«${region.name}»\n${CLAN_LABELS[region.clan]}`,
+    `✅ ریجن فعال تنظیم شد:\n«${region.name}»\n${CLAN_LABELS[c]}`,
     { reply_markup: mainAdminKeyboard() },
   );
 }
@@ -675,5 +764,5 @@ export async function handleWorldAdminText(ctx: EclisContext) {
     return;
   }
 
-  // در غیر این حالت‌ها، به منوی اصلی یا هندلرهای دیگر اجازه بده کار خودشان را کنند
+  // در بقیه حالت‌ها کاری نکن؛ بذار هندلرهای دیگه جواب بدن
 }
