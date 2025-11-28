@@ -32,9 +32,12 @@ function parseDurationToSeconds(input: string): number | null {
   return null;
 }
 
-function mainAdminKeyboard(): InlineKeyboard {
+// حالا کیبورد ادمین می‌تونه chatId گروه رو هم توی data کدگذاری کنه
+function mainAdminKeyboard(regionChatId?: string): InlineKeyboard {
+  const chatPart = regionChatId ? `:${regionChatId}` : "";
+
   const kb = new InlineKeyboard()
-    .text("🏳️ ریجن این گروه", "wa:region:current")
+    .text("🏳️ ریجن این گروه", `wa:region:current${chatPart}`)
     .row()
     .text("📍 Spot جدید", "wa:spot:new")
     .text("🔗 Edge جدید", "wa:edge:new")
@@ -66,8 +69,9 @@ export async function handleWorldAdminCommand(ctx: EclisContext) {
     // مهم نیست
   }
 
-  // پیدا کردن ریجن مربوط به این گروه
   const chatIdStr = String(chat.id);
+
+  // پیدا کردن ریجن مربوط به این گروه
   let region: WorldRegion | null = null;
   try {
     const { data } = await supabase
@@ -97,7 +101,8 @@ export async function handleWorldAdminCommand(ctx: EclisContext) {
     `🌐 پنل مدیریت جهان برای گروه:\n«${ctx.session.worldBuilderRegionTitle}»\n\n` +
       info,
     {
-      reply_markup: mainAdminKeyboard(),
+      // اینجا chatId رو هم به کیبورد می‌دیم
+      reply_markup: mainAdminKeyboard(chatIdStr),
     },
   );
 }
@@ -112,8 +117,11 @@ export async function handleWorldAdminCallback(ctx: EclisContext) {
   await ctx.answerCallbackQuery().catch(() => undefined);
 
   // ریجن این گروه
-  if (data === "wa:region:current") {
-    return handleRegionCurrent(ctx);
+  if (data.startsWith("wa:region:current")) {
+    // می‌تونه بدون chatId یا با chatId باشه: wa:region:current[:<chatId>]
+    const parts = data.split(":"); // ["wa", "region", "current", "<chatId?>"]
+    const chatIdFromCb = parts.length >= 4 ? parts[3] : undefined;
+    return handleRegionCurrent(ctx, chatIdFromCb);
   }
 
   if (data.startsWith("wa:region:setclan:")) {
@@ -182,8 +190,16 @@ export async function handleWorldAdminCallback(ctx: EclisContext) {
 
 // -------------- REGION --------------
 
-async function handleRegionCurrent(ctx: EclisContext) {
+async function handleRegionCurrent(
+  ctx: EclisContext,
+  chatIdFromCallback?: string,
+) {
   if (!requirePrivate(ctx)) return;
+
+  // اگر از callback chatId گرفتیم، همین‌جا توی سشن ذخیره‌اش می‌کنیم
+  if (chatIdFromCallback) {
+    ctx.session.worldBuilderRegionChatId = chatIdFromCallback;
+  }
 
   if (!ctx.session.worldBuilderRegionChatId) {
     return ctx.reply(
@@ -251,7 +267,7 @@ async function handleRegionSetClan(ctx: EclisContext, clan: ClanId) {
 
       await ctx.reply(
         `✅ ریجن این گروه به‌روزرسانی شد:\n«${updated.name}»\n${CLAN_LABELS[c]}`,
-        { reply_markup: mainAdminKeyboard() },
+        { reply_markup: mainAdminKeyboard(chatId) },
       );
     } catch (error) {
       console.error(error);
@@ -279,7 +295,7 @@ async function handleRegionSetClan(ctx: EclisContext, clan: ClanId) {
 
       await ctx.reply(
         `✅ ریجن جدید ثبت شد:\n«${created.name}»\n${CLAN_LABELS[c]}`,
-        { reply_markup: mainAdminKeyboard() },
+        { reply_markup: mainAdminKeyboard(chatId) },
       );
     } catch (error) {
       console.error(error);
@@ -352,7 +368,7 @@ async function actuallyCreateSpot(ctx: EclisContext, title: string) {
 
     await ctx.reply(
       `📍 Spot جدید ثبت شد:\n«${spot.title}»\nدر ریجن «${region.name}».`,
-      { reply_markup: mainAdminKeyboard() },
+      { reply_markup: mainAdminKeyboard(region.chat_id) },
     );
   } catch (error) {
     console.error(error);
@@ -740,7 +756,7 @@ async function setRegionContext(ctx: EclisContext, regionId: string) {
 
   await ctx.reply(
     `✅ ریجن فعال تنظیم شد:\n«${region.name}»\n${CLAN_LABELS[c]}`,
-    { reply_markup: mainAdminKeyboard() },
+    { reply_markup: mainAdminKeyboard(region.chat_id) },
   );
 }
 
