@@ -25,11 +25,15 @@ export interface CharacterState {
 
 /**
  * سشن اختصاصی پنل ساخت دنیا (world admin)
- * بیشترش رو admin-builder با @ts-ignore استفاده می‌کنه،
- * اینجا فقط برای نظم و تایپ‌سیفتی تعریف شده.
  */
 export interface WorldAdminSession {
-  mode?: "idle" | "create_spot" | "select_edge_from" | "select_edge_to" | "edge_time";
+  mode?:
+    | "idle"
+    | "create_spot"
+    | "select_edge_from"
+    | "select_edge_to"
+    | "edge_time"
+    | "delete_from";
   regionChatId?: number | null;
   regionId?: number | null;
   fromSpotId?: number | null;
@@ -47,7 +51,6 @@ export interface SessionData {
 
   /**
    * وضعیت پنل دنیاسازی /worldadmin
-   * خود admin-builder مقداردهی‌اش می‌کنه.
    */
   worldAdmin?: WorldAdminSession;
 
