@@ -1,4 +1,4 @@
-// src/core/types.ts
+
 import { Context, SessionFlavor } from "grammy";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -11,13 +11,13 @@ export interface Services {
 
 /**
  * شکل رکورد کاراکتر داخل دیتابیس (جدول characters)
- * اگر خواستی می‌تونی دقیق‌ترش کنی بر اساس اسکیمای سوپابیس.
  */
 export interface CharacterState {
+  id: number;
   tg_id: number;
   char_name: string | null;
   clan_name?: string | null;
-  current_region_id: number | null;
+  current_region_id: string | null;
   current_spot_id: number | null;
   last_move_at: string | null;
   travel_ready_at: string | null;
@@ -44,25 +44,10 @@ export interface WorldAdminSession {
  * کل چیزی که توی ctx.session نگه می‌داریم
  */
 export interface SessionData {
-  /**
-   * برای اینکه پی‌وی تمیز بمونه: آخرین پیام منو/پنل که باید پاک بشه
-   */
   __last_pm_id?: number;
-
-  /**
-   * وضعیت پنل دنیاسازی /worldadmin
-   */
   worldAdmin?: WorldAdminSession;
-
-  /**
-   * اگر خواستی منوهای مختلف توی پی‌وی داشته باشی
-   * می‌تونی آخرین msg_id رو برای ادیت/پاک‌کردن نگه داری
-   */
   ui_last_menu_id?: number;
 
-  /**
-   * ویزارد ثبت‌نام بازیکن (registration.ts)
-   */
   reg_step?: "clan" | "name";
   reg_clan?: string | null;
   reg_name?: string | null;
