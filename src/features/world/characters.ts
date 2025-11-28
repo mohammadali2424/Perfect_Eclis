@@ -3,14 +3,14 @@ import { MyContext } from "../../core/types";
 import { supabase } from "../../core/supabase";
 
 /**
- * گرفتن یا ساختن کاراکتر بر اساس telegram_id
+ * گرفتن یا ساختن کاراکتر بر اساس tg_id (همون telegram user id)
  */
 async function upsertCharacterByTelegramId(telegramId: number, displayName: string) {
   // ببینیم قبلاً هست یا نه
   const { data: existing, error: selectErr } = await supabase
     .from("characters")
     .select("id")
-    .eq("telegram_id", telegramId)
+    .eq("tg_id", telegramId)
     .maybeSingle();
 
   if (selectErr) {
@@ -19,11 +19,11 @@ async function upsertCharacterByTelegramId(telegramId: number, displayName: stri
   }
 
   if (existing) {
-    // اگر وجود داشت، فقط display_name و telegram_id رو آپدیت کن
+    // اگر وجود داشت، فقط display_name و tg_id رو آپدیت کن
     const { error: updateErr } = await supabase
       .from("characters")
       .update({
-        telegram_id: telegramId,
+        tg_id: telegramId,
         display_name: displayName,
       })
       .eq("id", existing.id);
@@ -40,7 +40,7 @@ async function upsertCharacterByTelegramId(telegramId: number, displayName: stri
   const { data: inserted, error: insertErr } = await supabase
     .from("characters")
     .insert({
-      telegram_id: telegramId,
+      tg_id: telegramId,
       display_name: displayName,
       movement_mode: "walk",
       travel_state: "idle",
@@ -74,8 +74,7 @@ async function handleRegPlayer(ctx: MyContext) {
 
   const target = reply.from;
 
-  // این‌جا بعداً می‌تونیم محدودش کنیم فقط ارباب/ادمین بتونه این دستور رو بزند
-  // فعلاً باز می‌گذاریم برای تست.
+  // بعداً می‌تونیم اینجا محدودش کنیم که فقط ارباب/ادمین بتونن بزنن
 
   const displayName = target.first_name
     ? `${target.first_name}${target.last_name ? " " + target.last_name : ""}`
@@ -89,7 +88,7 @@ async function handleRegPlayer(ctx: MyContext) {
     await ctx.reply(
       `✅ پلیر برای سیستم مسیر ثبت شد.\n\n` +
         `کاراکتر: ${displayName}\n` +
-        `telegram_id: ${target.id}\n` +
+        `tg_id: ${target.id}\n` +
         `character_id: ${charId}\n\n` +
         `از این به بعد این پلیر برای /path و /arrive قابل شناسایی است.`
     );
@@ -110,7 +109,7 @@ async function handleWhoAmI(ctx: MyContext) {
   const { data, error } = await supabase
     .from("characters")
     .select("id, display_name, current_region_id, current_spot_id, movement_mode")
-    .eq("telegram_id", ctx.from.id)
+    .eq("tg_id", ctx.from.id)
     .maybeSingle();
 
   if (error) {
