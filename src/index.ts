@@ -1,7 +1,10 @@
 // src/index.ts
 import express, { Request, Response } from "express";
+import { webhookCallback } from "grammy";
+
+// حواست باشه پسوند .js مهمه چون خروجی tsc این‌طوری میشه
 import { bot } from "./core/bot.js";
-import { PORT } from "./core/config.js";
+import { BOT_TOKEN, PORT } from "./core/config.js";
 
 import {
   handleStart,
@@ -20,13 +23,13 @@ import { handleNewChatMembers } from "./features/security/guard.js";
 
 // -------------------- ثبت هندلرها روی bot --------------------
 
-// /start → ثبت‌نام / ورود به منوی اصلی
+// /start → ثبت‌نام / ورود به منو
 bot.command("start", handleStart);
 
-// پنل ساخت جهان در گروه‌ها
+// /aw → پنل ساخت جهان در گروه‌ها
 bot.command("aw", handleWorldAdminCommand);
 
-// ورود یوزر جدید به گروه → گارد
+// جوین جدید به گروه
 bot.on("message:new_chat_members", handleNewChatMembers);
 
 // کال‌بک دکمه‌های اینلاین
@@ -49,16 +52,16 @@ bot.on("callback_query:data", async (ctx) => {
 // متن‌ها
 bot.on("message:text", async (ctx) => {
   if (ctx.chat.type === "private") {
-    // منوی فانتزی PV: مسیرهای من، نقشه سریع، حالت‌ها
+    // منوی فانتزی PV
     await handleMainMenuText(ctx);
     return;
   }
 
-  // توی گروه‌ها → متن برای مود world admin
+  // توی گروه‌ها → متن در مود world admin
   await handleWorldAdminText(ctx);
 });
 
-// لاگ ساده
+// لاگ برای همه پیام‌ها
 bot.on("message", (ctx) => {
   console.log(
     "[MSG]",
@@ -68,25 +71,32 @@ bot.on("message", (ctx) => {
   );
 });
 
-// هندل ارورهای گرامی
+// هندل ارورها
 bot.catch((err) => {
   console.error("Bot error:", err.error);
 });
 
-// -------------------- Polling + Express برای Render --------------------
+// ❗ دقت کن: این‌جا **دیگه bot.start() نداریم**
+// -------------------- راه‌اندازی وبهوک با Express --------------------
 
-// این خط، همون long-polling معروفه
-bot.start();
-console.log("🤖 Bot started in long-polling mode");
-
-// برای اینکه Render گیر نده «port باز نیست»، یه Express سبک میاریم بالا
 const app = express();
 const port = PORT || process.env.PORT || 3000;
 
+// مسیر مخفی برای وبهوک
+const secretPath = `/bot/${BOT_TOKEN.split(":")[0]}`;
+
+app.use(express.json());
+
+// روت تست
 app.get("/", (_req: Request, res: Response) => {
-  res.send("Eclis Pathweaver Bot is running (long-polling).");
+  res.send("Eclis Pathweaver Bot (Webhook) is running.");
 });
 
+// همین مسیر، وبهوک رسمی ماست
+app.post(secretPath, webhookCallback(bot, "express"));
+
+// ران شدن سرور HTTP
 app.listen(port, () => {
-  console.log(`🌐 HTTP server listening on port ${port}`);
+  console.log(`🚀 Webhook server running on port ${port}`);
+  console.log(`🔗 Webhook path: ${secretPath}`);
 });
