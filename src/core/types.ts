@@ -13,20 +13,25 @@ export interface CharacterState {
   current_region_id: string | null;
   current_spot_id: string | null;
   last_move_at: string | null;
-  travel_ready_at: string | null; // ISO string when travel finishes
-  pending_region_id: string | null; // مقصد سفر
-  pending_spot_id: string | null;   // مقصد سفر
+  travel_ready_at: string | null;
+  pending_region_id: string | null;
+  pending_spot_id: string | null;
 }
 
 export interface SessionData {
-  // ویزارد ساخت جهان
-  mode?: "create_spot" | "create_edge_time";
+  // PM حذف پیام قبلی
+  __last_pm_id?: number;
+
+  // حالت‌های ساخت Spot
+  mode?: "create_spot" | "create_edge_time" | "edge_time" | undefined;
 
   pending_region_id?: string;
+
+  // Edge ساخت مسیر
   edge_from_spot_id?: string;
   edge_to_spot_id?: string;
 
-  // ویزارد ثبت‌نام
+  // ویزارد ثبت نام
   reg_step?: "name" | "clan";
   reg_name?: string;
   reg_clan?: string;
