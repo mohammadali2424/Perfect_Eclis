@@ -1,4 +1,4 @@
-import { Bot, session, InlineKeyboard } from "grammy";
+import { Bot, session, InlineKeyboard, Keyboard } from "grammy";
 import { BOT_TOKEN, MASTER_ID } from "./config";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
@@ -34,14 +34,16 @@ registerTravelFeature(bot);
 registerWorldAdminFeature(bot);
 
 bot.command("start", async (ctx) => {
-  const kb = new InlineKeyboard().text("🧭 مسیرهای من", "paths:open");
+  const kb = new Keyboard()
+    .text("🧭 مسیر های من")
+    .resized(); // کیبورد رو جمع‌وجور می‌کنه
 
   await ctx.reply(
     "به Pathweaver خوش اومدی.\n" +
       "من مسیریاب جهان اکلیس‌ام.\n\n" +
-      "از دکمه‌ی «🧭 مسیرهای من» برای دیدن مقصدهای ممکن استفاده کن.\n" +
-      "وقتی در حال سفر بودی، بعد از تموم‌شدن زمان، می‌تونی از /arrive یا دکمه‌ی «رسیدم» استفاده کنی.",
+      "از دکمه‌ی «🧭 مسیر های من» برای دیدن مقصدهای قابل دسترس استفاده کن.",
     { reply_markup: kb }
   );
 });
+
 
