@@ -2,7 +2,7 @@ import type { EclisContext } from "../../core/bot.js";
 import { supabase } from "../../core/supabase.js";
 import type { MovementMode, WorldEdge, WorldSpot } from "../../core/types.js";
 
-// دریافت مکان فعلی کاراکتر
+// لوکیشن فعلی کاراکتر
 async function getCharacterLocation(userId: number) {
   const { data, error } = await supabase
     .from("characters")
@@ -14,7 +14,7 @@ async function getCharacterLocation(userId: number) {
   return data as { region_id: string; spot_id: string };
 }
 
-// گرفتن Spot فعلی
+// گرفتن اطلاعات Spot
 async function getSpot(spotId: string): Promise<WorldSpot | null> {
   const { data, error } = await supabase
     .from("world_spots")
@@ -29,23 +29,12 @@ async function getSpot(spotId: string): Promise<WorldSpot | null> {
 // گرفتن Edgeهای مجاز برای Mode فعلی
 async function getEdgesForSpotAndMode(
   spotId: string,
-  mode: MovementMode
+  mode: MovementMode,
 ): Promise<WorldEdge[]> {
   let column = "can_walk";
-  switch (mode) {
-    case "walk":
-      column = "can_walk";
-      break;
-    case "ride":
-      column = "can_ride";
-      break;
-    case "drive":
-      column = "can_drive";
-      break;
-    case "transport":
-      column = "can_transport";
-      break;
-  }
+  if (mode === "ride") column = "can_ride";
+  else if (mode === "drive") column = "can_drive";
+  else if (mode === "transport") column = "can_transport";
 
   const { data, error } = await supabase
     .from("world_edges")
@@ -57,48 +46,42 @@ async function getEdgesForSpotAndMode(
   return data as WorldEdge[];
 }
 
-// نمایش مسیرهای من
+// نمایش «مسیرهای من»
 export async function handleMyPaths(ctx: EclisContext) {
   if (!ctx.from) return;
 
   const loc = await getCharacterLocation(ctx.from.id);
   if (!loc) {
-    return ctx.reply("هنوز برای شخصیتت موقعیت ثبت نشده. ارباب باید تو را در یک Spot اولیه قرار دهد.");
+    return ctx.reply(
+      "هنوز برای شخصیتت موقعیت ثبت نشده.\n" +
+        "ارباب باید تو را در یک Spot اولیه قرار بدهد.",
+    );
   }
 
   const mode = ctx.session.movementMode ?? "walk";
   const edges = await getEdgesForSpotAndMode(loc.spot_id, mode);
-
   const spot = await getSpot(loc.spot_id);
   const placeTitle = spot ? spot.title : "مکان ناشناس";
 
   if (!edges.length) {
     return ctx.reply(
-      `مکان فعلی:
-${placeTitle}
-
-برای حالت فعلی (${mode}) هیچ مسیری ثبت نشده.`
+      `مکان فعلی:\n${placeTitle}\n\n` +
+        `برای حالت فعلی (${mode}) هیچ مسیری ثبت نشده.`,
     );
   }
 
-  let txt = `مکان فعلی:
-${placeTitle}
-
-`;
-  txt += "مسیرهای در دسترس:
-";
+  let txt = `مکان فعلی:\n${placeTitle}\n\n`;
+  txt += "مسیرهای در دسترس:\n";
 
   for (const e of edges) {
     const toSpot = await getSpot(e.to_spot_id);
     const name = toSpot ? toSpot.title : e.to_spot_id;
-    txt += `
-• به «${name}» — زمان پایه: ${e.base_travel_seconds} ثانیه`;
+    txt += `\n• به «${name}» — زمان پایه: ${e.base_travel_seconds} ثانیه`;
   }
 
   txt +=
-    "
-
-در نسخه فعلی فقط نمایش متنی داریم؛ در مرحله بعد، دکمه‌های اینلاین و حرکت واقعی زمان‌دار را اضافه می‌کنیم.";
+    "\n\nدر نسخهٔ فعلی فقط نمایش متنی داریم؛ " +
+    "در مرحلهٔ بعد، دکمه‌های اینلاین و حرکت واقعی زمان‌دار را اضافه می‌کنیم.";
 
   await ctx.reply(txt);
 }
