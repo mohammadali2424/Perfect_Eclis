@@ -1,20 +1,17 @@
 import { webhookCallback } from "grammy";
 import express, { Request, Response } from "express";
-import { bot } from "./core/bot";
 import { createBot } from "./core/bot";
+
+// بات را می‌سازیم
+const bot = createBot();
+
+// اگر لازم شد جای دیگه از همین bot استفاده کنی
+export { bot };
 
 const app = express();
 const port = process.env.PORT || 3000;
-const bot = createBot();
 
-if (process.env.WEBHOOK_URL) {
-  // اگر بعداً وبهوک تنظیم کردی
-  bot.start();
-} else {
-  // لانگ پولینگ ساده
-  bot.start();
-}
-
+// برای دریافت JSON از تلگرام
 app.use(express.json());
 
 // تلگرام اینجا آپدیت‌ها رو POST می‌کنه
