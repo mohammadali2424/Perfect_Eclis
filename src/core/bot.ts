@@ -6,6 +6,7 @@ import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
 import { registerRegistrationFeature } from "../features/registration";
+import { registerMainMenuFeature } from "../features/ui/main-menu";
 import { registerOnboardingFeature } from "../features/world/onboarding";
 
 if (!BOT_TOKEN) {
@@ -38,7 +39,8 @@ bot.use((ctx, next) => {
 });
 
 // فیچرهای مختلف ربات
-registerSecurityFeature(bot);        // محافظت: ارباب، لفت از گروه‌های اضافی و…
+registerSecurityFeature(bot);// محافظت: ارباب، لفت از گروه‌های اضافی و…
+registerMainMenuFeature(bot);
 registerOnboardingFeature(bot);      // اطلس، ثبت‌نام، انتخاب خاندان
 registerWorldAdminFeature(bot);      // پنل ساخت Region/Spot/Edge
 registerTravelFeature(bot);          // سفر بین مسیرها، مسیرهای من، نقشه سریع من
