@@ -1,19 +1,22 @@
 import { webhookCallback } from "grammy";
-import express from "express";
+import express, { Request, Response } from "express";
 import { bot } from "./core/bot";
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Webhook endpoint
+// برای اینکه تلگرام JSON بفرسته و ما بخونیم
 app.use(express.json());
+
+// Webhook endpoint که تلگرام بهش آپدیت‌ها رو POST می‌کنه
 app.post("/webhook", webhookCallback(bot, "express"));
 
-// For testing
-app.get("/", (req, res) => {
+// یه روت ساده برای تست سالم بودن سرویس
+app.get("/", (req: Request, res: Response) => {
   res.send("Eclis Pathweaver Bot Running");
 });
 
+// سرور رو روی پورتی که Render می‌ده بالا میاریم
 app.listen(port, () => {
   console.log(`Bot webhook server running on port ${port}`);
 });
