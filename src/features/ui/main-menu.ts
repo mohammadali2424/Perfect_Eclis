@@ -6,8 +6,8 @@ export function registerMainMenuFeature(bot: Bot<MyContext>) {
   const mainKeyboard = new Keyboard()
     .text("🧭 مسیر های من").text("🗺 نقشه سریع من")
     .row()
-    // اینجا هر دکمه‌ی دیگه‌ای که برای منوی اصلی می‌خوای اضافه کن:
-    // .text("📜 راهنما").row()
+    // اگر خواستی بعداً دکمه‌های دیگه اضافه کن:
+    // .text("🏛 منوی اصلی").row()
     .resized();
 
   async function sendMainMenu(ctx: MyContext, extra?: string) {
@@ -18,12 +18,13 @@ export function registerMainMenuFeature(bot: Bot<MyContext>) {
     await ctx.reply(text, { reply_markup: mainKeyboard });
   }
 
-  // /start برای همه‌ی کاربرا
+  // استارت ربات: برای همه‌ی یوزرها کیبورد رو می‌فرسته
   bot.command("start", async (ctx) => {
     await sendMainMenu(ctx);
   });
 
-  // اگر دوست داشتی یه دکمه‌ی «منو» هم داشته باشی:
+  // اگر خواستی دکمه «🏛 منوی اصلی» هم بعداً اضافه کنی،
+  // این هندلرش آماده است، فقط دکمه‌اش رو به mainKeyboard اضافه کن.
   bot.hears("🏛 منوی اصلی", async (ctx) => {
     await sendMainMenu(ctx, "منوی اصلی اکلیس دوباره جلوی چشمت ظاهر شد.");
   });
