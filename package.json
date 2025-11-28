@@ -1,6 +1,6 @@
 {
   "name": "eclis-pathweaver-bot",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Pathweaver travel bot for the Eclis RP world",
   "main": "dist/index.js",
   "scripts": {
