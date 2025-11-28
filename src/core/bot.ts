@@ -21,30 +21,36 @@ export const bot = new Bot<MyContext>(BOT_TOKEN);
 
 /**
  * سشن گرامی (حافظه‌ی موقت برای هر یوزر)
+ * نکته‌ی مهم: سشن رو روی "کاربر" می‌ذاریم نه روی "چت"
+ * تا وقتی توی گروه /worldadmin می‌زنی و بعد تو PV دکمه‌ها رو می‌زنی،
+ * worldAdmin توی همون سشن باقی بمونه.
  */
 bot.use(
   session({
     initial: (): SessionData => ({
-      // پیام آخر توی پی‌وی برای تمیز نگه داشتن چت
       __last_pm_id: undefined,
-
-      // وضعیت پنل دنیاسازی (world admin)
       worldAdmin: undefined,
-
-      // آخرین منوی UI (اگر خواستی بعداً ازش استفاده کنی)
       ui_last_menu_id: undefined,
-
-      // ویزارد ثبت‌نام
       reg_step: undefined,
       reg_clan: null,
       reg_name: null,
     }),
+    getSessionKey: (ctx) => {
+      // سشن رو به ازای هر یوزر بساز، نه به ازای هر چت
+      if (ctx.from) {
+        return `user:${ctx.from.id}`;
+      }
+      // اگر از کانالی چیزی بیاد که from نداره، می‌تونیم سشن نداشته باشیم
+      if (ctx.chat) {
+        return `chat:${ctx.chat.id}`;
+      }
+      return undefined;
+    },
   })
 );
 
 /**
  * تزریق سرویس‌ها داخل ctx.services
- * الان فقط supabase داریم، بعداً هرچی خواستی اضافه می‌کنی.
  */
 bot.use((ctx, next) => {
   ctx.services = {
