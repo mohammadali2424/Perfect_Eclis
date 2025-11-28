@@ -12,17 +12,17 @@ if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is not set in environment variables");
 }
 
-// تنظیم Supabase از env
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
+// تنظیم Supabase از env – اینجا به صورت صریح به string cast می‌کنیم
+const SUPABASE_URL = process.env.SUPABASE_URL as string;
+const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_KEY) as string;
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   throw new Error("SUPABASE_URL or SUPABASE_KEY is missing in env");
 }
 
-// اینجا به‌صورت صریح cast می‌کنیم که TS غر نزنه
-const supabase = createClient(SUPABASE_URL as string, SUPABASE_KEY as string);
+// کلاینت Supabase
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // سشن اولیه همیشه یه آبجکت خالیه
 function initialSession(): SessionData {
