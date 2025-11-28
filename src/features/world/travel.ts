@@ -1,326 +1,434 @@
 import { Bot, InlineKeyboard } from "grammy";
-import { MyContext, CharacterState } from "../../core/types";
+import { MyContext } from "../../core/types";
+import { MASTER_ID } from "../../core/config";
 
-// لود یا ساخت کاراکتر
-async function getOrCreateCharacter(ctx: MyContext): Promise<CharacterState> {
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\u0600-\u06FF]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// پاک کردن آخرین پیام مدیریتی توی پی‌وی ارباب
+async function deleteLastPm(ctx: MyContext) {
+  try {
+    if (ctx.chat?.type === "private" && ctx.session.__last_pm_id) {
+      await ctx.api.deleteMessage(ctx.chat.id, ctx.session.__last_pm_id);
+    }
+  } catch {
+    // اگر نتونست پاک کنه مهم نیست
+  }
+  ctx.session.__last_pm_id = undefined;
+}
+
+// ارسال پیام مدیریتی و ذخیره ID برای پاک‌سازی بعدی
+async function sendManagedPm(
+  ctx: MyContext,
+  text: string,
+  extra: Parameters<MyContext["reply"]>[1] = {}
+) {
+  const msg = await ctx.reply(text, extra);
+  ctx.session.__last_pm_id = msg.message_id;
+}
+
+// کمکی: گرفتن Region براساس chat_id
+async function getRegionByChatId(ctx: MyContext, chatId: number) {
   const { supabase } = ctx.services;
-  const tgId = ctx.from!.id;
-
   const { data, error } = await supabase
-    .from("characters")
+    .from("regions")
     .select("*")
-    .eq("tg_id", tgId)
+    .eq("telegram_chat_id", chatId)
     .single();
 
-  if (error && error.code !== "PGRST116") {
-    console.log("Supabase get character error:", error.message);
-  }
+  if (error || !data) return null;
+  return data;
+}
 
-  if (!data) {
-    const emptyChar: CharacterState = {
-      tg_id: tgId,
-      char_name: null,
-      current_region_id: null,
-      current_spot_id: null,
-      last_move_at: null,
-      travel_ready_at: null,
-      pending_region_id: null,
-      pending_spot_id: null,
-    };
-    const { error: insertError } = await supabase.from("characters").insert(emptyChar);
-    if (insertError) {
-      console.error("Supabase insert character error:", insertError);
+export function registerWorldAdminFeature(bot: Bot<MyContext>) {
+  // /worldadmin داخل گروه
+  bot.command("worldadmin", async (ctx) => {
+    if (ctx.from?.id !== MASTER_ID) {
+      await ctx.reply("فقط اربابم میتونه بهم دستور بده، حدتو بدون");
+      return;
     }
-    return emptyChar;
-  }
 
-  return data as CharacterState;
-}
+    const chat = ctx.chat;
+    if (!chat) return;
 
-// اگر مکان نداره، سعی می‌کنیم اسپاونش کنیم روی یه spot دیفالت
-async function ensureCharacterHasLocation(
-  ctx: MyContext,
-  char: CharacterState
-): Promise<CharacterState> {
-  if (char.current_region_id && char.current_spot_id) return char;
-
-  const { supabase } = ctx.services;
-
-  const { data: spots, error } = await supabase
-    .from("spots")
-    .select("id, region_id")
-    .eq("is_default", true)
-    .limit(1);
-
-  if (error) {
-    console.error("Supabase default spot error:", error);
-    return char;
-  }
-
-  if (!spots || spots.length === 0) {
-    return char;
-  }
-
-  const spot = spots[0];
-  const updated: CharacterState = {
-    ...char,
-    current_region_id: spot.region_id,
-    current_spot_id: spot.id,
-    last_move_at: new Date().toISOString(),
-  };
-
-  const { error: updErr } = await supabase
-    .from("characters")
-    .update({
-      current_region_id: updated.current_region_id,
-      current_spot_id: updated.current_spot_id,
-      last_move_at: updated.last_move_at,
-    })
-    .eq("tg_id", char.tg_id);
-
-  if (updErr) {
-    console.error("Supabase update char default location error:", updErr);
-    return char;
-  }
-
-  return updated;
-}
-
-export function registerTravelFeature(bot: Bot<MyContext>) {
-  // دیدن مسیرهای قابل حرکت
-  bot.command("path", async (ctx) => {
-    if (!ctx.from) return;
-    let char = await getOrCreateCharacter(ctx);
-
-    char = await ensureCharacterHasLocation(ctx, char);
-
-    if (!char.current_region_id || !char.current_spot_id) {
+    // اگر تو PV زدی
+    if (chat.type === "private") {
       await ctx.reply(
-        "هنوز نقطه‌ی شروع برای جهان اکلیس برات تنظیم نشده.\n" +
-          "یک spot با is_default = true توی دیتابیس بساز یا از ارباب بخواه برات تنظیم کنه."
+        "برای مدیریت یک گروه، دستور /worldadmin رو داخل همون گروه بزن.\n" +
+          "من پیام دستور رو اونجا پاک می‌کنم و پنل رو توی پی‌ویت باز می‌کنم."
       );
       return;
     }
 
-    const { supabase } = ctx.services;
+    const chatId = chat.id;
+    const title = chat.title ?? `Group ${chatId}`;
 
-    const { data: spot, error: spotError } = await supabase
-      .from("spots")
-      .select("id, title")
-      .eq("id", char.current_spot_id)
-      .single();
-
-    if (spotError || !spot) {
-      console.error("Supabase spot error:", spotError);
-      await ctx.reply("نتونستم موقعیت فعلیت رو پیدا کنم. با ارباب صحبت کن.");
-      return;
-    }
-
-    const { data: edges, error: edgeError } = await supabase
-      .from("edges")
-      .select("id, to_spot_id, travel_seconds")
-      .eq("from_spot_id", char.current_spot_id);
-
-    if (edgeError) {
-      console.error("Supabase edges error:", edgeError);
-      await ctx.reply("در حال حاضر مسیرها در دسترس نیستن.");
-      return;
-    }
-
-    let text = `📍 موقعیت فعلی:\n${spot.title}\n\n`;
-    text += "مسیرهای قابل حرکت:\n";
-
-    const kb = new InlineKeyboard();
-
-    if (!edges || edges.length === 0) {
-      text += "(هیچ مسیری در این نقطه ثبت نشده است.)";
-    } else {
-      const toIds = edges.map((e: any) => e.to_spot_id);
-      const { data: destSpots, error: destErr } = await supabase
-        .from("spots")
-        .select("id, title")
-        .in("id", toIds);
-
-      if (destErr) {
-        console.error("Supabase dest spots error:", destErr);
-        await ctx.reply("در خواندن اطلاعات مقصدها مشکلی پیش آمد.");
-        return;
-      }
-
-      const mapTitle = new Map<string, string>();
-      destSpots?.forEach((s: any) => mapTitle.set(s.id, s.title));
-
-      for (const edge of edges as any[]) {
-        const title = mapTitle.get(edge.to_spot_id) || "مسیر ناشناس";
-        kb.text(`رفتن به ${title}`, `move:${edge.id}`).row();
+    // حذف پیام دستور در گروه
+    if (ctx.message) {
+      try {
+        await ctx.api.deleteMessage(chatId, ctx.message.message_id);
+      } catch {
+        // اگر پرمیشن نداشتی، مهم نیست
       }
     }
 
-    await ctx.reply(text, { reply_markup: kb });
+    // ارسال پنل به پی‌وی ارباب
+    const kb = new InlineKeyboard()
+      .text("📍 ثبت Region", `adm_region_new:${chatId}`)
+      .row()
+      .text("🗂 داشبورد Region", `adm_dash:${chatId}`)
+      .row()
+      .text("➕ ساخت Spot", `adm_spot_new:${chatId}`)
+      .row()
+      .text("🔗 ساخت Edge", `adm_edge_new:${chatId}`);
+
+    await ctx.api.sendMessage(
+      MASTER_ID,
+      `پنل مدیریت برای گروه:\n«${title}» (chat_id: ${chatId})`,
+      { reply_markup: kb }
+    );
   });
 
-  // دکمهٔ حرکت
+  // هندل دکمه‌ها
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data || "";
-    if (!data.startsWith("move:")) {
+
+    // فقط دکمه‌هایی که با adm_ شروع می‌شن
+    if (!data.startsWith("adm_")) {
       await next();
       return;
     }
 
-    const edgeId = Number(data.split(":")[1]);
-    if (Number.isNaN(edgeId)) {
-      await ctx.answerCallbackQuery();
+    if (ctx.from?.id !== MASTER_ID) {
+      await ctx.answerCallbackQuery({
+        text: "فقط اربابم میتونه منو کنترل کنه، حدتو بدون",
+        show_alert: true
+      });
       return;
     }
 
     const { supabase } = ctx.services;
-    const char = await getOrCreateCharacter(ctx);
 
-    const { data: edgeRow, error: edgeError } = await supabase
-      .from("edges")
-      .select("id, travel_seconds, to_spot_id")
-      .eq("id", edgeId)
-      .single();
+    // ---- ثبت Region برای یک گروه ----
+    if (data.startsWith("adm_region_new:")) {
+      await ctx.answerCallbackQuery();
+      await deleteLastPm(ctx);
 
-    if (edgeError || !edgeRow) {
-      console.error("Supabase edge fetch error:", edgeError);
-      await ctx.answerCallbackQuery({
-        text: "مسیر نامعتبر است.",
-        show_alert: true,
-      });
+      const chatId = Number(data.split(":")[1]);
+      const { data: existing } = await supabase
+        .from("regions")
+        .select("*")
+        .eq("telegram_chat_id", chatId)
+        .single();
+
+      if (existing) {
+        await sendManagedPm(
+          ctx,
+          `Region قبلاً ثبت شده:\n${existing.title} (id: ${existing.id})`
+        );
+        return;
+      }
+
+      const title = `Region ${chatId}`;
+      const slug = slugify(title);
+
+      const { data: inserted, error } = await supabase
+        .from("regions")
+        .insert({
+          slug,
+          title,
+          telegram_chat_id: chatId
+        })
+        .select("*")
+        .single();
+
+      if (error || !inserted) {
+        await sendManagedPm(ctx, "خطا در ساخت Region.");
+        return;
+      }
+
+      await sendManagedPm(
+        ctx,
+        `Region جدید ثبت شد:\n${inserted.title} (id: ${inserted.id})`
+      );
       return;
     }
 
-    const { data: destSpot, error: destSpotErr } = await supabase
-      .from("spots")
-      .select("id, title, region_id")
-      .eq("id", edgeRow.to_spot_id)
-      .single();
+    // ---- داشبورد Region ----
+    if (data.startsWith("adm_dash:")) {
+      await ctx.answerCallbackQuery();
+      await deleteLastPm(ctx);
 
-    if (destSpotErr || !destSpot) {
-      console.error("Supabase dest spot error:", destSpotErr);
-      await ctx.answerCallbackQuery({
-        text: "نقطه‌ی مقصد یافت نشد.",
-        show_alert: true,
-      });
+      const chatId = Number(data.split(":")[1]);
+      const region = await getRegionByChatId(ctx, chatId);
+
+      if (!region) {
+        await sendManagedPm(ctx, "Region برای این چت ثبت نشده.");
+        return;
+      }
+
+      const { data: spots, error: spErr } = await supabase
+        .from("spots")
+        .select("id,title")
+        .eq("region_id", region.id);
+
+      if (spErr) {
+        await sendManagedPm(ctx, "خطا در خواندن Spotها.");
+        return;
+      }
+
+      const spotIds = spots?.map((s: any) => s.id) || [];
+
+      let edges: any[] = [];
+      if (spotIds.length > 0) {
+        const { data: edgeRows, error: edErr } = await supabase
+          .from("edges")
+          .select("id,from_spot_id,to_spot_id,travel_seconds")
+          .in("from_spot_id", spotIds);
+
+        if (!edErr && edgeRows) edges = edgeRows;
+      }
+
+      let text = `📍 داشبورد Region\n${region.title}\n\n`;
+      text += `Spotها: ${spots?.length ?? 0}\n`;
+      text += `Edgeها: ${edges.length}\n\n`;
+
+      if (edges.length > 0) {
+        text += "📌 مسیرها:\n";
+        for (const e of edges) {
+          text += `• ${e.from_spot_id} → ${e.to_spot_id} (${e.travel_seconds}s)\n`;
+        }
+      }
+
+      const kb = new InlineKeyboard()
+        .text("🔄 Refresh", `adm_dash:${chatId}`)
+        .row()
+        .text("➕ Spot", `adm_spot_new:${chatId}`)
+        .text("➕ Edge", `adm_edge_new:${chatId}`);
+
+      await sendManagedPm(ctx, text.trim(), { reply_markup: kb });
       return;
     }
 
-    const travelSeconds: number = edgeRow.travel_seconds || 0;
-    const now = Date.now();
-    const readyAt = new Date(now + travelSeconds * 1000).toISOString();
+    // ---- ساخت Spot ----
+    if (data.startsWith("adm_spot_new:")) {
+      await ctx.answerCallbackQuery();
+      await deleteLastPm(ctx);
 
-    const { error: updateError } = await supabase
-      .from("characters")
-      .update({
-        travel_ready_at: readyAt,
-        pending_region_id: destSpot.region_id,
-        pending_spot_id: destSpot.id,
-      })
-      .eq("tg_id", char.tg_id);
+      const chatId = Number(data.split(":")[1]);
+      const region = await getRegionByChatId(ctx, chatId);
 
-    if (updateError) {
-      console.error("update character travel error", updateError);
-      await ctx.answerCallbackQuery({
-        text: "خطایی در شروع حرکت رخ داد.",
-        show_alert: true,
-      });
+      if (!region) {
+        await sendManagedPm(ctx, "Region برای این چت ثبت نشده. اول Region بساز.");
+        return;
+      }
+
+      ctx.session.mode = "create_spot";
+      ctx.session.pending_region_id = region.id;
+
+      await sendManagedPm(
+        ctx,
+        `در Region «${region.title}» هستیم.\nاسم Spot جدید را بفرست:`
+      );
       return;
     }
 
-    await ctx.answerCallbackQuery();
-    await ctx.reply(
-      travelSeconds > 0
-        ? `حرکتت شروع شد.\nزمان تقریبی سفر: ${travelSeconds} ثانیه.\nبعد از پایان، دستور /arrive رو بزن تا دروازه‌ی مقصد برات باز بشه.`
-        : "این مسیر تقریبا آنی است. /arrive رو بزن تا مقصدت باز بشه."
-    );
+    // ---- ساخت Edge: مرحله ۱ (انتخاب مبدا) ----
+    if (data.startsWith("adm_edge_new:")) {
+      await ctx.answerCallbackQuery();
+      await deleteLastPm(ctx);
+
+      const chatId = Number(data.split(":")[1]);
+      const region = await getRegionByChatId(ctx, chatId);
+
+      if (!region) {
+        await sendManagedPm(ctx, "Region برای این چت ثبت نشده.");
+        return;
+      }
+
+      const { data: spots } = await supabase
+        .from("spots")
+        .select("id,title")
+        .eq("region_id", region.id);
+
+      if (!spots || spots.length === 0) {
+        await sendManagedPm(
+          ctx,
+          "برای ساخت Edge اول باید حداقل یک Spot در این Region بسازی."
+        );
+        return;
+      }
+
+      const kb = new InlineKeyboard();
+      for (const s of spots) {
+        kb.text(s.title, `adm_edge_from:${s.id}`).row();
+      }
+
+      await sendManagedPm(
+        ctx,
+        "Spot مبدا مسیر را انتخاب کن:",
+        { reply_markup: kb }
+      );
+      return;
+    }
+
+    // ---- ساخت Edge: مرحله ۲ (انتخاب مقصد) ----
+    if (data.startsWith("adm_edge_from:")) {
+      await ctx.answerCallbackQuery();
+      await deleteLastPm(ctx);
+
+      const fromSpotId = data.split(":")[1];
+      ctx.session.edge_from_spot_id = fromSpotId;
+
+      // مقصد می‌تونه هر Spotی در جهان باشه
+      const { data: spots, error: spErr } = await supabase
+        .from("spots")
+        .select("id,title");
+
+      if (spErr || !spots || spots.length === 0) {
+        await sendManagedPm(ctx, "هیچ Spotی در جهان ثبت نشده.");
+        return;
+      }
+
+      const kb = new InlineKeyboard();
+      for (const s of spots) {
+        kb.text(s.title, `adm_edge_to:${s.id}`).row();
+      }
+
+      await sendManagedPm(
+        ctx,
+        "حالا Spot مقصد را انتخاب کن:",
+        { reply_markup: kb }
+      );
+      return;
+    }
+
+    // ---- ساخت Edge: مرحله ۳ (گرفتن زمان سفر) ----
+    if (data.startsWith("adm_edge_to:")) {
+      await ctx.answerCallbackQuery();
+      await deleteLastPm(ctx);
+
+      const toSpotId = data.split(":")[1];
+      ctx.session.edge_to_spot_id = toSpotId;
+      ctx.session.mode = "edge_time";
+
+      await sendManagedPm(
+        ctx,
+        "زمان سفر (به ثانیه) را به‌صورت عدد بفرست.\nمثال: 60"
+      );
+      return;
+    }
+
+    await next();
   });
 
-  // رسیدن به مقصد
-  bot.command("arrive", async (ctx) => {
-    if (!ctx.from) return;
+  // پیام‌های متنی ارباب در پی‌وی برای ساخت Spot و Edge
+  bot.on("message:text", async (ctx, next) => {
+    if (ctx.from?.id !== MASTER_ID || ctx.chat?.type !== "private") {
+      await next();
+      return;
+    }
+
     const { supabase } = ctx.services;
-    const char = await getOrCreateCharacter(ctx);
+    const mode = ctx.session.mode;
 
-    if (!char.travel_ready_at || !char.pending_spot_id || !char.pending_region_id) {
-      await ctx.reply(
-        "در حال حاضر سفری در حال انجام نداری یا مقصدت مشخص نشده.\n" +
-          "اگر فکر می‌کنی باگی پیش اومده، به ارباب گزارش بده."
+    // --- ساخت Spot ---
+    if (mode === "create_spot") {
+      const regionId = ctx.session.pending_region_id;
+
+      if (!regionId) {
+        ctx.session.mode = undefined;
+        ctx.session.pending_region_id = undefined;
+        await deleteLastPm(ctx);
+        await sendManagedPm(
+          ctx,
+          "Region مشخص نیست. دوباره از /worldadmin و دکمه‌ی Spot شروع کن."
+        );
+        return;
+      }
+
+      const name = ctx.message.text.trim();
+      if (!name) {
+        await deleteLastPm(ctx);
+        await sendManagedPm(ctx, "اسم Spot نمی‌تونه خالی باشه.");
+        return;
+      }
+
+      const slug = slugify(name);
+
+      const { error } = await supabase.from("spots").insert({
+        region_id: regionId,
+        slug,
+        title: name
+      });
+
+      ctx.session.mode = undefined;
+      ctx.session.pending_region_id = undefined;
+
+      await deleteLastPm(ctx);
+      await sendManagedPm(
+        ctx,
+        error ? "خطا در ساخت Spot." : `Spot «${name}» ساخته شد.`
       );
       return;
     }
 
-    const now = Date.now();
-    const readyAtMs = Date.parse(char.travel_ready_at);
+    // --- تنظیم زمان Edge ---
+    if (mode === "edge_time") {
+      const fromId = ctx.session.edge_from_spot_id;
+      const toId = ctx.session.edge_to_spot_id;
 
-    if (now < readyAtMs) {
-      const diffSec = Math.ceil((readyAtMs - now) / 1000);
-      await ctx.reply(
-        `هنوز به مقصد نرسیدی.\nحدود ${diffSec} ثانیه‌ی دیگر باقی مانده است.`
+      if (!fromId || !toId) {
+        ctx.session.mode = undefined;
+        ctx.session.edge_from_spot_id = undefined;
+        ctx.session.edge_to_spot_id = undefined;
+
+        await deleteLastPm(ctx);
+        await sendManagedPm(
+          ctx,
+          "مبدا یا مقصد مشخص نیست. دوباره ساخت Edge را از اول شروع کن."
+        );
+        return;
+      }
+
+      const raw = ctx.message.text.trim();
+      const t = Number(raw);
+
+      if (!Number.isFinite(t) || t < 0) {
+        await deleteLastPm(ctx);
+        await sendManagedPm(
+          ctx,
+          "زمان سفر باید یک عدد مثبت (ثانیه) باشد. مثال: 90"
+        );
+        return;
+      }
+
+      const { error } = await supabase.from("edges").insert({
+        from_spot_id: fromId,
+        to_spot_id: toId,
+        travel_seconds: Math.floor(t),
+        is_portal: false,
+        conditions: {}
+      });
+
+      ctx.session.mode = undefined;
+      ctx.session.edge_from_spot_id = undefined;
+      ctx.session.edge_to_spot_id = undefined;
+
+      await deleteLastPm(ctx);
+      await sendManagedPm(
+        ctx,
+        error
+          ? "خطا در ثبت Edge."
+          : `مسیر با موفقیت ثبت شد.\nزمان سفر: ${Math.floor(t)} ثانیه.`
       );
       return;
     }
 
-    const { data: destRegion, error: regionErr } = await supabase
-      .from("regions")
-      .select("id, title, telegram_chat_id")
-      .eq("id", char.pending_region_id)
-      .single();
-
-    if (regionErr || !destRegion) {
-      console.error("Supabase dest region error:", regionErr);
-      await ctx.reply(
-        "به مقصد رسیدی، اما اطلاعات منطقه‌ی مقصد یافت نشد. با ارباب تماس بگیر."
-      );
-      return;
-    }
-
-    const { data: destSpot, error: spotErr } = await supabase
-      .from("spots")
-      .select("id, title")
-      .eq("id", char.pending_spot_id)
-      .single();
-
-    if (spotErr || !destSpot) {
-      console.error("Supabase dest spot error (arrive):", spotErr);
-      await ctx.reply(
-        "به مقصد رسیدی، اما نقطه‌ی دقیق مقصد پیدا نشد. با ارباب تماس بگیر."
-      );
-      return;
-    }
-
-    const oldRegionId = char.current_region_id;
-    const nowIso = new Date().toISOString();
-
-    const { error: updCharErr } = await supabase
-      .from("characters")
-      .update({
-        current_region_id: destRegion.id,
-        current_spot_id: destSpot.id,
-        last_move_at: nowIso,
-        travel_ready_at: null,
-        pending_region_id: null,
-        pending_spot_id: null,
-      })
-      .eq("tg_id", char.tg_id);
-
-    if (updCharErr) {
-      console.error("Supabase update character on arrive error:", updCharErr);
-      await ctx.reply(
-        "به مقصد رسیدی، اما در ثبت نهایی لوکیشن مشکلی پیش آمد. با ارباب تماس بگیر."
-      );
-      return;
-    }
-
-    // 🔜 بعداً اینجا:
-    // اگر oldRegionId != destRegion.id
-    //   - از گروه قبلی کیک
-    //   - ساخت/گرفتن invite link برای destRegion.telegram_chat_id
-    //   - ارسال دکمه اینلاین با لینک
-
-    await ctx.reply(
-      `سفرت به پایان رسید.\nالان در منطقه «${destRegion.title}» و لوکیشن «${destSpot.title}» هستی.\n` +
-        "در نسخه‌ی بعدی همین‌جا لینک چت مقصد هم برایت باز می‌شود."
-    );
+    await next();
   });
 }
