@@ -68,17 +68,19 @@ export async function handleWorldAdminCommand(ctx: EclisContext) {
   ctx.session.worldBuilderRegionTitle = chat.title ?? `Region ${chatIdStr}`;
   ctx.session.worldBuilderRegionId = region ? region.id : null;
 
-  // پنل را در PV ارباب بفرست
-  await ctx.api.sendMessage(
-    ctx.from!.id,
-    `🌐 پنل مدیریت جهان برای گروه:\n«${ctx.session.worldBuilderRegionTitle}»\n\n` +
-      (region
-        ? `ریجن ثبت‌شده است (${CLAN_LABELS[region.clan]}).`
-        : "هنوز به‌عنوان ریجن ثبت نشده."),
-    {
-      reply_markup: mainAdminKeyboard(),
-    },
-  );
+const clan = region.clan as ClanId;
+
+await ctx.api.sendMessage(
+  ctx.from!.id,
+  `🌐 پنل مدیریت جهان برای گروه:\n«${ctx.session.worldBuilderRegionTitle}»\n\n` +
+    (region
+      ? `ریجن ثبت‌شده است (${CLAN_LABELS[clan]}).`
+      : "هنوز به‌عنوان ریجن ثبت نشده."),
+  {
+    reply_markup: mainAdminKeyboard(),
+  },
+);
+
 }
 
 function mainAdminKeyboard(): InlineKeyboard {
