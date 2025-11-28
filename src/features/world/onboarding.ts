@@ -1,267 +1,675 @@
+// src/features/world/admin-builder.ts
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
+import { MASTER_ID } from "../../core/config";
 
-// فونت‌های unified برای خاندان‌ها (همه تو استایل Torrentress)
-const CLAN_STELL = "🪽 𝑺𝒕𝒆𝒍𝒍𝒂𝒓𝒊𝒆𝒕𝒉";
-const CLAN_WALK = "⚡ 𝑾𝒂𝒍𝒌𝒆𝒓";
-const CLAN_NECRO = "🖤 𝑵𝒆𝒄𝒓𝒐𝒔𝒉𝒂𝒅𝒆";
-const CLAN_TORR = "🔥 𝑻𝒐𝒓𝒓𝒆𝒏𝒕𝒓𝒆𝒔𝒔";
+type WorldAdminMode =
+  | "idle"
+  | "creating_spot"
+  | "select_edge_from"
+  | "select_edge_to"
+  | "input_edge_time";
 
-type ClanKey = "Stellarieth" | "Walker" | "Necroshade" | "Torrentress";
-
-const CLAN_LABELS: Record<ClanKey, string> = {
-  Stellarieth: CLAN_STELL,
-  Walker: CLAN_WALK,
-  Necroshade: CLAN_NECRO,
-  Torrentress: CLAN_TORR,
-};
-
-function labelFromKey(key: ClanKey): string {
-  return CLAN_LABELS[key];
+interface WorldAdminSession {
+  mode: WorldAdminMode;
+  regionChatId: number | null;
+  regionId: number | null;
+  fromSpotId: number | null;
+  toSpotId: number | null;
 }
 
-// پاک کردن آخرین «صفحه منو» توی PV
-async function deleteUiPage(ctx: MyContext) {
-  try {
-    if (ctx.chat?.type === "private" && ctx.session.ui_last_menu_id) {
-      await ctx.api.deleteMessage(ctx.chat.id, ctx.session.ui_last_menu_id);
-    }
-  } catch {
-    // اگر دسترسی حذف نداشت، مهم نیست
+/**
+ * سشن پنل ادمین را از ctx.session برمی‌داریم/می‌سازیم
+ */
+function getAdminSession(ctx: MyContext): WorldAdminSession {
+  const s = (ctx.session as any);
+  if (!s.worldAdmin) {
+    s.worldAdmin = {
+      mode: "idle",
+      regionChatId: null,
+      regionId: null,
+      fromSpotId: null,
+      toSpotId: null,
+    } as WorldAdminSession;
   }
-  ctx.session.ui_last_menu_id = undefined;
+  return s.worldAdmin as WorldAdminSession;
 }
 
-// ارسال صفحه جدید و ذخیره message_id
-async function sendUiPage(
-  ctx: MyContext,
-  text: string,
-  extra: Parameters<MyContext["reply"]>[1] = {}
-) {
-  await deleteUiPage(ctx);
-  const msg = await ctx.reply(text, extra);
-  ctx.session.ui_last_menu_id = msg.message_id;
+function setAdminSession(ctx: MyContext, patch: Partial<WorldAdminSession>): void {
+  const s = (ctx.session as any);
+  const base: WorldAdminSession = getAdminSession(ctx);
+  s.worldAdmin = { ...base, ...patch };
 }
 
-// ساخت/گرفتن کاراکتر از Supabase
-async function ensureCharacterFor(ctx: MyContext, tgId: number) {
+/**
+ * کیبورد اصلی پنل /worldadmin
+ */
+function buildAdminMainKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("📍 اطلاعات Region", "wa:info")
+    .row()
+    .text("➕ ساخت Spot", "wa:spot_new")
+    .text("🗺 لیست Spotها", "wa:spots")
+    .row()
+    .text("🔗 ساخت مسیر (Edge)", "wa:edge_new")
+    .text("🧵 لیست مسیرها", "wa:edges")
+    .row()
+    .text("🔄 بازگشت به منوی پنل", "wa:home");
+}
+
+/**
+ * گرفتن Region فعلی بر اساس chat_id ذخیره‌شده در سشن
+ */
+async function getCurrentRegion(ctx: MyContext): Promise<any | null> {
   const { supabase } = ctx.services;
+  const admin = getAdminSession(ctx);
+  const regionChatId = admin.regionChatId;
 
-  const { data: char, error } = await supabase
-    .from("characters")
+  if (!regionChatId) {
+    await ctx.reply(
+      "هنوز هیچ گروهی برای مدیریت انتخاب نشده.\n" +
+        "از داخل گروه موردنظر، /worldadmin را اجرا کن."
+    );
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("regions")
     .select("*")
-    .eq("tg_id", tgId)
+    .eq("telegram_chat_id", regionChatId)
     .maybeSingle();
 
-  if (!error && char) return char;
-
-  const { data: inserted, error: insErr } = await supabase
-    .from("characters")
-    .insert({
-      tg_id: tgId,
-      char_name: null,
-      clan_name: null,
-      current_region_id: null,
-      current_spot_id: null,
-      last_move_at: null,
-      travel_ready_at: null,
-      pending_region_id: null,
-      pending_spot_id: null,
-    })
-    .select("*")
-    .single();
-
-  if (insErr || !inserted) {
-    console.error("characters insert error (onboarding):", insErr);
-    throw new Error("cannot init character");
-  }
-
-  return inserted;
-}
-
-async function ensureCharacter(ctx: MyContext) {
-  return ensureCharacterFor(ctx, ctx.from!.id);
-}
-
-// منوی اصلی اطلس بعد از ثبت‌نام
-async function showMainAtlasMenu(ctx: MyContext) {
-  const char = await ensureCharacter(ctx);
-
-  const clanLabel = char.clan_name
-    ? labelFromKey(char.clan_name as ClanKey)
-    : "❓ خاندان نامشخص";
-
-  const text =
-    "📜✨ 𝑨𝒓𝒄𝒂𝒏𝒆 𝑨𝒕𝒍𝒂𝒔 — اطلس باستانی سفر\n\n" +
-    "صفحه‌های تو اکنون روشن‌اند، مسافر اکلیس.\n\n" +
-    `🧬 خون تو ثبت شده است:\n${clanLabel}\n\n` +
-    "از اینجا می‌توانی به مسیرها و جهان دسترسی بگیری.\n\n" +
-    "برای دیدن مسیرهایت، از دکمه‌ی «🧭 مسیر های من» در پایین استفاده کن.\n" +
-    "در نسخه‌های بعدی، اینجا صفحات بیشتری باز خواهد شد…";
-
-  await sendUiPage(ctx, text);
-}
-
-// صفحه انتخاب خاندان
-async function showClanSelect(ctx: MyContext) {
-  const text =
-    "🜂 انتخاب خاندان\n" +
-    "-------------------------\n" +
-    "پیش از آنکه قدم در مسیر بگذاری، باید خون تو شناخته شود…\n\n" +
-    "از کدام خاندانی هستی؟";
-
-  const kb = new InlineKeyboard()
-    .text(CLAN_STELL, "reg_clan:Stellarieth")
-    .row()
-    .text(CLAN_WALK, "reg_clan:Walker")
-    .row()
-    .text(CLAN_NECRO, "reg_clan:Necroshade")
-    .row()
-    .text(CLAN_TORR, "reg_clan:Torrentress");
-
-  ctx.session.reg_step = "clan";
-  ctx.session.reg_clan = null;
-  ctx.session.reg_name = null;
-
-  await sendUiPage(ctx, text, { reply_markup: kb });
-}
-
-async function showClanLoadingAndAskName(ctx: MyContext, clanKey: ClanKey) {
-  const label = labelFromKey(clanKey);
-
-  const text =
-    "🩸 مهر خاندان بر صفحه‌ی اطلس ظاهر می‌شود…\n" +
-    `${label}\n\n` +
-    "✨ خونت با کتاب هم‌صدا می‌شود.\n" +
-    "ᚦᚱᚨ ᚹᚨ ᚱᚾ…\n\n" +
-    "▰▱▱▱▱▱▱▱▱▱ 10%\n" +
-    "▰▰▰▰▱▱▱▱▱▱ 50%\n" +
-    "▰▰▰▰▰▰▰▰▰▰ 100%\n\n" +
-    "📜 نامت بر لبه‌ی صفحه زمزمه می‌شود…\n" +
-    "📝 حالا نام کاراکتر خود را بفرست:\n" +
-    "(با همان فونتی که در رول پلی استفاده می‌کنی)";
-
-  ctx.session.reg_step = "name";
-  ctx.session.reg_clan = clanKey;
-
-  await sendUiPage(ctx, text);
-}
-
-
-// اتمام ثبت‌نام: ذخیره نام + خاندان
-async function finishRegistration(ctx: MyContext, name: string) {
-  const { supabase } = ctx.services;
-  const tgId = ctx.from!.id;
-  const clan = ctx.session.reg_clan as ClanKey | null;
-
-  if (!clan) {
-    await sendUiPage(
-      ctx,
-      "خاندان مشخص نشده. دوباره /start بزن تا فرآیند ثبت‌نام از اول شروع شود."
+  if (error || !data) {
+    console.error("getCurrentRegion error:", error);
+    await ctx.reply(
+      "Region مربوط به این گروه در دیتابیس پیدا نشد.\n" +
+        "یک بار دیگر در همان گروه /worldadmin را اجرا کن."
     );
-    ctx.session.reg_step = undefined;
-    ctx.session.reg_clan = null;
-    ctx.session.reg_name = null;
-    return;
+    return null;
   }
 
-  const char = await ensureCharacter(ctx);
-
-  const { error: updErr } = await supabase
-    .from("characters")
-    .update({
-      char_name: name,
-      clan_name: clan,
-    })
-    .eq("tg_id", tgId);
-
-  if (updErr) {
-    console.error("characters update error (finishRegistration):", updErr);
-    await sendUiPage(ctx, "خطایی در ثبت نام رخ داد. بعداً دوباره امتحان کن.");
-    return;
-  }
-
-  ctx.session.reg_step = undefined;
-  ctx.session.reg_clan = null;
-  ctx.session.reg_name = null;
-
-  const doneText =
-    "✅ ثبت‌نام تو در اطلس باستانی کامل شد.\n\n" +
-    `🧬 خون تو: ${labelFromKey(clan)}\n` +
-    `📝 نام تو: ${name}\n\n` +
-    "از این پس، کتاب مسیرهایت را به خاطر خواهد داشت.";
-
-  await sendUiPage(ctx, doneText);
-  await showMainAtlasMenu(ctx);
+  return data;
 }
 
-export function registerOnboardingFeature(bot: Bot<MyContext>) {
-  // /start — نقطه ورود اصلی بازیکن
-  bot.command("start", async (ctx) => {
-    if (!ctx.from || ctx.chat?.type !== "private") {
-      // ثبت‌نام فقط در PV
+/**
+ * نشان‌دادن پنل اصلی در پی‌وی ارباب
+ */
+async function sendAdminHome(ctx: MyContext, extra?: string): Promise<void> {
+  const admin = getAdminSession(ctx);
+  const regionChatId = admin.regionChatId;
+
+  let header = "🔧 پنل مدیریت جهان اکلیس\n\n";
+
+  if (regionChatId) {
+    header += `گروه در حال مدیریت: ${regionChatId}\n`;
+  }
+
+  if (extra) {
+    header += `\n${extra}`;
+  }
+
+  await ctx.reply(header, {
+    reply_markup: buildAdminMainKeyboard(),
+  });
+}
+
+/**
+ * /worldadmin — فقط ارباب، فقط داخل گروه
+ * Region را با اسم گروه می‌سازد/آپدیت می‌کند و پنل را در پی‌وی باز می‌کند
+ */
+function registerWorldAdminCommand(bot: Bot<MyContext>): void {
+  bot.command("worldadmin", async (ctx) => {
+    if (!ctx.from || ctx.from.id !== MASTER_ID) {
+      await ctx.reply("فقط اربابم می‌تونه پنل جهان را باز کند، حدتو نگه دار.");
       return;
     }
 
-    const char = await ensureCharacter(ctx);
-
-    // اگر هنوز خاندان نداره → ویزارد ثبت‌نام
-    if (!char.clan_name) {
-      const introText =
-        "📜✨ 𝑨𝒓𝒄𝒂𝒏𝒆 𝑨𝒕𝒍𝒂𝒔 — اطلس باستانی سفر\n\n" +
-        "کتاب باستانی به لرزه می‌افتد… حروف زرین روی جلد روشن می‌شوند.\n\n" +
-        "«مسافر اکلیس… نام تو هنوز بر صفحات من نوشته نشده.»\n\n" +
-        "برای آغاز، باید خاندان خود را انتخاب کنی.";
-
-      await sendUiPage(ctx, introText);
-      await showClanSelect(ctx);
+    if (!ctx.chat || (ctx.chat.type !== "group" && ctx.chat.type !== "supergroup")) {
+      await ctx.reply("این ورد را فقط باید داخل گروه مربوط به یک منطقه اجرا کنی.");
       return;
     }
 
-    // اگر قبلاً ثبت‌نام شده بود، مستقیم منوی اصلی اطلس
-    await showMainAtlasMenu(ctx);
+    const { supabase } = ctx.services;
+    const chatId = ctx.chat.id;
+    const chatTitle = ctx.chat.title || "بدون‌نام";
+
+    // سعی می‌کنیم پیام دستور را پاک کنیم
+    try {
+      await ctx.deleteMessage();
+    } catch {
+      // اگر نشد، مهم نیست
+    }
+
+    // Region را برای این گروه بساز / آپدیت کن
+    let regionId: number | null = null;
+
+    const { data: existing, error: regErr } = await supabase
+      .from("regions")
+      .select("id")
+      .eq("telegram_chat_id", chatId)
+      .maybeSingle();
+
+    if (!regErr && existing) {
+      // آپدیت عنوان با نام گروه
+      const { data: upd, error: updErr } = await supabase
+        .from("regions")
+        .update({ title: chatTitle })
+        .eq("telegram_chat_id", chatId)
+        .select("id")
+        .single();
+
+      if (!updErr && upd) {
+        regionId = upd.id;
+      } else {
+        regionId = existing.id;
+      }
+    } else {
+      // ساخت Region جدید
+      const { data: ins, error: insErr } = await supabase
+        .from("regions")
+        .insert({
+          title: chatTitle,
+          telegram_chat_id: chatId,
+        })
+        .select("id")
+        .single();
+
+      if (insErr || !ins) {
+        console.error("create region error:", insErr);
+        await ctx.reply("در ساخت Region برای این گروه مشکلی پیش آمد.");
+        return;
+      }
+      regionId = ins.id;
+    }
+
+    // ذخیره در سشن
+    setAdminSession(ctx, {
+      regionChatId: chatId,
+      regionId,
+      mode: "idle",
+      fromSpotId: null,
+      toSpotId: null,
+    });
+
+    const text =
+      "🔧 پنل مدیریت جهان برای این گروه باز شد.\n\n" +
+      `نام گروه: ${chatTitle}\n` +
+      `chat_id: ${chatId}\n\n` +
+      "از دکمه‌های زیر برای ساخت Spot و مسیرها استفاده کن.";
+
+    try {
+      await ctx.api.sendMessage(ctx.from.id, text, {
+        reply_markup: buildAdminMainKeyboard(),
+      });
+    } catch (err) {
+      console.error("send PM worldadmin error:", err);
+      await ctx.reply(
+        "نتوانستم در پی‌وی پیام بفرستم. ابتدا ربات را در پی‌وی استارت کن."
+      );
+    }
+  });
+}
+
+/**
+ * نمایش اطلاعات کلی Region
+ */
+async function handleRegionInfo(ctx: MyContext): Promise<void> {
+  const { supabase } = ctx.services;
+  const region = await getCurrentRegion(ctx);
+  if (!region) return;
+
+  const regionId = region.id as number;
+  const regionTitle = region.title as string;
+
+  const { data: spots, error: spotsErr } = await supabase
+    .from("spots")
+    .select("id")
+    .eq("region_id", regionId);
+
+  let edgeCount = 0;
+
+  if (!spotsErr && spots && spots.length > 0) {
+    const spotIds = (spots as any[]).map((s) => s.id);
+    const { data: edges, error: edgesErr } = await supabase
+      .from("edges")
+      .select("id")
+      .in("from_spot_id", spotIds);
+
+    if (!edgesErr && edges) {
+      edgeCount = edges.length;
+    } else if (edgesErr) {
+      console.error("edges count error:", edgesErr);
+    }
+  }
+
+  if (spotsErr) {
+    console.error("spots count error:", spotsErr);
+  }
+
+  const spotCount = spots ? spots.length : 0;
+
+  const text =
+    `📍 اطلاعات Region فعلی:\n\n` +
+    `نام: ${regionTitle}\n` +
+    `شناسه داخلی: ${regionId}\n\n` +
+    `تعداد Spotها: ${spotCount}\n` +
+    `تعداد مسیرها (Edgeها): ${edgeCount}`;
+
+  await ctx.reply(text, { reply_markup: buildAdminMainKeyboard() });
+}
+
+/**
+ * شروع ساخت Spot جدید
+ */
+async function handleSpotNew(ctx: MyContext): Promise<void> {
+  const region = await getCurrentRegion(ctx);
+  if (!region) return;
+
+  setAdminSession(ctx, { mode: "creating_spot" });
+
+  await ctx.reply(
+    "برای ساخت Spot جدید، نام آن را به‌صورت یک پیام متنی بفرست.\n" +
+      "مثال:\n" +
+      "میدان اتریل سیلوا"
+  );
+}
+
+/**
+ * لیست Spotها
+ */
+async function handleSpotList(ctx: MyContext): Promise<void> {
+  const { supabase } = ctx.services;
+  const region = await getCurrentRegion(ctx);
+  if (!region) return;
+
+  const regionId = region.id as number;
+
+  const { data: spots, error } = await supabase
+    .from("spots")
+    .select("id,title")
+    .eq("region_id", regionId)
+    .order("id", { ascending: true });
+
+  if (error) {
+    console.error("spots list error:", error);
+    await ctx.reply("در گرفتن لیست Spotها مشکلی پیش آمد.");
+    return;
+  }
+
+  if (!spots || spots.length === 0) {
+    await ctx.reply(
+      "برای این Region هنوز هیچ Spotی ثبت نشده.\n" +
+        "از «➕ ساخت Spot» برای ساخت نقطه‌ی جدید استفاده کن.",
+      { reply_markup: buildAdminMainKeyboard() }
+    );
+    return;
+  }
+
+  let text = "🗺 لیست Spotهای این Region:\n\n";
+  for (const s of spots as any[]) {
+    text += `• [${s.id}] ${s.title}\n`;
+  }
+
+  await ctx.reply(text, { reply_markup: buildAdminMainKeyboard() });
+}
+
+/**
+ * شروع ساخت Edge (انتخاب مبدا)
+ */
+async function handleEdgeNew(ctx: MyContext): Promise<void> {
+  const { supabase } = ctx.services;
+  const region = await getCurrentRegion(ctx);
+  if (!region) return;
+
+  const regionId = region.id as number;
+
+  const { data: spots, error } = await supabase
+    .from("spots")
+    .select("id,title")
+    .eq("region_id", regionId)
+    .order("id", { ascending: true });
+
+  if (error) {
+    console.error("spots list for edge error:", error);
+    await ctx.reply("در گرفتن لیست Spotها برای ساخت مسیر مشکلی پیش آمد.");
+    return;
+  }
+
+  if (!spots || spots.length === 0) {
+    await ctx.reply(
+      "برای این Region هنوز Spotی تعریف نشده.\n" +
+        "ابتدا یک Spot بساز، بعد دوباره برای ساخت Edge تلاش کن.",
+      { reply_markup: buildAdminMainKeyboard() }
+    );
+    return;
+  }
+
+  setAdminSession(ctx, {
+    mode: "select_edge_from",
+    fromSpotId: null,
+    toSpotId: null,
+    regionChatId: getAdminSession(ctx).regionChatId,
+    regionId: getAdminSession(ctx).regionId,
   });
 
-  // انتخاب خاندان با دکمه‌های اینلاین
+  const kb = new InlineKeyboard();
+  for (const s of spots as any[]) {
+    kb.text(s.title, `wa:edge_from:${s.id}`).row();
+  }
+  kb.text("🔙 بازگشت", "wa:home");
+
+  await ctx.reply("برای ساخت مسیر جدید، ابتدا Spot مبدا را انتخاب کن:", {
+    reply_markup: kb,
+  });
+}
+
+/**
+ * انتخاب Spot مبدا
+ */
+async function handleEdgeSelectFrom(ctx: MyContext, spotId: number): Promise<void> {
+  const { supabase } = ctx.services;
+  const region = await getCurrentRegion(ctx);
+  if (!region) return;
+
+  const regionId = region.id as number;
+
+  const { data: spots, error } = await supabase
+    .from("spots")
+    .select("id,title")
+    .eq("region_id", regionId)
+    .order("id", { ascending: true });
+
+  if (error) {
+    console.error("spots list for edge (to) error:", error);
+    await ctx.reply("در گرفتن لیست Spotها برای انتخاب مقصد مشکلی پیش آمد.");
+    return;
+  }
+
+  if (!spots || spots.length === 0) {
+    await ctx.reply("Spotی برای این Region یافت نشد.");
+    return;
+  }
+
+  setAdminSession(ctx, {
+    mode: "select_edge_to",
+    fromSpotId: spotId,
+    toSpotId: null,
+  });
+
+  const kb = new InlineKeyboard();
+  for (const s of spots as any[]) {
+    if (s.id === spotId) continue;
+    kb.text(s.title, `wa:edge_to:${s.id}`).row();
+  }
+  kb.text("🔙 بازگشت", "wa:home");
+
+  await ctx.editMessageText("حالا Spot مقصد را انتخاب کن:", {
+    reply_markup: kb,
+  });
+}
+
+/**
+ * انتخاب Spot مقصد
+ */
+async function handleEdgeSelectTo(ctx: MyContext, spotId: number): Promise<void> {
+  const admin = getAdminSession(ctx);
+  const fromSpotId = admin.fromSpotId;
+
+  if (!fromSpotId) {
+    await ctx.reply("اطلاعات مبدا مسیر گم شده. دوباره ساخت مسیر را آغاز کن.");
+    return;
+  }
+
+  setAdminSession(ctx, {
+    mode: "input_edge_time",
+    toSpotId: spotId,
+  });
+
+  await ctx.reply(
+    "مدت زمان سفر بین این دو نقطه را به ثانیه بفرست.\n" +
+      "مثال: 60\n" +
+      "یا: 300"
+  );
+}
+
+/**
+ * لیست Edgeها
+ */
+async function handleEdgeList(ctx: MyContext): Promise<void> {
+  const { supabase } = ctx.services;
+  const region = await getCurrentRegion(ctx);
+  if (!region) return;
+
+  const regionId = region.id as number;
+
+  const { data: spots, error: spotsErr } = await supabase
+    .from("spots")
+    .select("id,title")
+    .eq("region_id", regionId)
+    .order("id", { ascending: true });
+
+  if (spotsErr) {
+    console.error("spots for edges list error:", spotsErr);
+    await ctx.reply("در گرفتن Spotها برای لیست مسیرها مشکلی پیش آمد.");
+    return;
+  }
+
+  if (!spots || spots.length === 0) {
+    await ctx.reply(
+      "برای این Region هنوز Spotی تعریف نشده؛ در نتیجه مسیری هم وجود ندارد.",
+      { reply_markup: buildAdminMainKeyboard() }
+    );
+    return;
+  }
+
+  const spotMap = new Map<number, string>();
+  const spotIds: number[] = [];
+  for (const s of spots as any[]) {
+    spotMap.set(s.id, s.title);
+    spotIds.push(s.id);
+  }
+
+  const { data: edges, error: edgesErr } = await supabase
+    .from("edges")
+    .select("id,from_spot_id,to_spot_id,travel_seconds")
+    .in("from_spot_id", spotIds);
+
+  if (edgesErr) {
+    console.error("edges list error:", edgesErr);
+    await ctx.reply("در گرفتن لیست مسیرها مشکلی پیش آمد.");
+    return;
+  }
+
+  if (!edges || edges.length === 0) {
+    await ctx.reply("برای این Region هنوز هیچ مسیری ساخته نشده.", {
+      reply_markup: buildAdminMainKeyboard(),
+    });
+    return;
+  }
+
+  let text = "🧵 لیست مسیرهای این Region:\n\n";
+  for (const e of edges as any[]) {
+    const fromName = spotMap.get(e.from_spot_id) || `Spot ${e.from_spot_id}`;
+    const toName = spotMap.get(e.to_spot_id) || `Spot ${e.to_spot_id}`;
+    text += `• [${e.id}] ${fromName} → ${toName} · ${e.travel_seconds} ثانیه\n`;
+  }
+
+  await ctx.reply(text, { reply_markup: buildAdminMainKeyboard() });
+}
+
+/**
+ * هندل پیام‌های متنی در پی‌وی ارباب (ساخت Spot و زمان Edge)
+ */
+function registerAdminTextHandlers(bot: Bot<MyContext>): void {
+  bot.on("message:text", async (ctx, next) => {
+    if (!ctx.from || ctx.from.id !== MASTER_ID) {
+      return next();
+    }
+
+    if (!ctx.chat || ctx.chat.type !== "private") {
+      return next();
+    }
+
+    const admin = getAdminSession(ctx);
+    const mode = admin.mode;
+    const { supabase } = ctx.services;
+    const region = await getCurrentRegion(ctx);
+    if (!region) return;
+
+    const regionId = region.id as number;
+    const text = ctx.message.text.trim();
+
+    if (mode === "creating_spot") {
+      if (!text) {
+        await ctx.reply("نام Spot نمی‌تواند خالی باشد.");
+        return;
+      }
+
+      const { error: insErr } = await supabase.from("spots").insert({
+        title: text,
+        region_id: regionId,
+      });
+
+      if (insErr) {
+        console.error("create spot error:", insErr);
+        await ctx.reply("در ساخت Spot جدید مشکلی پیش آمد.");
+        return;
+      }
+
+      setAdminSession(ctx, { mode: "idle" });
+
+      await ctx.reply(`Spot جدید ساخته شد: ${text}`, {
+        reply_markup: buildAdminMainKeyboard(),
+      });
+      return;
+    }
+
+    if (mode === "input_edge_time") {
+      const adminState = getAdminSession(ctx);
+      const fromSpotId = adminState.fromSpotId;
+      const toSpotId = adminState.toSpotId;
+
+      if (!fromSpotId || !toSpotId) {
+        await ctx.reply("اطلاعات مسیر ناقص است. ساخت مسیر را دوباره شروع کن.");
+        setAdminSession(ctx, { mode: "idle", fromSpotId: null, toSpotId: null });
+        return;
+      }
+
+      const seconds = Number(text);
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        await ctx.reply("مدت زمان سفر باید یک عدد مثبت (به ثانیه) باشد.");
+        return;
+      }
+
+      const { error: insErr } = await supabase.from("edges").insert({
+        from_spot_id: fromSpotId,
+        to_spot_id: toSpotId,
+        travel_seconds: seconds,
+      });
+
+      if (insErr) {
+        console.error("create edge error:", insErr);
+        await ctx.reply("در ساخت مسیر جدید مشکلی پیش آمد.");
+        return;
+      }
+
+      setAdminSession(ctx, {
+        mode: "idle",
+        fromSpotId: null,
+        toSpotId: null,
+      });
+
+      await ctx.reply(`مسیر جدید با زمان ${seconds} ثانیه ثبت شد.`, {
+        reply_markup: buildAdminMainKeyboard(),
+      });
+      return;
+    }
+
+    return next();
+  });
+}
+
+/**
+ * هندل callback_query های wa:...
+ */
+function registerAdminCallbacks(bot: Bot<MyContext>): void {
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data || "";
-    if (!data.startsWith("reg_clan:")) {
-      await next();
-      return;
+
+    if (!data.startsWith("wa:")) {
+      return next();
     }
 
-    if (ctx.chat?.type !== "private") {
+    if (!ctx.from || ctx.from.id !== MASTER_ID) {
       await ctx.answerCallbackQuery();
-      return;
-    }
-
-    const key = data.split(":")[1] as ClanKey;
-    if (!["Stellarieth", "Walker", "Necroshade", "Torrentress"].includes(key)) {
-      await ctx.answerCallbackQuery();
+      await ctx.reply("این پنل فقط برای ارباب من است.");
       return;
     }
 
     await ctx.answerCallbackQuery();
-    await showClanLoadingAndAskName(ctx, key);
-  });
 
-  // گرفتن نام کاراکتر در مرحله‌ی name
-  bot.on("message:text", async (ctx, next) => {
-    if (ctx.chat?.type !== "private") {
-      await next();
+    const parts = data.split(":");
+    const action = parts[1];
+
+    if (!ctx.chat || ctx.chat.type !== "private") {
+      await ctx.reply("پنل مدیریت جهان فقط در پی‌وی کار می‌کند.");
       return;
     }
 
-    if (ctx.session.reg_step === "name") {
-      const name = ctx.message.text.trim();
-      if (!name) {
-        await sendUiPage(ctx, "نام نمی‌تواند خالی باشد. دوباره بفرست.");
-        return;
+    switch (action) {
+      case "home":
+        setAdminSession(ctx, { mode: "idle" });
+        await sendAdminHome(ctx, "به پنل اصلی برگشتی.");
+        break;
+
+      case "info":
+        await handleRegionInfo(ctx);
+        break;
+
+      case "spot_new":
+        await handleSpotNew(ctx);
+        break;
+
+      case "spots":
+        await handleSpotList(ctx);
+        break;
+
+      case "edge_new":
+        await handleEdgeNew(ctx);
+        break;
+
+      case "edges":
+        await handleEdgeList(ctx);
+        break;
+
+      case "edge_from": {
+        const spotId = Number(parts[2]);
+        if (!Number.isFinite(spotId)) return;
+        await handleEdgeSelectFrom(ctx, spotId);
+        break;
       }
-      await finishRegistration(ctx, name);
-      return;
-    }
 
-    await next();
+      case "edge_to": {
+        const spotId = Number(parts[2]);
+        if (!Number.isFinite(spotId)) return;
+        await handleEdgeSelectTo(ctx, spotId);
+        break;
+      }
+
+      default:
+        break;
+    }
   });
 }
+
+/**
+ * رجیستر کل فیچر admin-builder
+ */
+export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
+  registerWorldAdminCommand(bot);
+  registerAdminTextHandlers(bot);
+  registerAdminCallbacks(bot);
+}
+
+// برای سازگاری با اسم قدیمی
+export const registerWorldAdminBuilder = registerWorldAdminFeature;
