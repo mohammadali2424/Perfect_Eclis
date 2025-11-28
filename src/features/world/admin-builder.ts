@@ -20,11 +20,7 @@ async function deleteLastPm(ctx: MyContext) {
 }
 
 // فرستادن پیام مدیریتی و ذخیره ID آن
-async function sendManagedPm(
-  ctx: MyContext,
-  text: string,
-  extra: any = {}
-) {
+async function sendManagedPm(ctx: MyContext, text: string, extra: any = {}) {
   const msg = await ctx.reply(text, extra);
   ctx.session.__last_pm_id = msg.message_id;
 }
@@ -37,7 +33,7 @@ async function getRegionByChat(ctx: MyContext, chatId: number) {
     .from("regions")
     .select("*")
     .eq("telegram_chat_id", chatId)
-    .single();
+    .maybeSingle();
 
   if (error || !data) return null;
   return data;
@@ -82,11 +78,9 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       .row()
       .text("🗑 حذف‌ها", `adm:delete:${chatId}`);
 
-    await ctx.api.sendMessage(
-      MASTER_ID,
-      `پنل مدیریت گروه:\n${chat.title}`,
-      { reply_markup: kb }
-    );
+    await ctx.api.sendMessage(MASTER_ID, `پنل مدیریت گروه:\n${chat.title}`, {
+      reply_markup: kb,
+    });
   });
 
   // هندل دکمه‌ها
@@ -96,7 +90,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     if (ctx.from?.id !== MASTER_ID) {
       await ctx.answerCallbackQuery({
         text: "فقط اربابم میتونه منو کنترل کنه، حدتو بدون",
-        show_alert: true
+        show_alert: true,
       });
       return;
     }
@@ -117,7 +111,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
           .from("regions")
           .select("*")
           .eq("telegram_chat_id", chatId)
-          .single();
+          .maybeSingle();
 
         if (region) {
           await sendManagedPm(ctx, `Region قبلاً ثبت شده:\n${region.title}`);
@@ -132,7 +126,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
           .insert({
             slug,
             title,
-            telegram_chat_id: chatId
+            telegram_chat_id: chatId,
           })
           .select()
           .single();
@@ -238,15 +232,15 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
         );
 
         await sendManagedPm(ctx, "Spot مبدا را انتخاب کن:", {
-          reply_markup: kb
+          reply_markup: kb,
         });
         return;
       }
 
       // مرحله ۲: انتخاب مقصد
       if (mode === "from") {
-        const fromSpot = parts[4];
-        ctx.session.edge_from_spot_id = fromSpot);
+        const fromSpot = Number(parts[4]);
+        ctx.session.edge_from_spot_id = fromSpot;
 
         const { data: all } = await supabase
           .from("spots")
@@ -255,19 +249,19 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
         await deleteLastPm(ctx);
 
         const kb = new InlineKeyboard();
-        all.forEach((s: any) =>
+        (all || []).forEach((s: any) =>
           kb.text(s.title, `adm:edge:to:${chatId}:${s.id}`).row()
         );
 
         await sendManagedPm(ctx, "Spot مقصد را انتخاب کن:", {
-          reply_markup: kb
+          reply_markup: kb,
         });
         return;
       }
 
       // مرحله ۳: وارد کردن زمان سفر
       if (mode === "to") {
-        const toSpot = parts[4];
+        const toSpot = Number(parts[4]);
         ctx.session.edge_to_spot_id = toSpot;
         ctx.session.mode = "edge_time";
 
@@ -317,7 +311,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
         );
 
         await sendManagedPm(ctx, "کدام Spot حذف شود؟", {
-          reply_markup: kb
+          reply_markup: kb,
         });
         return;
       }
@@ -332,11 +326,16 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
 
         const kb = new InlineKeyboard();
         edges.forEach((e: any) =>
-          kb.text(`${e.from_spot_id} → ${e.to_spot_id}`, `adm:deledge:${e.id}`).row()
+          kb
+            .text(
+              `${e.from_spot_id} → ${e.to_spot_id}`,
+              `adm:deledge:${e.id}`
+            )
+            .row()
         );
 
         await sendManagedPm(ctx, "کدام مسیر حذف شود؟", {
-          reply_markup: kb
+          reply_markup: kb,
         });
         return;
       }
@@ -344,13 +343,10 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
 
     // ---------------------- تأیید حذف Spot ----------------------
     if (section === "delspot") {
-      const spotId = parts[2];
+      const spotId = Number(parts[2]);
       await ctx.answerCallbackQuery();
 
-      const { error } = await supabase
-        .from("spots")
-        .delete()
-        .eq("id", spotId);
+      const { error } = await supabase.from("spots").delete().eq("id", spotId);
 
       await deleteLastPm(ctx);
       await sendManagedPm(
@@ -362,13 +358,10 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
 
     // ---------------------- تأیید حذف Edge ----------------------
     if (section === "deledge") {
-      const edgeId = parts[2];
+      const edgeId = Number(parts[2]);
       await ctx.answerCallbackQuery();
 
-      const { error } = await supabase
-        .from("edges")
-        .delete()
-        .eq("id", edgeId);
+      const { error } = await supabase.from("edges").delete().eq("id", edgeId);
 
       await deleteLastPm(ctx);
       await sendManagedPm(
@@ -393,13 +386,11 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       const name = ctx.message.text.trim();
       const slug = slugify(name);
 
-      const { error } = await supabase
-        .from("spots")
-        .insert({
-          region_id: regionId,
-          slug,
-          title: name
-        });
+      const { error } = await supabase.from("spots").insert({
+        region_id: regionId,
+        slug,
+        title: name,
+      });
 
       ctx.session.mode = undefined;
       ctx.session.pending_region_id = undefined;
@@ -417,7 +408,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       const { error } = await supabase.from("edges").insert({
         from_spot_id: fromId,
         to_spot_id: toId,
-        travel_seconds: t
+        travel_seconds: t,
       });
 
       ctx.session.mode = undefined;
@@ -425,7 +416,10 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       ctx.session.edge_to_spot_id = undefined;
 
       await deleteLastPm(ctx);
-      await sendManagedPm(ctx, error ? "خطا در ساخت Edge" : "Edge ساخته شد.");
+      await sendManagedPm(
+        ctx,
+        error ? "خطا در ساخت Edge" : "Edge ساخته شد."
+      );
       return;
     }
 
