@@ -219,13 +219,12 @@ async function handleRegPlayer(ctx: MyContext) {
     .eq("tg_id", target.id)
     .maybeSingle();
 
+  // اگر کوئری خطا داد، فقط تو لاگ سرور بنویس و ادامه بده
   if (charErr) {
     console.error("characters check error:", charErr);
-    await ctx.reply("در بررسی وضعیت پلیر خطایی رخ داد.");
-    return;
   }
 
-  if (existing) {
+  if (existing && !charErr) {
     // آپدیت لوکیشن
     const { error: updErr } = await supabase
       .from("characters")
@@ -271,9 +270,8 @@ async function handleRegPlayer(ctx: MyContext) {
       }\n` +
       `مکان اولیه: ${region.title} / ${spot.title}`
   );
-
-  // اگر بعداً خواستی، می‌تونی اینجا براش تو پی‌وی هم پیام خوش‌آمدگویی بفرستی.
 }
+
 
 /**
  * هندل رسیدن به مقصد
