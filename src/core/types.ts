@@ -1,42 +1,73 @@
+// src/core/types.ts
 import { Context, SessionFlavor } from "grammy";
-import { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
+/**
+ * سرویس‌هایی که توی ctx.services تزریق می‌کنیم
+ */
 export interface Services {
   supabase: SupabaseClient;
-  masterId: number;
 }
 
+/**
+ * شکل رکورد کاراکتر داخل دیتابیس (جدول characters)
+ * اگر خواستی می‌تونی دقیق‌ترش کنی بر اساس اسکیمای سوپابیس.
+ */
 export interface CharacterState {
   tg_id: number;
   char_name: string | null;
   clan_name?: string | null;
-  current_region_id: string | null;
-  current_spot_id: string | null;
+  current_region_id: number | null;
+  current_spot_id: number | null;
   last_move_at: string | null;
   travel_ready_at: string | null;
-  pending_region_id: string | null;
-  pending_spot_id: string | null;
 }
 
+/**
+ * سشن اختصاصی پنل ساخت دنیا (world admin)
+ * بیشترش رو admin-builder با @ts-ignore استفاده می‌کنه،
+ * اینجا فقط برای نظم و تایپ‌سیفتی تعریف شده.
+ */
+export interface WorldAdminSession {
+  mode?: "idle" | "create_spot" | "select_edge_from" | "select_edge_to" | "edge_time";
+  regionChatId?: number | null;
+  regionId?: number | null;
+  fromSpotId?: number | null;
+  toSpotId?: number | null;
+}
+
+/**
+ * کل چیزی که توی ctx.session نگه می‌داریم
+ */
 export interface SessionData {
-  // برای تمیز نگه داشتن PM
+  /**
+   * برای اینکه پی‌وی تمیز بمونه: آخرین پیام منو/پنل که باید پاک بشه
+   */
   __last_pm_id?: number;
 
-  // حالت‌های ساخت دنیا
-  mode?: "create_spot" | "edge_time";
+  /**
+   * وضعیت پنل دنیاسازی /worldadmin
+   * خود admin-builder مقداردهی‌اش می‌کنه.
+   */
+  worldAdmin?: WorldAdminSession;
 
-  pending_region_id?: string;
-  edge_from_spot_id?: string;
-  edge_to_spot_id?: string;
+  /**
+   * اگر خواستی منوهای مختلف توی پی‌وی داشته باشی
+   * می‌تونی آخرین msg_id رو برای ادیت/پاک‌کردن نگه داری
+   */
+  ui_last_menu_id?: number;
 
- ui_last_menu_id?: number;
-
-  // ویزارد ثبت‌نام بازیکن
+  /**
+   * ویزارد ثبت‌نام بازیکن (registration.ts)
+   */
   reg_step?: "clan" | "name";
   reg_clan?: string | null;
   reg_name?: string | null;
 }
 
+/**
+ * کانتکست اختصاصی بات، شامل سشن و سرویس‌ها
+ */
 export type MyContext = Context &
   SessionFlavor<SessionData> & {
     services: Services;
