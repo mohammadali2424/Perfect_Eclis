@@ -12,15 +12,15 @@ function formatDuration(seconds: number | null): string {
   return `${mins} دقیقه`;
 }
 
-/** تمیز کردن عنوان Region (مثلاً Region -1002740… → «قلمروی بی‌نام» یا اسم فانتزی) */
+/** تمیز کردن عنوان Region (مثلاً Region -1002740… → فقط اسم قشنگ) */
 function prettifyRegionTitle(raw?: string | null): string {
   if (!raw) return "قلمروی بی‌نام";
   let t = raw.trim();
 
-  // اگر با "Region" شروع شده، برداریمش
+  // اگر با "Region" شروع شده، حذفش کن
   t = t.replace(/^Region\s*/i, "");
 
-  // اگر فقط عدد بود، فانتزی‌ترش کنیم
+  // اگر فقط عدد بود، فانتزی‌ترش کن
   if (/^-?\d+$/.test(t)) return "قلمروی بی‌نام";
 
   return t;
@@ -95,8 +95,8 @@ async function showPaths(ctx: MyContext): Promise<void> {
 
   if (!char.current_spot_id) {
     await ctx.reply(
-      "هنوز لوکیشن اولیه‌ای برایت ثبت نشده.\n" +
-        "ارباب باید با دستور /regplayer تو را در یکی از گروه‌ها ثبت کند."
+      "هنوز در هیچ نقطه‌ای از نقشه‌ی اکلیس ثبت نشده‌ای.\n" +
+        "یکی از مدیران جهان باید ابتدا تو را در یکی از مناطق ثبت کند."
     );
     return;
   }
@@ -143,7 +143,7 @@ async function showPaths(ctx: MyContext): Promise<void> {
         `🏰 ${prettifyRegionTitle(region.title)}\n` +
         `⬙ نقطه: ${spot.title}\n\n` +
         "از این نقطه هنوز راهی روی نقشه کشیده نشده.\n" +
-        "ارباب باید از پنل /worldadmin برای این Spot مسیر بسازد."
+        "باید برای این مکان مسیری ساخته شود."
     );
     return;
   }
@@ -196,7 +196,7 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
   if (!char.current_spot_id || !char.current_region_id) {
     await ctx.reply(
       "هنوز مکان مشخصی برایت ثبت نشده.\n" +
-        "ارباب باید ابتدا تو را در یکی از مناطق با /regplayer ثبت کند."
+        "یکی از مدیران باید ابتدا تو را در یکی از مناطق جهان ثبت کند."
     );
     return;
   }
@@ -236,7 +236,7 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
   await ctx.reply(text);
 }
 
-/** ثبت پلیر با ریپلای /regplayer */
+/** ثبت پلیر با ریپلای /regplayer (فقط برای ارباب) */
 async function handleRegPlayer(ctx: MyContext): Promise<void> {
   if (ctx.from?.id !== MASTER_ID) {
     await ctx.reply("فقط اربابم می‌تونه پلیر ثبت کنه، حدتو بدون.");
@@ -244,13 +244,13 @@ async function handleRegPlayer(ctx: MyContext): Promise<void> {
   }
 
   if (!ctx.chat || ctx.chat.type === "private") {
-    await ctx.reply("دستور /regplayer را باید داخل گروه و روی پیام پلیر بزنی (ریپلای).");
+    await ctx.reply("این ورد را باید داخل گروه و روی پیام پلیر بخوانی (ریپلای).");
     return;
   }
 
   const reply = ctx.message?.reply_to_message;
   if (!reply || !reply.from) {
-    await ctx.reply("برای ثبت پلیر، باید روی پیام آن شخص ریپلای کنی و بعد /regplayer را بفرستی.");
+    await ctx.reply("برای ثبت پلیر، باید روی پیام آن شخص ریپلای کنی و بعد این ورد را بفرستی.");
     return;
   }
 
@@ -263,7 +263,7 @@ async function handleRegPlayer(ctx: MyContext): Promise<void> {
   if (!region) {
     await ctx.reply(
       "برای این گروه هنوز قلمرو (Region) ثبت نشده.\n" +
-        "اول داخل همین گروه /worldadmin را بزن و از پنل، Region این چت را بساز."
+        "اول باید در پنل مدیریت جهان، این چت را به یک قلمرو وصل کنی."
     );
     return;
   }
@@ -279,7 +279,7 @@ async function handleRegPlayer(ctx: MyContext): Promise<void> {
   if (spErr || !spots || spots.length === 0) {
     await ctx.reply(
       "برای این قلمرو هنوز هیچ نقطه‌ای (Spot) تعریف نشده.\n" +
-        "از پنل /worldadmin → «ساخت Spot» را بزن، بعد دوباره /regplayer را اجرا کن."
+        "اول باید برای این منطقه دست‌کم یک نقطه بسازی."
     );
     return;
   }
@@ -348,7 +348,7 @@ async function handleRegPlayer(ctx: MyContext): Promise<void> {
 /** هندل رسیدن به مقصد + کیک از گروه قبلی + لینک ورود به گروه جدید */
 async function handleArrive(ctx: MyContext): Promise<void> {
   if (ctx.chat?.type !== "private") {
-    await ctx.reply("برای تکمیل سفر، بیا توی پی‌وی من و /arrive بزن.");
+    await ctx.reply("برای کامل‌شدن سفر، بیا توی پی‌وی من و از دکمه‌ی رسیدن استفاده کن.");
     return;
   }
 
@@ -542,7 +542,7 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
     `در حال حرکت به سمت:\n` +
       `${prettifyRegionTitle(destRegion.title)} / ${destSpot.title}\n` +
       `⏳ مدت این سفر: ${formatDuration(edge.travel_seconds)}\n\n` +
-      "وقتی حس کردی زمانش گذشته، روی «رسیدم؟» بزن یا از /arrive استفاده کن.",
+      "وقتی حس کردی زمانش گذشته، روی «رسیدم؟» بزن.",
     { reply_markup: kb }
   );
 }
@@ -554,7 +554,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await showPaths(ctx);
   });
 
-  // برای سازگاری: /path هم همان کار را می‌کند
+  // برای سازگاری: /path هم همان کار را می‌کند (پنهان، برای خودت)
   bot.command("path", async (ctx) => {
     await showPaths(ctx);
   });
@@ -564,7 +564,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await showQuickMap(ctx);
   });
 
-  // دستور /mymap نیز همان کار را انجام دهد
+  // دستور /mymap هم هست (برای خودت)
   bot.command("mymap", async (ctx) => {
     await showQuickMap(ctx);
   });
@@ -603,7 +603,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await startTravelFromEdge(ctx, edgeId);
   });
 
-  // /arrive برای تکمیل سفر
+  // /arrive برای خودت؛ متنش دستور رو لو نمی‌ده
   bot.command("arrive", async (ctx) => {
     await handleArrive(ctx);
   });
