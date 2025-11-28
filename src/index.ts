@@ -1,7 +1,8 @@
 // src/index.ts
 import express from "express";
 import { bot } from "./core/bot.js";
-import { PORT } from "./core/config.js";
+import { PORT, BOT_TOKEN } from "./core/config.js";
+
 import { handleStart, handleMainMenuText } from "./features/world/onboarding.js";
 import {
   handleWorldAdminCommand,
@@ -10,16 +11,16 @@ import {
 } from "./features/world/admin-builder.js";
 import { handleNewChatMembers } from "./features/security/guard.js";
 import { handleTravelCallback } from "./features/world/travel.js";
+import { webhookCallback } from "grammy";
 
-// دستورات پایه
+// دستورات و هندلرها
+
 bot.command("start", handleStart);
 
-// تست
 bot.command("ping", async (ctx) => {
   await ctx.reply("pong 🧬");
 });
 
-// منوی PV
 bot.hears(
   [
     "🧭 مسیرهای من",
@@ -32,10 +33,8 @@ bot.hears(
   handleMainMenuText,
 );
 
-// پنل مدیریت جهان: /aw
 bot.command("aw", handleWorldAdminCommand);
 
-// callbackهای اینلاین
 bot.on("callback_query:data", async (ctx) => {
   const data = ctx.callbackQuery?.data ?? "";
   if (data.startsWith("wa:")) {
@@ -46,13 +45,10 @@ bot.on("callback_query:data", async (ctx) => {
   }
 });
 
-// تکست‌های پی‌وی برای ویزارد ریجن/Spot/Edge
 bot.on("message:text", handleWorldAdminText);
 
-// گارد اضافه‌شدن به گروه‌ها
 bot.on("message:new_chat_members", handleNewChatMembers);
 
-// لاگ ساده
 bot.on("message", (ctx) => {
   console.log(
     "Incoming message from",
@@ -64,24 +60,29 @@ bot.on("message", (ctx) => {
   );
 });
 
-// خطاها
 bot.catch((err) => {
   console.error("Bot error:", err.error);
 });
 
-// سرور ساده برای Render
+// ---- اینجا قسمت Webhook / Polling ----
+
 const app = express();
+app.use(express.json());
+
+// URL مخفی‌تر بسازیم:
+const secretPath = `/bot/${BOT_TOKEN.split(":")[0]}`;
 
 app.get("/", (_req, res) => {
-  res
-    .status(200)
-    .send("Eclis Pathweaver bot is running (polling mode with admin panel).");
+  res.status(200).send("Eclis Pathweaver bot is running with webhook.");
 });
 
+// تلگرام اینجا آپدیت‌ها را POST می‌کند
+app.post(secretPath, webhookCallback(bot, "express"));
+
+// روی Render فقط سرور HTTP لازم داریم
 app.listen(PORT, () => {
   console.log(`HTTP server listening on port ${PORT}`);
+  console.log(`Webhook path: ${secretPath}`);
 });
 
-// Polling
-bot.start();
-console.log("Bot started in long-polling mode");
+// نکته: دیگه اینجا bot.start() نداریم
