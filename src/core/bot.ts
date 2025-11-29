@@ -1,32 +1,34 @@
-// @ts-nocheck
-import { Bot, session, Keyboard } from "grammy";
+import { Bot, session } from "grammy";
 import { BOT_TOKEN } from "./config";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
 
 import { registerSecurityFeature } from "../features/security/guard";
-import { registerOnboardingFeature } from "../features/world/onboarding";
-import { registerWorldAdminFeature } from "../features/world/admin-builder";
 import { registerTravelFeature } from "../features/world/travel";
+import { registerWorldAdminFeature } from "../features/world/admin-builder";
 import { registerRegistrationFeature } from "../features/registration";
+import { registerOnboardingFeature } from "../features/world/onboarding";
 
 if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is required");
 }
 
-// خود بات
+// ربات اصلی
 export const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// سشن
+// حافظهٔ سشن گِرَمی
 bot.use(
   session({
-    initial(): SessionData {
-      return {} as SessionData;
-    },
+    initial: (): SessionData => ({
+      ui_last_menu_id: undefined,
+      reg_step: undefined,
+      reg_clan: null,
+      reg_name: null,
+    }),
   })
 );
 
-// سرویس‌ها (Supabase و غیره)
+// تزریق سرویس‌ها داخل ctx.services
 bot.use((ctx, next) => {
   ctx.services = {
     supabase,
@@ -34,33 +36,9 @@ bot.use((ctx, next) => {
   return next();
 });
 
-// فقط برای مطمئن شدن از اینکه این bot.ts واقعاً لود شده
-bot.command("debug_alive", async (ctx) => {
-  await ctx.reply("✅ Core bot زنده است و bot.ts درست لود شده.");
-});
-
-// /start برای منوی PV
-bot.command("start", async (ctx) => {
-  if (ctx.chat.type !== "private") return;
-
-  const kb = new Keyboard()
-    .text("🧭 مسیر های من")
-    .row()
-    .text("🗺 نقشه سریع من")
-    .resized();
-
-  await ctx.reply(
-    "به Pathweaver خوش اومدی.\n" +
-      "من مسیریاب جهان اکلیس‌ام.\n\n" +
-      "برای ثبت‌نام، کلمهٔ «ثبت من» را اینجا برام بفرست.\n" +
-      "بعد از تأیید ارباب، مسیرها برات باز می‌شن.",
-    { reply_markup: kb }
-  );
-});
-
-// ترتیب رجیستر فیچرها
+// رجیستر کردن فیچرها
+registerSecurityFeature(bot);
 registerOnboardingFeature(bot);
-registerRegistrationFeature(bot);
 registerWorldAdminFeature(bot);
 registerTravelFeature(bot);
-registerSecurityFeature(bot);
+registerRegistrationFeature(bot);
