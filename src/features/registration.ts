@@ -517,3 +517,4 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     }
   });
 }
+
