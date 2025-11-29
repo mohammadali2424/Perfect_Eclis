@@ -409,7 +409,7 @@ bot.command("regplayer", async (ctx) => {
     targetUser.first_name +
     (targetUser.last_name ? " " + targetUser.last_name : "");
 
-  const chatId = ctx.chat.id;
+  const chatId = chat.id;
 
   try {
     const { data: player, error: plErr } = await supabase
