@@ -62,10 +62,10 @@ function makeClanSelectKeyboard(actionPrefix: string) {
 
 export function registerWorldAdminFeature(bot: Bot<MyContext>) {
   // دستور /aw (و /worldadmin) در گروه
- bot.command(["aw", "worldadmin"], async (ctx) => {
+bot.command(["aw", "worldadmin"], async (ctx) => {
   if (!ctx.chat || !ctx.from) return;
 
-  // فقط در گروه
+  // فقط داخل گروه قابل استفاده است
   if (ctx.chat.type === "private") {
     await ctx.reply("این دستور باید داخل یک گروه اجرا شود.");
     return;
@@ -73,16 +73,18 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
 
   const s = ctx.session as any;
 
-  // ثبت اطلاعات گروهی که پنل به آن متصل شده
+  // ثبت اطلاعات گروه متصل‌شده
   s.__admin_source_chat_id = ctx.chat.id;
   s.__admin_source_chat_title = ctx.chat.title ?? `Chat ${ctx.chat.id}`;
 
-  // حذف پیام /aw
+  // حذف پیام دستور توی گروه
   try {
     await ctx.deleteMessage();
-  } catch {}
+  } catch {
+    // اگه نشد، مهم نیست
+  }
 
-  // باز کردن پنل داخل PV
+  // باز کردن پنل توی پی‌وی
   await sendManagedPm(
     ctx,
     "<b>پنل مدیریت جهان اکلیس فعال شد.</b>\n\n" +
@@ -90,6 +92,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     makeAdminMainKeyboard()
   );
 });
+
 
 
   // بازگشت به منوی اصلی از هر جا
