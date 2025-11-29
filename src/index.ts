@@ -1,16 +1,20 @@
 import express, { Request, Response } from "express";
 import { bot } from "./core/bot";
 
-// سرور اکسپرس برای وبهوک
 const app = express();
 app.use(express.json());
 
-// آدرس وبهوک – برای امنیت، از توکن خود بات استفاده می‌کنیم
+// آدرس وبهوک – برای امنیت نسبی، از توکن استفاده می‌کنیم
 const webhookPath = `/webhook/${bot.token}`;
 
 // هندلر وبهوک تلگرام
 app.post(webhookPath, async (req: Request, res: Response) => {
   try {
+    // اگر هنوز bot.init نشده، همینجا یکبار انجامش بده
+    if (!bot.botInfo) {
+      await bot.init();
+    }
+
     await bot.handleUpdate(req.body as any);
   } catch (err) {
     console.error("Error handling update:", err);
@@ -19,14 +23,13 @@ app.post(webhookPath, async (req: Request, res: Response) => {
   res.sendStatus(200);
 });
 
-// یه روت ساده برای تست
+// روت ساده تست
 app.get("/", (_req: Request, res: Response) => {
-  res.send("Eclis Pathweaver bot is running.");
+  res.send("Eclis Pathweaver bot is running (webhook mode).");
 });
 
 const PORT = Number(process.env.PORT) || 3000;
 
-// استارت سرور + ست کردن وبهوک
 app.listen(PORT, async () => {
   console.log(`HTTP server listening on port ${PORT}`);
 
@@ -41,11 +44,16 @@ app.listen(PORT, async () => {
     return;
   }
 
-  const url = `${baseUrl}${webhookPath}`;
   try {
+    // اینجا هم مطمئن می‌شیم bot.init شده
+    if (!bot.botInfo) {
+      await bot.init();
+    }
+
+    const url = `${baseUrl}${webhookPath}`;
     await bot.api.setWebhook(url);
     console.log("[webhook] Webhook set to:", url);
   } catch (err) {
-    console.error("[webhook] Failed to set webhook:", err);
+    console.error("[webhook] Failed to init bot or set webhook:", err);
   }
 });
