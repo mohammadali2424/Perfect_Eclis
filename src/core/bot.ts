@@ -39,7 +39,7 @@ bot.command("debug_alive", async (ctx) => {
   await ctx.reply("✅ Core bot زنده است و bot.ts درست لود شده.");
 });
 
-// /start ساده برای PV که منو رو ست کند
+// /start برای منوی PV
 bot.command("start", async (ctx) => {
   if (ctx.chat.type !== "private") return;
 
@@ -47,23 +47,18 @@ bot.command("start", async (ctx) => {
     .text("🧭 مسیر های من")
     .row()
     .text("🗺 نقشه سریع من")
-    .row()
-    .text("ثبت من")
     .resized();
 
   await ctx.reply(
     "به Pathweaver خوش اومدی.\n" +
       "من مسیریاب جهان اکلیس‌ام.\n\n" +
-      "برای ثبت‌نام از دکمه‌ی «ثبت من» استفاده کن.\n" +
+      "برای ثبت‌نام، کلمهٔ «ثبت من» را اینجا برام بفرست.\n" +
       "بعد از تأیید ارباب، مسیرها برات باز می‌شن.",
     { reply_markup: kb }
   );
 });
 
-// 🔴 نکته مهم: ترتیب رجیستر فیچرها
-// اول: آنبوردینگ، رجیستریشن، ساخت جهان، سفر
-// آخر: سکیوریتی، که چیزی رو قورت نده قبل از این‌ها
-
+// ترتیب رجیستر فیچرها
 registerOnboardingFeature(bot);
 registerRegistrationFeature(bot);
 registerWorldAdminFeature(bot);
