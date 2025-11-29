@@ -62,30 +62,35 @@ function makeClanSelectKeyboard(actionPrefix: string) {
 
 export function registerWorldAdminFeature(bot: Bot<MyContext>) {
   // دستور /aw (و /worldadmin) در گروه
-  bot.command(["aw", "worldadmin"], async (ctx) => {
-    if (!ctx.chat || !ctx.from) return;
+ bot.command(["aw", "worldadmin"], async (ctx) => {
+  if (!ctx.chat || !ctx.from) return;
 
-    if (ctx.chat.type === "private") {
-      await ctx.reply("این دستور باید در یک گروه اجرا شود.");
-      return;
-    }
+  // فقط در گروه
+  if (ctx.chat.type === "private") {
+    await ctx.reply("این دستور باید داخل یک گروه اجرا شود.");
+    return;
+  }
 
-    const s = ctx.session as any;
-    s.__admin_source_chat_id = ctx.chat.id;
+  const s = ctx.session as any;
 
-    // تلاش برای حذف پیام دستور در گروه
-    try {
-      await ctx.deleteMessage();
-    } catch {
-      // اگر نتونست، ولش کن
-    }
+  // ثبت اطلاعات گروهی که پنل به آن متصل شده
+  s.__admin_source_chat_id = ctx.chat.id;
+  s.__admin_source_chat_title = ctx.chat.title ?? `Chat ${ctx.chat.id}`;
 
-    await sendManagedPm(
-      ctx,
-      "<b>پنل مدیریت جهان اکلیس</b>\n\nگروه فعلی به این پنل متصل شد.",
-      makeAdminMainKeyboard()
-    );
-  });
+  // حذف پیام /aw
+  try {
+    await ctx.deleteMessage();
+  } catch {}
+
+  // باز کردن پنل داخل PV
+  await sendManagedPm(
+    ctx,
+    "<b>پنل مدیریت جهان اکلیس فعال شد.</b>\n\n" +
+      `گروه متصل: <b>${s.__admin_source_chat_title}</b>`,
+    makeAdminMainKeyboard()
+  );
+});
+
 
   // بازگشت به منوی اصلی از هر جا
   bot.callbackQuery("adm_main", async (ctx) => {
