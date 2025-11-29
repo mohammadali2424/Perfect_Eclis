@@ -26,7 +26,7 @@ bot.use(
   })
 );
 
-// تزریق supabase و بقیه سرویس‌ها توی ctx
+// سرویس‌ها
 bot.use((ctx, next) => {
   ctx.services = {
     supabase,
