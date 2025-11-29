@@ -1,24 +1,30 @@
+// src/core/types.ts
+
 import { Context, SessionFlavor } from "grammy";
-import { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-export interface Services {
-  supabase: SupabaseClient;
-  masterId: number;
-}
-
-export interface CharacterState {
-  tg_id: number;
-  char_name: string | null;
-  current_region_id: string | null;
-  current_spot_id: string | null;
-  last_move_at: string | null;
-  travel_ready_at: string | null; // ISO string
-}
-
+// دیتاهایی که توی session نگه می‌داریم
 export interface SessionData {
-  // reserved for future per-user session data
+  // اگر قبلاً چیزهایی داشتی می‌تونی بعداً اضافه کنیم
+  // الان فقط چیزهایی که واقعاً داریم استفاده می‌کنیم:
+
+  // برای پاک کردن آخرین منوی PV (اطلس، منوها و...)
+  ui_last_menu_id?: number;
+
+  // ویزارد ثبت‌نام (onboarding)
+  // null = هنوز چیزی انتخاب نشده
+  reg_step?: "clan" | "name"; // مرحله فعلی: انتخاب خاندان یا نوشتن اسم
+  reg_clan?: string | null;   // نام خاندان انتخاب‌شده
+  reg_name?: string | null;   // نام کاراکتر موقت قبل از ثبت نهایی
 }
 
-export type MyContext = Context & SessionFlavor<SessionData> & {
-  services: Services;
-};
+// سرویسی که توی ctx.services نگه می‌داریم
+export interface Services {
+  supabase: SupabaseClient<any, any, any>;
+}
+
+// کانتکست اصلی ربات
+export type MyContext = Context &
+  SessionFlavor<SessionData> & {
+    services: Services;
+  };
