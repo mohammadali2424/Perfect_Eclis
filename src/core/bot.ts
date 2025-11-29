@@ -1,12 +1,22 @@
 import { Bot, session } from "grammy";
-import { supabase } from "./supabase";
 import { BOT_TOKEN } from "./config";
+import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
 
-// ساخت خود bot
+import { registerSecurityFeature } from "../features/security/guard";
+import { registerTravelFeature } from "../features/world/travel";
+import { registerWorldAdminFeature } from "../features/world/admin-builder";
+import { registerRegistrationFeature } from "../features/registration";
+import { registerOnboardingFeature } from "../features/world/onboarding";
+
+if (!BOT_TOKEN) {
+  throw new Error("BOT_TOKEN is required");
+}
+
+// ساخت بات
 export const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// اینجا: تنظیم سشن
+// سشن: همون فیلدهای قبلی + تبدیلش به user-based
 bot.use(
   session({
     initial: (): SessionData => ({
@@ -14,18 +24,9 @@ bot.use(
       reg_step: undefined,
       reg_clan: null,
       reg_name: null,
-
-      // فیلدهایی که پنل ادمین استفاده می‌کنه
-      __admin_source_chat_id: undefined,
-      __admin_source_chat_title: undefined,
-      __admin_state: undefined,
-      __current_region_id: undefined,
-      __edge_src_spot_id: undefined,
-      __edge_dst_spot_id: undefined,
-      __last_pm_id: undefined,
+      // هیچ فیلد اضافه‌ای اینجا نذار، چون SessionData دقیق تعریف شده
     }),
-
-    // سشن بر اساس یوزر، نه بر اساس چت
+    // سشن بر اساس یوزر، نه چت → گروه و PV برای یک یوزر، سشن مشترک می‌گیرن
     getSessionKey: (ctx) => {
       if (ctx.from) {
         return `u:${ctx.from.id}`;
@@ -35,7 +36,7 @@ bot.use(
   })
 );
 
-// سرویس‌ها (سوپابیس و ... )
+// تزریق سرویس‌ها (مثل supabase) توی ctx
 bot.use((ctx, next) => {
   ctx.services = {
     supabase,
@@ -43,6 +44,7 @@ bot.use((ctx, next) => {
   return next();
 });
 
+// رجیستر کردن فیچرها
 registerSecurityFeature(bot);
 registerOnboardingFeature(bot);
 registerWorldAdminFeature(bot);
