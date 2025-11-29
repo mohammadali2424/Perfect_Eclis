@@ -42,4 +42,3 @@ registerSecurityFeature(bot);        // محافظت: ارباب، لفت از �
 registerOnboardingFeature(bot);      // اطلس، ثبت‌نام، انتخاب خاندان
 registerWorldAdminFeature(bot);      // پنل ساخت Region/Spot/Edge
 registerTravelFeature(bot);          // سفر بین مسیرها، مسیرهای من، نقشه سریع من
-registerRegistrationFeature(bot);    // هرچی توی registration.ts نوشتی
