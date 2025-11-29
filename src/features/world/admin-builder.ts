@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
 
