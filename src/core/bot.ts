@@ -372,14 +372,19 @@ bot.callbackQuery(/^regappr:(\d+):(ok|no)$/, async (ctx) => {
   } catch {}
 });
 
-// ---------- ۲) /regplayer در گروه برای تعیین لوکیشن ----------
+// ---------- ۲) /regplayer در گروه برای تعیین لوکیشن (نسخه دیباگ) ----------
 
 bot.command("regplayer", async (ctx) => {
+  // دیباگ اولیه
+  await ctx.reply("🛰 در حال بررسی شرایط /regplayer ...");
+
+  // ۱) باید داخل گروه باشد
   if (!ctx.chat || ctx.chat.type === "private") {
-    await ctx.reply("این دستور باید داخل گروه روی پیام یک پلیر ریپلای شود.");
+    await ctx.reply("این دستور باید داخل گروه و روی پیام یک پلیر ریپلای شود.");
     return;
   }
 
+  // ۲) حتماً روی پیام کاربر ریپلای شده باشد
   if (!ctx.message?.reply_to_message || !ctx.message.reply_to_message.from) {
     await ctx.reply(
       "برای استفاده از این دستور، روی پیام پلیر موردنظر ریپلای کن و بعد /regplayer را بزن."
@@ -387,7 +392,16 @@ bot.command("regplayer", async (ctx) => {
     return;
   }
 
-  if (!OWNER_ID || ctx.from!.id !== OWNER_ID) {
+  // ۳) فقط ارباب
+  if (!OWNER_ID) {
+    await ctx.reply(
+      "⚠ MASTER_ID در سرور تنظیم نشده.\n" +
+        "ENV متغیر MASTER_ID را روی user_id ارباب بگذار."
+    );
+    return;
+  }
+
+  if (ctx.from!.id !== OWNER_ID) {
     await ctx.reply("فقط اربابم می‌تواند موقعیت پلیرها را تعیین کند، حدت را بدان.");
     return;
   }
@@ -402,7 +416,15 @@ bot.command("regplayer", async (ctx) => {
 
   const chatId = ctx.chat.id;
 
+  await ctx.reply(
+    `🎯 شروع ثبت موقعیت برای:\n<b>${targetName}</b>\n\n` +
+      `🆔 user_id: <code>${targetUserId}</code>\n` +
+      `📍 chat_id این گروه: <code>${chatId}</code>`,
+    { parse_mode: "HTML" }
+  );
+
   try {
+    // ۴) گرفتن پلیر از جدول
     const { data: player, error: plErr } = await supabase
       .from("eclis_players")
       .select("*")
@@ -411,7 +433,10 @@ bot.command("regplayer", async (ctx) => {
 
     if (plErr) {
       console.error("supabase error (regplayer get player):", plErr);
-      await ctx.reply("خطا در بررسی وضعیت پلیر.");
+      await ctx.reply(
+        "❌ خطا در بررسی وضعیت پلیر.\n" +
+          `message: ${plErr.message ?? "نامشخص"}`
+      );
       return;
     }
 
@@ -431,6 +456,7 @@ bot.command("regplayer", async (ctx) => {
       return;
     }
 
+    // ۵) Regionِ این گروه
     const { data: region, error: regErr } = await supabase
       .from("eclis_regions")
       .select("*")
@@ -439,20 +465,24 @@ bot.command("regplayer", async (ctx) => {
 
     if (regErr) {
       console.error("supabase error (get region for regplayer):", regErr);
-      await ctx.reply("خطا در دریافت Region این گروه.");
+      await ctx.reply(
+        "❌ خطا در دریافت Region این گروه.\n" +
+          `message: ${regErr.message ?? "نامشخص"}`
+      );
       return;
     }
 
     if (!region) {
       await ctx.reply(
         "برای این گروه هنوز Region ثبت نشده.\n" +
-          "اول با /aw در این گروه Region را ثبت کن."
+          "در همین گروه یک بار /aw بزن و آن را به یکی از خاندان‌ها وصل کن."
       );
       return;
     }
 
     const regionId = (region as any).id;
 
+    // ۶) Spotهای آن Region
     const { data: spots, error: spotErr } = await supabase
       .from("eclis_spots")
       .select("*")
@@ -461,22 +491,29 @@ bot.command("regplayer", async (ctx) => {
 
     if (spotErr) {
       console.error("supabase error (get spots for regplayer):", spotErr);
-      await ctx.reply("خطا در دریافت Spotهای این Region.");
+      await ctx.reply(
+        "❌ خطا در دریافت Spotهای این Region.\n" +
+          `message: ${spotErr.message ?? "نامشخص"}`
+      );
       return;
     }
 
     if (!spots || (spots as any[]).length === 0) {
       await ctx.reply(
         "برای این Region هنوز Spot تعریف نشده.\n" +
-          "اول از پنل /aw یک Spot برای این گروه بساز."
+          "از پنل /aw یک Spot برای این گروه بساز."
       );
       return;
     }
 
+    // ساکت شدن گروه
     try {
       await ctx.deleteMessage();
-    } catch {}
+    } catch {
+      // مهم نیست اگر نتوانست پاک کند
+    }
 
+    // ۷) فرستادن انتخاب Spot به PV ارباب
     const kb = new InlineKeyboard();
     for (const sp of spots as any[]) {
       const label = sp.name ?? `Spot #${sp.id}`;
@@ -518,7 +555,9 @@ bot.callbackQuery(/^regpl_spot:(\d+):(\d+)$/, async (ctx) => {
 
     if (spotErr || !spot) {
       console.error("supabase error (regpl get spot):", spotErr);
-      await ctx.editMessageText("Spot موردنظر پیدا نشد.");
+      await ctx.editMessageText(
+        "❌ Spot موردنظر پیدا نشد یا خطای دیتابیسی رخ داد."
+      );
       return;
     }
 
@@ -532,7 +571,7 @@ bot.callbackQuery(/^regpl_spot:(\d+):(\d+)$/, async (ctx) => {
 
     if (plErr || !player) {
       console.error("supabase error (regpl get player):", plErr);
-      await ctx.editMessageText("پلیر پیدا نشد.");
+      await ctx.editMessageText("❌ پلیر پیدا نشد یا خطای دیتابیسی رخ داد.");
       return;
     }
 
@@ -546,7 +585,7 @@ bot.callbackQuery(/^regpl_spot:(\d+):(\d+)$/, async (ctx) => {
 
     if (updErr) {
       console.error("supabase error (regpl update player):", updErr);
-      await ctx.editMessageText("خطا در به‌روزرسانی موقعیت پلیر.");
+      await ctx.editMessageText("❌ خطا در به‌روزرسانی موقعیت پلیر.");
       return;
     }
 
