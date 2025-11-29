@@ -1,712 +1,149 @@
-// @ts-nocheck
-import { Bot, InlineKeyboard } from "grammy";
-import { MyContext } from "../../core/types";
+// src/features/world/admin-builder.ts
 
-// فقط یک دیکشنری ساده برای اسم خاندان‌ها
-const CLAN_LABEL: Record<string, string> = {
-  stell: "🪽 Stellarieth",
-  walk: "⚡ Walker",
-  torr: "🔥 Torrentress",
-  necr: "🩸 Necroshade",
-};
+import { Context, InlineKeyboard } from "grammy";
+import { supabase } from "../../core/supabase";
 
-// ارسال پیام مدیریت‌شده در PV (پیام قبلی پاک می‌شود)
-async function sendManagedPm(
-  ctx: MyContext,
-  text: string,
-  keyboard?: InlineKeyboard
-) {
-  if (!ctx.from) return;
-  const s = ctx.session as any;
-  const lastId = s.__last_pm_id as number | undefined;
-
-  if (lastId) {
-    try {
-      await ctx.api.deleteMessage(ctx.from.id, lastId);
-    } catch {
-      // شاید قبلاً پاک شده، مهم نیست
-    }
-  }
-
-  const msg = await ctx.api.sendMessage(ctx.from.id, text, {
-    reply_markup: keyboard,
-    parse_mode: "HTML",
-  });
-
-  s.__last_pm_id = msg.message_id;
+/**
+ * نوع Spot در جهان اکلیس
+ */
+export interface WorldSpot {
+  id: number;
+  title: string;
+  chat_id: string; // آیدی گروه / چت مربوط به این نقطه
+  description: string | null;
 }
 
-// منوی اصلی پنل ادمین
-function makeAdminMainKeyboard() {
+/**
+ * نوع Edge بین دو Spot
+ */
+export interface WorldEdge {
+  id: number;
+  from_spot_id: number;
+  to_spot_id: number;
+  base_seconds: number;
+  can_walk: boolean;
+  can_ride: boolean;
+  can_drive: boolean;
+}
+
+/**
+ * پنل ساده برای نمایش وضعیت جهان یک گروه
+ * (در آینده می‌تونیم این رو به /worldadmin وصل کنیم)
+ */
+export async function showWorldAdminPanel(ctx: Context) {
+  if (!ctx.chat) {
+    return ctx.reply("این دستور فقط داخل یک چت معتبر قابل استفاده است.");
+  }
+
+  const chatId = String(ctx.chat.id);
+
+  // تعداد Spot و Edge مربوط به این چت
+  const { data: spots, error: spotErr } = await supabase
+    .from("world_spots")
+    .select("id")
+    .eq("chat_id", chatId);
+
+  const { data: edges, error: edgeErr } = await supabase
+    .from("world_edges")
+    .select("id")
+    .eq("from_chat_id", chatId);
+
+  const spotsCount = spotErr || !spots ? 0 : spots.length;
+  const edgesCount = edgeErr || !edges ? 0 : edges.length;
+
   const kb = new InlineKeyboard()
-    .text("➕ ثبت Region این گروه", "adm_region_new")
+    .text("➕ ساخت Spot در این چت", "worldadmin:create_spot")
     .row()
-    .text("🏙 ثبت Spot جدید", "adm_spot_new")
-    .row()
-    .text("🧵 ثبت Edge (مسیر)", "adm_edge_new")
-    .row()
-    .text("🧩 حذف / ویرایش (بعداً)", "adm_manage")
-    .row()
-    .text("📜 لیست مناطق بر اساس خاندان", "adm_list_clans");
+    .text("🌐 رفرش وضعیت", "worldadmin:refresh");
 
-  return kb;
+  await ctx.reply(
+    [
+      "🗺️ پنل مدیریت جهان برای این چت:",
+      "",
+      `• تعداد Spot ثبت‌شده در این چت: ${spotsCount}`,
+      `• تعداد Edge که از این چت شروع می‌شوند: ${edgesCount}`,
+      "",
+      "برای ساخت Spot جدید یا رفرش، از دکمه‌های زیر استفاده کن.",
+    ].join("\n"),
+    { reply_markup: kb }
+  );
 }
 
-// کیبورد انتخاب خاندان
-function makeClanSelectKeyboard(actionPrefix: string) {
-  const kb = new InlineKeyboard();
-  for (const [id, label] of Object.entries(CLAN_LABEL)) {
-    kb.text(label, `${actionPrefix}:${id}`).row();
+/**
+ * هندلر کلیک روی دکمه‌های پنل worldadmin
+ * (باید در bot.ts با bot.on('callback_query:data', ...) صدا زده شود)
+ */
+export async function handleWorldAdminCallback(ctx: Context) {
+  const data = ctx.callbackQuery?.data;
+  if (!data) return;
+
+  if (!ctx.chat) {
+    await ctx.answerCallbackQuery({ text: "چت نامعتبر است." });
+    return;
   }
-  return kb;
+
+  const chatId = String(ctx.chat.id);
+
+  if (data === "worldadmin:refresh") {
+    await ctx.answerCallbackQuery();
+    // پیام جدید وضعیت
+    await showWorldAdminPanel(ctx);
+    return;
+  }
+
+  if (data === "worldadmin:create_spot") {
+    await ctx.answerCallbackQuery();
+    await createSpotForChat(ctx, chatId);
+    return;
+  }
 }
 
-export function registerWorldAdminFeature(bot: Bot<MyContext>) {
-  // /aw یا /worldadmin توی گروه → اتصال گروه به پنل
-  bot.command(["aw", "worldadmin"], async (ctx) => {
-    if (!ctx.chat || !ctx.from) return;
-
-    if (ctx.chat.type === "private") {
-      await ctx.reply("این دستور باید داخل یک گروه اجرا شود.");
-      return;
-    }
-
-    const s = ctx.session as any;
-    s.__admin_source_chat_id = ctx.chat.id;
-    s.__admin_source_chat_title = ctx.chat.title ?? `Chat ${ctx.chat.id}`;
-
-    try {
-      await ctx.deleteMessage();
-    } catch {}
-
-    await sendManagedPm(
-      ctx,
-      "<b>پنل مدیریت جهان اکلیس فعال شد.</b>\n\n" +
-        `گروه متصل: <b>${s.__admin_source_chat_title}</b>`,
-      makeAdminMainKeyboard()
-    );
-  });
-
-  // برگشت به منوی اصلی
-  bot.callbackQuery("adm_main", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await sendManagedPm(
-      ctx,
-      "بازگشت به منوی اصلی پنل ادمین:",
-      makeAdminMainKeyboard()
-    );
-  });
-
-  // ➊ ثبت Region برای همین گروه
-  bot.callbackQuery("adm_region_new", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    if (!ctx.from) return;
-
-    const s = ctx.session as any;
-    const chatId = s.__admin_source_chat_id as number | undefined;
-
-    if (!chatId) {
-      await sendManagedPm(
-        ctx,
-        "هیچ گروهی به این پنل متصل نشده.\nدستور <code>/aw</code> را در گروه موردنظر بزن."
-      );
-      return;
-    }
-
-    await sendManagedPm(
-      ctx,
-      "این گروه متعلق به کدام خاندان است؟",
-      makeClanSelectKeyboard("adm_region_clan")
-    );
-  });
-
-  // انتخاب خاندان برای Region
-  bot.callbackQuery(/^adm_region_clan:(.+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    if (!ctx.from) return;
-
-    const clanId = (ctx.match as RegExpMatchArray)[1];
-    const clanLabel = CLAN_LABEL[clanId] ?? clanId;
-
-    const s = ctx.session as any;
-    const chatId = s.__admin_source_chat_id as number | undefined;
-
-    if (!chatId) {
-      await sendManagedPm(
-        ctx,
-        "هیچ گروهی به این پنل متصل نشده.\nدستور <code>/aw</code> را در گروه موردنظر بزن."
-      );
-      return;
-    }
-
-    const supabase = (ctx.services as any).supabase;
-    const title = s.__admin_source_chat_title || "Region";
-
-    try {
-      const { data: existing, error: exErr } = await supabase
-        .from("eclis_regions")
-        .select("*")
-        .eq("chat_id", chatId)
-        .maybeSingle();
-
-      if (exErr) {
-        console.error("supabase error (check region):", exErr);
-      }
-
-      if (existing) {
-        const { error: updErr } = await supabase
-          .from("eclis_regions")
-          .update({ clan: clanId })
-          .eq("id", (existing as any).id);
-
-        if (updErr) {
-          console.error("supabase error (update region clan):", updErr);
-          await sendManagedPm(
-            ctx,
-            "خطا در به‌روزرسانی Region.",
-            makeAdminMainKeyboard()
-          );
-          return;
-        }
-
-        await sendManagedPm(
-          ctx,
-          `خاندان این Region به <b>${clanLabel}</b> تغییر کرد.`,
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      const { error } = await supabase.from("eclis_regions").insert({
-        chat_id: chatId,
-        title,
-        clan: clanId,
-      });
-
-      if (error) {
-        console.error("supabase error (insert region):", error);
-        await sendManagedPm(
-          ctx,
-          "خطا در ثبت Region جدید.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      await sendManagedPm(
-        ctx,
-        `Region این گروه با خاندان <b>${clanLabel}</b> ثبت شد.`,
-        makeAdminMainKeyboard()
-      );
-    } catch (e) {
-      console.error("unexpected error (insert region):", e);
-      await sendManagedPm(
-        ctx,
-        "یک خطای غیرمنتظره رخ داد.",
-        makeAdminMainKeyboard()
-      );
-    }
-  });
-
-  // ➋ ثبت Spot جدید
-  bot.callbackQuery("adm_spot_new", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    if (!ctx.from) return;
-
-    const s = ctx.session as any;
-    const chatId = s.__admin_source_chat_id as number | undefined;
-
-    if (!chatId) {
-      await sendManagedPm(
-        ctx,
-        "هیچ گروهی به این پنل متصل نشده.\nدستور <code>/aw</code> را در گروه موردنظر بزن."
-      );
-      return;
-    }
-
-    const supabase = (ctx.services as any).supabase;
-
-    try {
-      const { data: region, error } = await supabase
-        .from("eclis_regions")
-        .select("*")
-        .eq("chat_id", chatId)
-        .maybeSingle();
-
-      if (error) {
-        console.error("supabase error (get region for spot):", error);
-        await sendManagedPm(
-          ctx,
-          "خطا در دریافت Region این گروه.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      if (!region) {
-        await sendManagedPm(
-          ctx,
-          "برای این گروه هنوز Region ثبت نشده.\nاول Region را ثبت کن.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      s.__admin_state = "create_spot";
-      s.__current_region_id = (region as any).id;
-
-      await sendManagedPm(
-        ctx,
-        "👁‍🗨 نام Spot جدید را بنویس و ارسال کن (مثلاً: «میدان مرکزی»)."
-      );
-    } catch (e) {
-      console.error("unexpected error (adm_spot_new):", e);
-      await sendManagedPm(
-        ctx,
-        "یک خطای غیرمنتظره رخ داد.",
-        makeAdminMainKeyboard()
-      );
-    }
-  });
-
-  // ➌ شروع ساخت Edge
-  bot.callbackQuery("adm_edge_new", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    if (!ctx.from) return;
-
-    const s = ctx.session as any;
-    const chatId = s.__admin_source_chat_id as number | undefined;
-
-    if (!chatId) {
-      await sendManagedPm(
-        ctx,
-        "هیچ گروهی به این پنل متصل نشده.\nدستور <code>/aw</code> را در گروه موردنظر بزن."
-      );
-      return;
-    }
-
-    const supabase = (ctx.services as any).supabase;
-
-    try {
-      const { data: region, error: regErr } = await supabase
-        .from("eclis_regions")
-        .select("*")
-        .eq("chat_id", chatId)
-        .maybeSingle();
-
-      if (regErr) {
-        console.error("supabase error (get region for edge):", regErr);
-        await sendManagedPm(
-          ctx,
-          "خطا در دریافت Region این گروه.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      if (!region) {
-        await sendManagedPm(
-          ctx,
-          "برای این گروه هنوز Region ثبت نشده.\nاول Region را ثبت کن.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      const { data: spots, error: spotErr } = await supabase
-        .from("eclis_spots")
-        .select("*")
-        .eq("region_id", (region as any).id)
-        .order("id", { ascending: true });
-
-      if (spotErr) {
-        console.error("supabase error (get spots for edge):", spotErr);
-        await sendManagedPm(
-          ctx,
-          "خطا در دریافت Spotها.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      if (!spots || (spots as any[]).length < 2) {
-        await sendManagedPm(
-          ctx,
-          "برای ساخت Edge حداقل به دو Spot نیاز داری.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      const kb = new InlineKeyboard();
-      for (const sp of spots as any[]) {
-        kb.text(sp.name ?? `Spot #${sp.id}`, `edge_src:${sp.id}`).row();
-      }
-
-      s.__current_region_id = (region as any).id;
-      s.__admin_state = null;
-      s.__edge_src_spot_id = null;
-      s.__edge_dst_spot_id = null;
-
-      await sendManagedPm(ctx, "🔻 Spot مبدا را انتخاب کن:", kb);
-    } catch (e) {
-      console.error("unexpected error (adm_edge_new):", e);
-      await sendManagedPm(
-        ctx,
-        "یک خطای غیرمنتظره رخ داد.",
-        makeAdminMainKeyboard()
-      );
-    }
-  });
-
-  // انتخاب Spot مبدا
-  bot.callbackQuery(/^edge_src:(\d+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    if (!ctx.from) return;
-
-    const srcId = Number((ctx.match as RegExpMatchArray)[1]);
-    const s = ctx.session as any;
-    const regionId = s.__current_region_id as number | undefined;
-
-    if (!regionId) {
-      await sendManagedPm(
-        ctx,
-        "Region فعلی نامشخص است. دوباره از «ثبت Edge» شروع کن.",
-        makeAdminMainKeyboard()
-      );
-      return;
-    }
-
-    const supabase = (ctx.services as any).supabase;
-
-    try {
-      const { data: spots, error } = await supabase
-        .from("eclis_spots")
-        .select("*")
-        .eq("region_id", regionId)
-        .order("id", { ascending: true });
-
-      if (error) {
-        console.error("supabase error (get spots for dst):", error);
-        await sendManagedPm(
-          ctx,
-          "خطا در دریافت Spotها.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      if (!spots || (spots as any[]).length < 2) {
-        await sendManagedPm(
-          ctx,
-          "Spotهای کافی برای انتخاب مقصد وجود ندارد.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      s.__edge_src_spot_id = srcId;
-
-      const kb = new InlineKeyboard();
-      for (const sp of spots as any[]) {
-        if (sp.id === srcId) continue;
-        kb.text(sp.name ?? `Spot #${sp.id}`, `edge_dst:${sp.id}`).row();
-      }
-
-      await sendManagedPm(ctx, "🔻 حالا Spot مقصد را انتخاب کن:", kb);
-    } catch (e) {
-      console.error("unexpected error (edge_src):", e);
-      await sendManagedPm(
-        ctx,
-        "یک خطای غیرمنتظره رخ داد.",
-        makeAdminMainKeyboard()
-      );
-    }
-  });
-
-  // انتخاب مقصد → وارد مرحله زمان
-  bot.callbackQuery(/^edge_dst:(\d+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    if (!ctx.from) return;
-
-    const dstId = Number((ctx.match as RegExpMatchArray)[1]);
-    const s = ctx.session as any;
-    s.__edge_dst_spot_id = dstId;
-    s.__admin_state = "edge_time";
-
-    await sendManagedPm(
-      ctx,
-      "⏱ زمان سفر بین این دو Spot را (به دقیقه) ارسال کن.\nمثال: <code>10</code>"
-    );
-  });
-
-  // ➍ لیست مناطق بر اساس خاندان
-  bot.callbackQuery("adm_list_clans", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await sendManagedPm(
-      ctx,
-      "خاندانی که می‌خواهی مناطقش را ببینی انتخاب کن:",
-      makeClanSelectKeyboard("adm_list_clan")
-    );
-  });
-
-  bot.callbackQuery(/^adm_list_clan:(.+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    if (!ctx.from) return;
-
-    const clanId = (ctx.match as RegExpMatchArray)[1];
-    const clanLabel = CLAN_LABEL[clanId] ?? clanId;
-    const supabase = (ctx.services as any).supabase;
-
-    try {
-      const { data: regions, error } = await supabase
-        .from("eclis_regions")
-        .select("*")
-        .eq("clan", clanId)
-        .order("id", { ascending: true });
-
-      if (error) {
-        console.error("supabase error (list regions):", error);
-        await sendManagedPm(
-          ctx,
-          "خطا در دریافت لیست مناطق.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      if (!regions || (regions as any[]).length === 0) {
-        await sendManagedPm(
-          ctx,
-          `برای خاندان <b>${clanLabel}</b> هنوز منطقه‌ای ثبت نشده.`,
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      const kb = new InlineKeyboard();
-      for (const r of regions as any[]) {
-        const title = r.title ?? `Region #${r.id}`;
-        kb.text(title, `adm_region_info:${r.id}`).row();
-      }
-
-      await sendManagedPm(
-        ctx,
-        `📜 لیست Regionهای خاندان <b>${clanLabel}</b>:`,
-        kb
-      );
-    } catch (e) {
-      console.error("unexpected error (adm_list_clan):", e);
-      await sendManagedPm(
-        ctx,
-        "یک خطای غیرمنتظره رخ داد.",
-        makeAdminMainKeyboard()
-      );
-    }
-  });
-
-  // اطلاعات یک Region
-  bot.callbackQuery(/^adm_region_info:(\d+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    if (!ctx.from) return;
-
-    const regionId = Number((ctx.match as RegExpMatchArray)[1]);
-    const supabase = (ctx.services as any).supabase;
-
-    try {
-      const { data: region, error: regErr } = await supabase
-        .from("eclis_regions")
-        .select("*")
-        .eq("id", regionId)
-        .maybeSingle();
-
-      if (regErr || !region) {
-        console.error("supabase error (get region info):", regErr);
-        await sendManagedPm(
-          ctx,
-          "خطا در دریافت اطلاعات Region.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      const { data: spots, error: spotErr } = await supabase
-        .from("eclis_spots")
-        .select("*")
-        .eq("region_id", regionId);
-
-      if (spotErr) {
-        console.error("supabase error (get region spots):", spotErr);
-      }
-
-      const { data: edges, error: edgeErr } = await supabase
-        .from("eclis_edges")
-        .select("*")
-        .eq("region_id", regionId);
-
-      if (edgeErr) {
-        console.error("supabase error (get region edges):", edgeErr);
-      }
-
-      const clanLabelRegion =
-        (region as any).clan && CLAN_LABEL[(region as any).clan]
-          ? CLAN_LABEL[(region as any).clan]
-          : (region as any).clan ?? "-";
-
-      const text =
-        `<b>Region:</b> ${(region as any).title ?? `#${(region as any).id}`}\n` +
-        `<b>خاندان:</b> ${clanLabelRegion}\n` +
-        `<b>Spot ها:</b> ${spots ? (spots as any[]).length : 0}\n` +
-        `<b>Edge ها:</b> ${edges ? (edges as any[]).length : 0}\n\n` +
-        "فعلاً فقط نمایش اطلاعاته. بعداً اینجا حذف / ویرایش اضافه می‌کنیم.";
-
-      const kb = new InlineKeyboard()
-        .text("◀️ برگشت", "adm_list_clans")
-        .row()
-        .text("🏠 منوی اصلی", "adm_main");
-
-      await sendManagedPm(ctx, text, kb);
-    } catch (e) {
-      console.error("unexpected error (adm_region_info):", e);
-      await sendManagedPm(
-        ctx,
-        "یک خطای غیرمنتظره رخ داد.",
-        makeAdminMainKeyboard()
-      );
-    }
-  });
-
-  // ورودی متن برای ساخت Spot و Edge time
-  bot.on("message:text", async (ctx) => {
-    if (!ctx.from || ctx.chat.type !== "private") return;
-
-    const s = ctx.session as any;
-    const state = s.__admin_state as string | undefined;
-    if (!state) return;
-
-    const supabase = (ctx.services as any).supabase;
-    const text = ctx.message.text.trim();
-
-    // ساخت Spot
-    if (state === "create_spot") {
-      const regionId = s.__current_region_id as number | undefined;
-      if (!regionId) {
-        s.__admin_state = null;
-        await sendManagedPm(
-          ctx,
-          "Region مشخص نیست. دوباره از گزینه «ثبت Spot جدید» استفاده کن.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      try {
-        const { error } = await supabase.from("eclis_spots").insert({
-          region_id: regionId,
-          name: text,
-        });
-
-        if (error) {
-          console.error("supabase error (insert spot):", error);
-          await sendManagedPm(
-            ctx,
-            "خطا در ثبت Spot جدید.",
-            makeAdminMainKeyboard()
-          );
-          return;
-        }
-
-        s.__admin_state = null;
-
-        await sendManagedPm(
-          ctx,
-          `Spot جدید با نام «<b>${text}</b>» ثبت شد.`,
-          makeAdminMainKeyboard()
-        );
-      } catch (e) {
-        console.error("unexpected error (create_spot):", e);
-        await sendManagedPm(
-          ctx,
-          "یک خطای غیرمنتظره رخ داد.",
-          makeAdminMainKeyboard()
-        );
-      }
-
-      return;
-    }
-
-    // زمان Edge
-    if (state === "edge_time") {
-      const srcId = s.__edge_src_spot_id as number | undefined;
-      const dstId = s.__edge_dst_spot_id as number | undefined;
-      const regionId = s.__current_region_id as number | undefined;
-
-      if (!srcId || !dstId || !regionId) {
-        s.__admin_state = null;
-        await sendManagedPm(
-          ctx,
-          "اطلاعات Edge ناقص است. دوباره از «ثبت Edge» شروع کن.",
-          makeAdminMainKeyboard()
-        );
-        return;
-      }
-
-      const minutes = Number(text);
-      if (!Number.isFinite(minutes) || minutes <= 0) {
-        await sendManagedPm(
-          ctx,
-          "زمان باید یک عدد مثبت (به دقیقه) باشد. دوباره بفرست."
-        );
-        return;
-      }
-
-      try {
-        const { error } = await supabase.from("eclis_edges").insert({
-          region_id: regionId,
-          from_spot_id: srcId,
-          to_spot_id: dstId,
-          base_travel_minutes: minutes,
-        });
-
-        if (error) {
-          console.error("supabase error (insert edge):", error);
-          await sendManagedPm(
-            ctx,
-            "خطا در ثبت Edge جدید.",
-            makeAdminMainKeyboard()
-          );
-          return;
-        }
-
-        s.__admin_state = null;
-        s.__edge_src_spot_id = null;
-        s.__edge_dst_spot_id = null;
-
-        await sendManagedPm(
-          ctx,
-          `Edge بین Spot #${srcId} → Spot #${dstId} با زمان ${minutes} دقیقه ثبت شد.`,
-          makeAdminMainKeyboard()
-        );
-      } catch (e) {
-        console.error("unexpected error (edge_time):", e);
-        await sendManagedPm(
-          ctx,
-          "یک خطای غیرمنتظره رخ داد.",
-          makeAdminMainKeyboard()
-        );
-      }
-
-      return;
-    }
-  });
-
-  // اسکلت حذف / ویرایش
-  bot.callbackQuery("adm_manage", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await sendManagedPm(
-      ctx,
-      "بخش حذف / ویرایش بعداً تکمیل می‌شود.\nفعلاً ساخت Region / Spot / Edge و لیست مناطق فعال است.",
-      makeAdminMainKeyboard()
-    );
-  });
+/**
+ * ساخت یک Spot ساده برای این چت
+ * فعلاً به صورت خودکار یک Spot "ورود به این چت" می‌سازد اگر قبلاً وجود نداشته باشد.
+ */
+async function createSpotForChat(ctx: Context, chatId: string) {
+  // چک کنیم آیا قبلاً Spotی برای این چت ثبت شده یا نه
+  const { data: existing, error } = await supabase
+    .from("world_spots")
+    .select("*")
+    .eq("chat_id", chatId)
+    .limit(1);
+
+  if (error) {
+    await ctx.reply("در هنگام بررسی Spotها خطایی رخ داد.");
+    return;
+  }
+
+  if (existing && existing.length > 0) {
+    await ctx.reply("برای این چت قبلاً حداقل یک Spot ثبت شده است.");
+    return;
+  }
+
+  const title =
+    ctx.chat?.title || ctx.chat?.id?.toString() || "Unnamed Location";
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from("world_spots")
+    .insert({
+      chat_id: chatId,
+      title: title,
+      description: "نقطه‌ی ورود به این چت",
+    })
+    .select()
+    .single();
+
+  if (insertErr || !inserted) {
+    await ctx.reply("در هنگام ساخت Spot خطایی رخ داد.");
+    return;
+  }
+
+  await ctx.reply(
+    [
+      "✅ یک Spot جدید برای این چت ثبت شد.",
+      "",
+      `• شناسه: ${inserted.id}`,
+      `• عنوان: ${inserted.title}`,
+    ].join("\n")
+  );
 }
