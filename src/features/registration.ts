@@ -1,271 +1,519 @@
+// @ts-nocheck
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../core/types";
-import { MASTER_ID } from "../core/config";
+
+const CLAN_LABEL: Record<string, string> = {
+  stell: "🪽 Stellarieth",
+  walk:  "⚡ Walker",
+  torr:  "🔥 Torrentress",
+  necr:  "🩸 Necroshade",
+};
+
+// آیدی ارباب ربات (تو ENV ست کن: BOT_OWNER_ID=123456789)
+const OWNER_ID = Number(process.env.BOT_OWNER_ID || "0");
 
 export function registerRegistrationFeature(bot: Bot<MyContext>) {
-  // شروع ثبت‌نام با دستور یا متن "ثبت من"
-  bot.command("sabteman", async (ctx) => {
-    if (ctx.chat?.type !== "private") {
-      await ctx.reply("برای ثبت‌نام، بیا پی‌وی من و اونجا بنویس: ثبت من");
+  // -------------------------
+  // ۱) ثبت‌نام کاربر در PV
+  // -------------------------
+
+  // /register
+  bot.command("register", async (ctx) => {
+    if (ctx.chat.type !== "private") return;
+    const supabase = (ctx.services as any).supabase;
+    const user = ctx.from!;
+    const userId = user.id;
+
+    const { data: existing, error } = await supabase
+      .from("eclis_players")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("supabase error (check player):", error);
+      await ctx.reply("یک خطای دیتابیسی رخ داد. بعداً دوباره تلاش کن.");
       return;
     }
 
-    ctx.session.reg_step = "name";
-    ctx.session.reg_name = undefined;
-    ctx.session.reg_clan = undefined;
+    if (existing) {
+      const ex: any = existing;
+      if (ex.approved) {
+        await ctx.reply(
+          "تو قبلاً توسط ارباب در اکلیس ثبت و تأیید شدی.\n" +
+            `نام ثبت‌شده: <b>${ex.display_name ?? "نام نامشخص"}</b>`,
+          { parse_mode: "HTML" }
+        );
+      } else {
+        await ctx.reply(
+          "درخواست ثبت‌نامت در انتظار تأیید ارباب است.\n" +
+            "هنوز اجازه استفاده کامل از ربات را نداری."
+        );
+      }
+      return;
+    }
 
-    await ctx.reply("اسمت رو با همون فونتی که برای رول استفاده می‌کنی کپی کن و همینجا بفرست.");
+    const s = ctx.session as any;
+    s.__reg_state = "ask_name";
+    s.__reg_name = null;
+    s.__reg_clan = null;
+
+    await ctx.reply(
+      "به اکلیس خوش آمدی.\n\n" +
+        "اسم رول‌پلی که می‌خوای باهاش زندگی کنی رو برام بفرست.\n" +
+        "مثال: 𝑵𝒐𝒙 • 𝑵𝒆𝒄𝒓𝒐𝒔𝒉𝒂𝒅𝒆"
+    );
   });
 
-  // شنیدن متن «ثبت من» در پی‌وی
+  // «ثبت من» هم مثل /register
   bot.hears("ثبت من", async (ctx) => {
-    if (ctx.chat?.type !== "private") {
-      return; // تو گروه اهمیتی نداره
+    if (ctx.chat.type !== "private") return;
+
+    const supabase = (ctx.services as any).supabase;
+    const user = ctx.from!;
+    const userId = user.id;
+
+    const { data: existing, error } = await supabase
+      .from("eclis_players")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("supabase error (check player via hears):", error);
+      await ctx.reply("یک خطای دیتابیسی رخ داد. بعداً دوباره امتحان کن.");
+      return;
     }
 
-    ctx.session.reg_step = "name";
-    ctx.session.reg_name = undefined;
-    ctx.session.reg_clan = undefined;
+    if (existing) {
+      const ex: any = existing;
+      if (ex.approved) {
+        await ctx.reply(
+          "تو قبلاً توسط ارباب تأیید شدی.\n" +
+            `نام ثبت‌شده: <b>${ex.display_name ?? "نام نامشخص"}</b>`,
+          { parse_mode: "HTML" }
+        );
+      } else {
+        await ctx.reply(
+          "درخواستت در انتظار تأیید ارباب است.\n" +
+            "بعد از تأیید، مسیرها برای تو باز می‌شن."
+        );
+      }
+      return;
+    }
 
-    await ctx.reply("اسمت رو با همون فونتی که برای رول استفاده می‌کنی کپی کن و همینجا بفرست.");
+    const s = ctx.session as any;
+    s.__reg_state = "ask_name";
+    s.__reg_name = null;
+    s.__reg_clan = null;
+
+    await ctx.reply(
+      "به اکلیس خوش اومدی.\n\n" +
+        "اسم رول‌پلی‌ات رو برام بفرست."
+    );
   });
 
-  // ویزارد ثبت‌نام در پی‌وی
-  bot.on("message:text", async (ctx, next) => {
-    if (ctx.chat?.type !== "private") {
-      await next();
-      return;
-    }
+  // هندل کردن مرحله‌های ثبت‌نام (اسم → انتخاب خاندان)
+  bot.on("message:text", async (ctx) => {
+    if (ctx.chat.type !== "private") return;
+    const s = ctx.session as any;
+    const state = s.__reg_state as string | undefined;
+    if (!state) return; // این پیام جزو ثبت‌نام نیست
 
-    const step = ctx.session.reg_step;
-    if (!step) {
-      await next();
-      return;
-    }
-
-    const { supabase } = ctx.services;
     const text = ctx.message.text.trim();
+    const user = ctx.from!;
 
-    // مرحله اول: اسم
-    if (step === "name") {
-      if (!text) {
-        await ctx.reply("اسم نمی‌تونه خالی باشه. دوباره بفرست.");
+    if (state === "ask_name") {
+      if (text.length < 2) {
+        await ctx.reply("اسم باید حداقل ۲ کاراکتر باشد. دوباره بفرست.");
         return;
       }
 
-      ctx.session.reg_name = text;
-      ctx.session.reg_step = "clan";
+      s.__reg_name = text;
+      s.__reg_state = "ask_clan";
+
+      const kb = new InlineKeyboard()
+        .text(CLAN_LABEL.stell, "reg_clan:stell").row()
+        .text(CLAN_LABEL.walk,  "reg_clan:walk").row()
+        .text(CLAN_LABEL.torr,  "reg_clan:torr").row()
+        .text(CLAN_LABEL.necr,  "reg_clan:necr");
 
       await ctx.reply(
-        "حالا اسم خاندانت رو با فونت خاصش بفرست.\n" +
-          "مثال: 𝑺𝒕𝒆𝒍𝒍𝒂𝒓𝒊𝒆𝒕𝒉 یا 𝑻𝒐𝒓𝒓𝒆𝒏𝒕𝒓𝒆𝒔 ..."
-      );
-      return;
-    }
-
-    // مرحله دوم: خاندان
-    if (step === "clan") {
-      if (!text) {
-        await ctx.reply("اسم خاندان نمی‌تونه خالی باشه. دوباره بفرست.");
-        return;
-      }
-
-      const name = ctx.session.reg_name;
-      if (!name) {
-        // سیشن خراب شده
-        ctx.session.reg_step = undefined;
-        await ctx.reply("یه خطای کوچک رخ داد. دوباره «ثبت من» رو بفرست.");
-        return;
-      }
-
-      ctx.session.reg_clan = text;
-
-      // ذخیره تو جدول درخواست‌ها
-      const { data: row, error: insErr } = await supabase
-        .from("pending_registrations")
-        .insert({
-          tg_id: ctx.from!.id,
-          display_name: name,
-          clan_name: text,
-        })
-        .select("id")
-        .single();
-
-      if (insErr || !row) {
-        console.error("pending_registrations insert error:", insErr);
-        ctx.session.reg_step = undefined;
-        await ctx.reply("در ثبت درخواست مشکلی پیش اومد. بعداً دوباره امتحان کن.");
-        return;
-      }
-
-      // پاک کردن مراحل از سیشن
-      ctx.session.reg_step = undefined;
-      ctx.session.reg_name = undefined;
-      ctx.session.reg_clan = undefined;
-
-      await ctx.reply("درخواست ثبت‌نامت ثبت شد. بعد از تأیید ارباب، بهت خبر می‌دم.");
-
-      // پیام برای ارباب
-      const kb = new InlineKeyboard()
-        .text("تایید ✅", `reg:approve:${row.id}`)
-        .text("رد ❌", `reg:deny:${row.id}`);
-
-      const user = ctx.from!;
-      const usernameText = user.username ? `@${user.username}` : "بدون یوزرنیم";
-
-      await ctx.api.sendMessage(
-        MASTER_ID,
-        [
-          "درخواست ثبت‌نام جدید:",
-          `👤 نام: ${name}`,
-          `🏰 خاندان: ${text}`,
-          `🆔 تلگرام: ${usernameText} (id: ${user.id})`,
-        ].join("\n"),
+        "خاندان اولیه‌ات رو انتخاب کن.\n" +
+          "این فقط شروعه؛ سرنوشت ممکنه تو رو جاهای عجیب‌تری ببره.",
         { reply_markup: kb }
       );
-
       return;
     }
 
-    await next();
+    // مرحله‌های بعدی این‌جا با callbackQuery انجام می‌شن، نه با متن
   });
 
-  // تأیید / رد ثبت‌نام توسط ارباب
-  bot.on("callback_query:data", async (ctx, next) => {
-    const data = ctx.callbackQuery.data || "";
-    if (!data.startsWith("reg:")) {
-      await next();
+  // انتخاب خاندان → ساخت پلیر در حالت «منتظر تأیید ارباب»
+  bot.callbackQuery(/^reg_clan:(.+)$/, async (ctx) => {
+    if (ctx.chat.type !== "private") return;
+    await ctx.answerCallbackQuery();
+
+    const s = ctx.session as any;
+    const state = s.__reg_state as string | undefined;
+    const name  = s.__reg_name as string | undefined;
+
+    if (state !== "ask_clan" || !name) {
+      await ctx.editMessageText("ثبت‌نام ناقص است. دوباره «ثبت من» را بفرست.");
+      s.__reg_state = null;
+      s.__reg_name  = null;
+      s.__reg_clan  = null;
       return;
     }
 
-    if (ctx.from?.id !== MASTER_ID) {
-      await ctx.answerCallbackQuery({
-        text: "فقط اربابم میتونه ثبت‌نام‌ها رو تأیید کنه، حدتو بدون.",
-        show_alert: true,
+    const clanId    = (ctx.match as RegExpMatchArray)[1];
+    const clanLabel = CLAN_LABEL[clanId] ?? clanId;
+    const supabase  = (ctx.services as any).supabase;
+    const user      = ctx.from!;
+    const userId    = user.id;
+
+    try {
+      const { error } = await supabase.from("eclis_players").insert({
+        user_id: userId,
+        username: user.username ?? null,
+        display_name: name,
+        clan: clanId,
+        approved: false,
+        current_region_id: null,
+        current_spot_id:   null,
       });
-      return;
-    }
 
-    const { supabase } = ctx.services;
-
-    if (data.startsWith("reg:approve:")) {
-      const idStr = data.split(":")[2];
-      const id = Number(idStr);
-      await ctx.answerCallbackQuery();
-
-      const { data: row, error } = await supabase
-        .from("pending_registrations")
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (error || !row) {
-        console.error("pending_registrations fetch error:", error);
-        await ctx.reply("درخواست پیدا نشد (شاید قبلاً رسیدگی شده).");
+      if (error) {
+        console.error("supabase error (insert player):", error);
+        await ctx.editMessageText("خطا در ذخیره اطلاعات. بعداً دوباره تلاش کن.");
         return;
       }
 
-      const tgId: number = row.tg_id;
-      const displayName: string = row.display_name;
-      const clanName: string = row.clan_name;
+      s.__reg_state = null;
+      s.__reg_name  = null;
+      s.__reg_clan  = null;
 
-      // ببین کاراکترش وجود داره یا نه
-      const { data: char, error: charErr } = await supabase
-        .from("characters")
-        .select("*")
-        .eq("tg_id", tgId)
-        .maybeSingle();
+      await ctx.editMessageText(
+        `درخواست ثبت‌نامت ثبت شد.\n\n` +
+          `نام: <b>${name}</b>\n` +
+          `خاندان: <b>${clanLabel}</b>\n\n` +
+          "حالا باید ارباب تو را تأیید کند تا به دنیای اکلیس دسترسی کامل بگیری.",
+        { parse_mode: "HTML" }
+      );
 
-      if (charErr) {
-        console.error("characters select error:", charErr);
-      }
+      // پیام به ارباب
+      if (OWNER_ID) {
+        const kb = new InlineKeyboard()
+          .text("✅ تأیید", `regappr:${userId}:ok`).row()
+          .text("❌ رد",  `regappr:${userId}:no`);
 
-      if (char) {
-        // آپدیت
-        const { error: updErr } = await supabase
-          .from("characters")
-          .update({
-            char_name: displayName,
-            clan_name: clanName,
-          })
-          .eq("tg_id", tgId);
-
-        if (updErr) {
-          console.error("characters update error:", updErr);
-          await ctx.reply("خطا در به‌روزرسانی کاراکتر.");
-          return;
-        }
-      } else {
-        // اینسرت
-        const { error: insCharErr } = await supabase.from("characters").insert({
-          tg_id: tgId,
-          char_name: displayName,
-          clan_name: clanName,
-          current_region_id: null,
-          current_spot_id: null,
-          last_move_at: null,
-          travel_ready_at: null,
-          pending_region_id: null,
-          pending_spot_id: null,
-        });
-
-        if (insCharErr) {
-          console.error("characters insert error:", insCharErr);
-          await ctx.reply("خطا در ساخت رکورد کاراکتر.");
-          return;
-        }
-      }
-
-      // پاک کردن درخواست
-      await supabase.from("pending_registrations").delete().eq("id", id);
-
-      await ctx.reply(`درخواست ثبت‌نام تأیید شد و کاراکتر «${displayName}» ثبت شد.`);
-
-      // خبر دادن به خود شخص
-      try {
         await ctx.api.sendMessage(
-          tgId,
-          `درخواست ثبت‌نامت تأیید شد.\nنام: ${displayName}\nخاندان: ${clanName}`
+          OWNER_ID,
+          `درخواست جدید ثبت‌نام در اکلیس:\n\n` +
+            `👤 نام: <b>${name}</b>\n` +
+            `🏷 یوزرنیم: @${user.username ?? "بدون یوزرنیم"}\n` +
+            `🩸 خاندان: <b>${clanLabel}</b>\n` +
+            `🆔 user_id: <code>${userId}</code>`,
+          { parse_mode: "HTML", reply_markup: kb }
         );
-      } catch {
-        // اگر پی‌وی باز نکرده بود، هیچی
       }
+    } catch (e) {
+      console.error("unexpected error (reg_clan):", e);
+      await ctx.editMessageText("یک خطای غیرمنتظره رخ داد.");
+    }
+  });
 
+  // ارباب: تأیید / رد درخواست ثبت‌نام
+  bot.callbackQuery(/^regappr:(\d+):(ok|no)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!OWNER_ID || ctx.from!.id !== OWNER_ID) {
+      await ctx.reply("فقط اربابم حق این کار را دارد، حدت را بدان.");
       return;
     }
 
-    if (data.startsWith("reg:deny:")) {
-      const idStr = data.split(":")[2];
-      const id = Number(idStr);
-      await ctx.answerCallbackQuery();
+    const supabase = (ctx.services as any).supabase;
+    const match    = ctx.match as RegExpMatchArray;
+    const userId   = Number(match[1]);
+    const decision = match[2]; // ok | no
 
-      const { data: row, error } = await supabase
-        .from("pending_registrations")
-        .select("*")
-        .eq("id", id)
-        .single();
+    const { data: player, error } = await supabase
+      .from("eclis_players")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
 
-      if (error || !row) {
-        await ctx.reply("درخواست پیدا نشد (شاید قبلاً رسیدگی شده).");
+    if (error || !player) {
+      console.error("supabase error (regappr get player):", error);
+      try {
+        await ctx.editMessageText("پلیر پیدا نشد یا خطای دیتابیسی رخ داد.");
+      } catch {}
+      return;
+    }
+
+    if (decision === "no") {
+      // می‌تونی به‌جای delete، فقط approved=false بگذاری. من پاک می‌کنم.
+      const { error: delErr } = await supabase
+        .from("eclis_players")
+        .delete()
+        .eq("user_id", userId);
+
+      if (delErr) {
+        console.error("supabase error (regappr delete):", delErr);
+        await ctx.editMessageText("خطا در رد کردن درخواست.");
         return;
       }
 
-      const tgId: number = row.tg_id;
-
-      await supabase.from("pending_registrations").delete().eq("id", id);
-
-      await ctx.reply("درخواست ثبت‌نام رد شد.");
+      await ctx.editMessageText(
+        `درخواست این پلیر رد شد و از لیست پاک شد.\n\n` +
+          `نام: ${(player as any).display_name ?? "-"}`
+      );
 
       try {
         await ctx.api.sendMessage(
-          tgId,
-          "درخواست ثبت‌نامت توسط ارباب رد شد. اگر فکر می‌کنی اشتباه شده، با مدیریت صحبت کن."
+          userId,
+          "درخواست ورود تو به اکلیس توسط ارباب رد شد."
         );
       } catch {}
 
       return;
     }
 
-    await next();
+    // ok → تأیید
+    const { error: updErr } = await supabase
+      .from("eclis_players")
+      .update({ approved: true })
+      .eq("user_id", userId);
+
+    if (updErr) {
+      console.error("supabase error (regappr approve):", updErr);
+      await ctx.editMessageText("خطا در تأیید پلیر.");
+      return;
+    }
+
+    await ctx.editMessageText(
+      `پلیر تأیید شد.\n\n` +
+        `نام: <b>${(player as any).display_name ?? "-"}</b>`,
+      { parse_mode: "HTML" }
+    );
+
+    try {
+      await ctx.api.sendMessage(
+        userId,
+        "درخواستت توسط ارباب تأیید شد.\n" +
+          "حالا باید ارباب موقعیت شروع تو را در جهان مشخص کند."
+      );
+    } catch {}
+  });
+
+  // ------------------------------------------
+  // ۲) ثبت موقعیت با /regplayer (در گروه‌ها)
+  // ------------------------------------------
+
+  bot.command("regplayer", async (ctx) => {
+    if (!ctx.chat || ctx.chat.type === "private") {
+      await ctx.reply("این دستور باید داخل گروه روی پیام یک پلیر ریپلای شود.");
+      return;
+    }
+
+    if (!ctx.message?.reply_to_message || !ctx.message.reply_to_message.from) {
+      await ctx.reply(
+        "برای استفاده از این دستور، روی پیام پلیر موردنظر ریپلای کن و بعد /regplayer را بزن."
+      );
+      return;
+    }
+
+    // فقط ارباب اجازه دارد این کار را بکند
+    if (!OWNER_ID || ctx.from!.id !== OWNER_ID) {
+      await ctx.reply("فقط اربابم می‌تواند موقعیت پلیرها را تعیین کند، حدت را بدان.");
+      return;
+    }
+
+    const supabase    = (ctx.services as any).supabase;
+    const targetUser  = ctx.message.reply_to_message.from;
+    const targetUserId = targetUser.id;
+    const targetName   =
+      targetUser.first_name +
+      (targetUser.last_name ? " " + targetUser.last_name : "");
+
+    const chatId = ctx.chat.id;
+
+    try {
+      // چک کنیم پلیر در eclis_players هست و approved=true
+      const { data: player, error: plErr } = await supabase
+        .from("eclis_players")
+        .select("*")
+        .eq("user_id", targetUserId)
+        .maybeSingle();
+
+      if (plErr) {
+        console.error("supabase error (regplayer get player):", plErr);
+        await ctx.reply("خطا در بررسی وضعیت پلیر.");
+        return;
+      }
+
+      if (!player) {
+        await ctx.reply(
+          "این کاربر هنوز در اکلیس ثبت‌نام نکرده.\n" +
+            "باید اول در PV ربات «ثبت من» را بفرستد."
+        );
+        return;
+      }
+
+      if (!(player as any).approved) {
+        await ctx.reply(
+          "این کاربر هنوز توسط ارباب تأیید نشده.\n" +
+            "بعد از تأیید، می‌توانی موقعیتش را ثبت کنی."
+        );
+        return;
+      }
+
+      // پیدا کردن Region این گروه
+      const { data: region, error: regErr } = await supabase
+        .from("eclis_regions")
+        .select("*")
+        .eq("chat_id", chatId)
+        .maybeSingle();
+
+      if (regErr) {
+        console.error("supabase error (get region for regplayer):", regErr);
+        await ctx.reply("خطا در دریافت Region این گروه.");
+        return;
+      }
+
+      if (!region) {
+        await ctx.reply(
+          "برای این گروه هنوز Region ثبت نشده.\n" +
+            "اول با /aw در این گروه Region را ثبت کن."
+        );
+        return;
+      }
+
+      const regionId = (region as any).id;
+
+      // Spotهای این Region
+      const { data: spots, error: spotErr } = await supabase
+        .from("eclis_spots")
+        .select("*")
+        .eq("region_id", regionId)
+        .order("id", { ascending: true });
+
+      if (spotErr) {
+        console.error("supabase error (get spots for regplayer):", spotErr);
+        await ctx.reply("خطا در دریافت Spotهای این Region.");
+        return;
+      }
+
+      if (!spots || (spots as any[]).length === 0) {
+        await ctx.reply(
+          "برای این Region هنوز Spot تعریف نشده.\n" +
+            "اول از پنل /aw یک Spot برای این گروه بساز."
+        );
+        return;
+      }
+
+      // پیام دستور در گروه را پاک کنیم
+      try {
+        await ctx.deleteMessage();
+      } catch {}
+
+      // برای ارباب در PV لیست Spotها را بفرستیم
+      const kb = new InlineKeyboard();
+      for (const sp of spots as any[]) {
+        const label = sp.name ?? `Spot #${sp.id}`;
+        kb.text(label, `regpl_spot:${sp.id}:${targetUserId}`).row();
+      }
+
+      await ctx.api.sendMessage(
+        OWNER_ID,
+        `در حال ثبت موقعیت برای پلیر:\n<b>${targetName}</b>\n\n` +
+          "Spot شروع او را انتخاب کن:",
+        { parse_mode: "HTML", reply_markup: kb }
+      );
+    } catch (e) {
+      console.error("unexpected error (/regplayer):", e);
+      await ctx.reply("یک خطای غیرمنتظره رخ داد.");
+    }
+  });
+
+  // انتخاب Spot برای پلیر (PV ارباب)
+  bot.callbackQuery(/^regpl_spot:(\d+):(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+
+    if (!OWNER_ID || ctx.from!.id !== OWNER_ID) {
+      await ctx.reply("فقط اربابم حق این کار را دارد، حدت را بدان.");
+      return;
+    }
+
+    const supabase      = (ctx.services as any).supabase;
+    const match         = ctx.match as RegExpMatchArray;
+    const spotId        = Number(match[1]);
+    const playerUserId  = Number(match[2]);
+
+    try {
+      const { data: spot, error: spotErr } = await supabase
+        .from("eclis_spots")
+        .select("*")
+        .eq("id", spotId)
+        .maybeSingle();
+
+      if (spotErr || !spot) {
+        console.error("supabase error (regpl get spot):", spotErr);
+        await ctx.editMessageText("Spot موردنظر پیدا نشد.");
+        return;
+      }
+
+      const regionId = (spot as any).region_id;
+
+      const { data: player, error: plErr } = await supabase
+        .from("eclis_players")
+        .select("*")
+        .eq("user_id", playerUserId)
+        .maybeSingle();
+
+      if (plErr || !player) {
+        console.error("supabase error (regpl get player):", plErr);
+        await ctx.editMessageText("پلیر پیدا نشد.");
+        return;
+      }
+
+      const { error: updErr } = await supabase
+        .from("eclis_players")
+        .update({
+          current_region_id: regionId,
+          current_spot_id:   spotId,
+        })
+        .eq("user_id", playerUserId);
+
+      if (updErr) {
+        console.error("supabase error (regpl update player):", updErr);
+        await ctx.editMessageText("خطا در به‌روزرسانی موقعیت پلیر.");
+        return;
+      }
+
+      const spotName = (spot as any).name ?? `Spot #${spotId}`;
+
+      await ctx.editMessageText(
+        `پلیر با موفقیت در جهان اکلیس مستقر شد.\n\n` +
+          `مکان فعلی: <b>${spotName}</b> (Spot #${spotId})`,
+        { parse_mode: "HTML" }
+      );
+
+      // پیام به خود پلیر
+      try {
+        await ctx.api.sendMessage(
+          playerUserId,
+          "ارباب موقعیتت را در جهان اکلیس تعیین کرد.\n" +
+            `مکان فعلی تو: <b>${spotName}</b>`,
+          { parse_mode: "HTML" }
+        );
+      } catch {
+        // اگر هنوز /start نداده باشد، این fail می‌شود؛ مشکلی نیست
+      }
+    } catch (e) {
+      console.error("unexpected error (regpl_spot):", e);
+      try {
+        await ctx.editMessageText("یک خطای غیرمنتظره رخ داد.");
+      } catch {}
+    }
   });
 }
