@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../core/types";
+import { MASTER_ID } from "../core/config";
 
 const CLAN_LABEL: Record<string, string> = {
   stell: "🪽 Stellarieth",
@@ -9,17 +10,17 @@ const CLAN_LABEL: Record<string, string> = {
   necr:  "🩸 Necroshade",
 };
 
-// آیدی ارباب ربات (تو ENV ست کن: BOT_OWNER_ID=123456789)
-const OWNER_ID = Number(process.env.BOT_OWNER_ID || "0");
+const OWNER_ID = MASTER_ID; // ارباب ربات
 
 export function registerRegistrationFeature(bot: Bot<MyContext>) {
   // -------------------------
-  // ۱) ثبت‌نام کاربر در PV
+  // ۱) ثبت‌نام در PV (ثبت من / register)
   // -------------------------
 
   // /register
   bot.command("register", async (ctx) => {
     if (ctx.chat.type !== "private") return;
+
     const supabase = (ctx.services as any).supabase;
     const user = ctx.from!;
     const userId = user.id;
@@ -46,8 +47,8 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
         );
       } else {
         await ctx.reply(
-          "درخواست ثبت‌نامت در انتظار تأیید ارباب است.\n" +
-            "هنوز اجازه استفاده کامل از ربات را نداری."
+          "درخواست ثبت‌نامت ثبت شده و در انتظار تأیید ارباب است.\n" +
+            "فعلاً دسترسی کامل به ربات نداری."
         );
       }
       return;
@@ -59,13 +60,13 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     s.__reg_clan = null;
 
     await ctx.reply(
-      "به اکلیس خوش آمدی.\n\n" +
+      "به اکلیس خوش اومدی.\n\n" +
         "اسم رول‌پلی که می‌خوای باهاش زندگی کنی رو برام بفرست.\n" +
         "مثال: 𝑵𝒐𝒙 • 𝑵𝒆𝒄𝒓𝒐𝒔𝒉𝒂𝒅𝒆"
     );
   });
 
-  // «ثبت من» هم مثل /register
+  // «ثبت من» مثل /register رفتار می‌کند
   bot.hears("ثبت من", async (ctx) => {
     if (ctx.chat.type !== "private") return;
 
@@ -95,7 +96,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
         );
       } else {
         await ctx.reply(
-          "درخواستت در انتظار تأیید ارباب است.\n" +
+          "درخواستت ثبت شده و در انتظار تأیید ارباب است.\n" +
             "بعد از تأیید، مسیرها برای تو باز می‌شن."
         );
       }
@@ -113,15 +114,14 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     );
   });
 
-  // هندل کردن مرحله‌های ثبت‌نام (اسم → انتخاب خاندان)
+  // هندل مرحله‌های ثبت‌نام در PV (اسم → انتخاب خاندان)
   bot.on("message:text", async (ctx) => {
     if (ctx.chat.type !== "private") return;
     const s = ctx.session as any;
     const state = s.__reg_state as string | undefined;
-    if (!state) return; // این پیام جزو ثبت‌نام نیست
+    if (!state) return; // ربطی به ثبت‌نام نداره
 
     const text = ctx.message.text.trim();
-    const user = ctx.from!;
 
     if (state === "ask_name") {
       if (text.length < 2) {
@@ -140,37 +140,38 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
 
       await ctx.reply(
         "خاندان اولیه‌ات رو انتخاب کن.\n" +
-          "این فقط شروعه؛ سرنوشت ممکنه تو رو جاهای عجیب‌تری ببره.",
+          "این فقط شروعه؛ سرنوشت ممکنه بعداً تو رو جابه‌جا کنه.",
         { reply_markup: kb }
       );
       return;
     }
 
-    // مرحله‌های بعدی این‌جا با callbackQuery انجام می‌شن، نه با متن
+    // بقیه مرحله‌ها با دکمه انجام می‌شه
   });
 
-  // انتخاب خاندان → ساخت پلیر در حالت «منتظر تأیید ارباب»
+  // انتخاب خاندان → ساخت رکورد پلیر با approved=false + پیام به ارباب
   bot.callbackQuery(/^reg_clan:(.+)$/, async (ctx) => {
     if (ctx.chat.type !== "private") return;
     await ctx.answerCallbackQuery();
 
     const s = ctx.session as any;
     const state = s.__reg_state as string | undefined;
-    const name  = s.__reg_name as string | undefined;
+    const name = s.__reg_name as string | undefined;
 
     if (state !== "ask_clan" || !name) {
       await ctx.editMessageText("ثبت‌نام ناقص است. دوباره «ثبت من» را بفرست.");
       s.__reg_state = null;
-      s.__reg_name  = null;
-      s.__reg_clan  = null;
+      s.__reg_name = null;
+      s.__reg_clan = null;
       return;
     }
 
-    const clanId    = (ctx.match as RegExpMatchArray)[1];
+    const clanId = (ctx.match as RegExpMatchArray)[1];
     const clanLabel = CLAN_LABEL[clanId] ?? clanId;
-    const supabase  = (ctx.services as any).supabase;
-    const user      = ctx.from!;
-    const userId    = user.id;
+
+    const supabase = (ctx.services as any).supabase;
+    const user = ctx.from!;
+    const userId = user.id;
 
     try {
       const { error } = await supabase.from("eclis_players").insert({
@@ -180,7 +181,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
         clan: clanId,
         approved: false,
         current_region_id: null,
-        current_spot_id:   null,
+        current_spot_id: null,
       });
 
       if (error) {
@@ -190,22 +191,22 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
       }
 
       s.__reg_state = null;
-      s.__reg_name  = null;
-      s.__reg_clan  = null;
+      s.__reg_name = null;
+      s.__reg_clan = null;
 
       await ctx.editMessageText(
         `درخواست ثبت‌نامت ثبت شد.\n\n` +
           `نام: <b>${name}</b>\n` +
           `خاندان: <b>${clanLabel}</b>\n\n` +
-          "حالا باید ارباب تو را تأیید کند تا به دنیای اکلیس دسترسی کامل بگیری.",
+          "حالا ارباب باید تو را تأیید کند.",
         { parse_mode: "HTML" }
       );
 
-      // پیام به ارباب
+      // پیام به ارباب با دکمه‌ی تأیید / رد
       if (OWNER_ID) {
         const kb = new InlineKeyboard()
           .text("✅ تأیید", `regappr:${userId}:ok`).row()
-          .text("❌ رد",  `regappr:${userId}:no`);
+          .text("❌ رد", `regappr:${userId}:no`);
 
         await ctx.api.sendMessage(
           OWNER_ID,
@@ -223,17 +224,18 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     }
   });
 
-  // ارباب: تأیید / رد درخواست ثبت‌نام
+  // ارباب: تأیید / رد ثبت‌نام
   bot.callbackQuery(/^regappr:(\d+):(ok|no)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
+
     if (!OWNER_ID || ctx.from!.id !== OWNER_ID) {
       await ctx.reply("فقط اربابم حق این کار را دارد، حدت را بدان.");
       return;
     }
 
     const supabase = (ctx.services as any).supabase;
-    const match    = ctx.match as RegExpMatchArray;
-    const userId   = Number(match[1]);
+    const match = ctx.match as RegExpMatchArray;
+    const userId = Number(match[1]);
     const decision = match[2]; // ok | no
 
     const { data: player, error } = await supabase
@@ -251,7 +253,6 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     }
 
     if (decision === "no") {
-      // می‌تونی به‌جای delete، فقط approved=false بگذاری. من پاک می‌کنم.
       const { error: delErr } = await supabase
         .from("eclis_players")
         .delete()
@@ -278,7 +279,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    // ok → تأیید
+    // تأیید
     const { error: updErr } = await supabase
       .from("eclis_players")
       .update({ approved: true })
@@ -300,13 +301,13 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
       await ctx.api.sendMessage(
         userId,
         "درخواستت توسط ارباب تأیید شد.\n" +
-          "حالا باید ارباب موقعیت شروع تو را در جهان مشخص کند."
+          "حالا ارباب می‌تواند مکان شروع تو را در جهان مشخص کند."
       );
     } catch {}
   });
 
   // ------------------------------------------
-  // ۲) ثبت موقعیت با /regplayer (در گروه‌ها)
+  // ۲) /regplayer در گروه برای تعیین لوکیشن
   // ------------------------------------------
 
   bot.command("regplayer", async (ctx) => {
@@ -322,23 +323,23 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    // فقط ارباب اجازه دارد این کار را بکند
     if (!OWNER_ID || ctx.from!.id !== OWNER_ID) {
       await ctx.reply("فقط اربابم می‌تواند موقعیت پلیرها را تعیین کند، حدت را بدان.");
       return;
     }
 
-    const supabase    = (ctx.services as any).supabase;
-    const targetUser  = ctx.message.reply_to_message.from;
+    const supabase = (ctx.services as any).supabase;
+
+    const targetUser = ctx.message.reply_to_message.from;
     const targetUserId = targetUser.id;
-    const targetName   =
+    const targetName =
       targetUser.first_name +
       (targetUser.last_name ? " " + targetUser.last_name : "");
 
     const chatId = ctx.chat.id;
 
     try {
-      // چک کنیم پلیر در eclis_players هست و approved=true
+      // باید قبلاً ثبت‌نام کرده باشد و approved=true
       const { data: player, error: plErr } = await supabase
         .from("eclis_players")
         .select("*")
@@ -367,7 +368,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
         return;
       }
 
-      // پیدا کردن Region این گروه
+      // Region مربوط به این گروه
       const { data: region, error: regErr } = await supabase
         .from("eclis_regions")
         .select("*")
@@ -411,12 +412,11 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
         return;
       }
 
-      // پیام دستور در گروه را پاک کنیم
+      // پیام دستور رو توی گروه پاک کنیم که تمیز بمونه
       try {
         await ctx.deleteMessage();
       } catch {}
 
-      // برای ارباب در PV لیست Spotها را بفرستیم
       const kb = new InlineKeyboard();
       for (const sp of spots as any[]) {
         const label = sp.name ?? `Spot #${sp.id}`;
@@ -435,7 +435,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     }
   });
 
-  // انتخاب Spot برای پلیر (PV ارباب)
+  // انتخاب Spot برای پلیر (در PV ارباب)
   bot.callbackQuery(/^regpl_spot:(\d+):(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
 
@@ -444,10 +444,10 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    const supabase      = (ctx.services as any).supabase;
-    const match         = ctx.match as RegExpMatchArray;
-    const spotId        = Number(match[1]);
-    const playerUserId  = Number(match[2]);
+    const supabase = (ctx.services as any).supabase;
+    const match = ctx.match as RegExpMatchArray;
+    const spotId = Number(match[1]);
+    const playerUserId = Number(match[2]);
 
     try {
       const { data: spot, error: spotErr } = await supabase
@@ -480,7 +480,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
         .from("eclis_players")
         .update({
           current_region_id: regionId,
-          current_spot_id:   spotId,
+          current_spot_id: spotId,
         })
         .eq("user_id", playerUserId);
 
@@ -498,7 +498,6 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
         { parse_mode: "HTML" }
       );
 
-      // پیام به خود پلیر
       try {
         await ctx.api.sendMessage(
           playerUserId,
@@ -507,7 +506,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
           { parse_mode: "HTML" }
         );
       } catch {
-        // اگر هنوز /start نداده باشد، این fail می‌شود؛ مشکلی نیست
+        // اگه هنوز /start نداده، این fail می‌شه؛ مهم نیست
       }
     } catch (e) {
       console.error("unexpected error (regpl_spot):", e);
@@ -517,4 +516,3 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     }
   });
 }
-
