@@ -1,12 +1,13 @@
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
 
-const CLANS: { id: string; label: string }[] = [
-  { id: "stell", label: "🪽 Stellarieth" },
-  { id: "walk", label: "⚡ Walker" },
-  { id: "torr", label: "🔥 Torrentress" },
-  { id: "necr", label: "🩸 Necroshade" },
-];
+// فقط یک دیکشنری ساده برای اسم خاندان‌ها
+const CLAN_LABEL: Record<string, string> = {
+  stell: "🪽 Stellarieth",
+  walk: "⚡ Walker",
+  torr: "🔥 Torrentress",
+  necr: "🩸 Necroshade",
+};
 
 // ارسال پیام مدیریت‌شده در PV (پیام قبلی پاک می‌شود)
 async function sendManagedPm(
@@ -22,7 +23,7 @@ async function sendManagedPm(
     try {
       await ctx.api.deleteMessage(ctx.from.id, lastId);
     } catch {
-      // ممکنه قبلاً پاک شده باشه، مهم نیست
+      // شاید قبلاً پاک شده، مهم نیست
     }
   }
 
@@ -53,8 +54,8 @@ function makeAdminMainKeyboard() {
 // کیبورد انتخاب خاندان
 function makeClanSelectKeyboard(actionPrefix: string) {
   const kb = new InlineKeyboard();
-  for (const c of CLANS) {
-    kb.text(c.label, `${actionPrefix}:${c.id}`).row();
+  for (const [id, label] of Object.entries(CLAN_LABEL)) {
+    kb.text(label, `${actionPrefix}:${id}`).row();
   }
   return kb;
 }
@@ -119,8 +120,9 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
 
-    const clanId = ctx.match![1];
-    const clan = CLANS.find((c) => c.id === clanId);
+    const clanId = (ctx.match as RegExpMatchArray)[1];
+    const clanLabel = CLAN_LABEL[clanId] ?? clanId;
+
     const s = ctx.session as any;
     const chatId = s.__admin_source_chat_id as number | undefined;
 
@@ -164,7 +166,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
 
         await sendManagedPm(
           ctx,
-          `خاندان این Region به <b>${clan?.label ?? clanId}</b> تغییر کرد.`,
+          `خاندان این Region به <b>${clanLabel}</b> تغییر کرد.`,
           makeAdminMainKeyboard()
         );
         return;
@@ -188,7 +190,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
 
       await sendManagedPm(
         ctx,
-        `Region این گروه با خاندان <b>${clan?.label ?? clanId}</b> ثبت شد.`,
+        `Region این گروه با خاندان <b>${clanLabel}</b> ثبت شد.`,
         makeAdminMainKeyboard()
       );
     } catch (e) {
@@ -201,7 +203,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     }
   });
 
-  // ➋ ثبت Spot جدید برای Region همین گروه
+  // ➋ ثبت Spot جدید
   bot.callbackQuery("adm_spot_new", async (ctx) => {
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
@@ -262,7 +264,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     }
   });
 
-  // ➌ شروع ساخت Edge (انتخاب مبدا)
+  // ➌ شروع ساخت Edge
   bot.callbackQuery("adm_edge_new", async (ctx) => {
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
@@ -357,7 +359,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
 
-    const srcId = Number(ctx.match![1]);
+    const srcId = Number((ctx.match as RegExpMatchArray)[1]);
     const s = ctx.session as any;
     const regionId = s.__current_region_id as number | undefined;
 
@@ -417,12 +419,12 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     }
   });
 
-  // انتخاب Spot مقصد → مرحله زمان سفر
+  // انتخاب مقصد → وارد مرحله زمان
   bot.callbackQuery(/^edge_dst:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
 
-    const dstId = Number(ctx.match![1]);
+    const dstId = Number((ctx.match as RegExpMatchArray)[1]);
     const s = ctx.session as any;
     s.__edge_dst_spot_id = dstId;
     s.__admin_state = "edge_time";
@@ -447,8 +449,8 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
 
-    const clanId = ctx.match![1];
-    const clan = CLANS.find((c) => c.id === clanId);
+    const clanId = (ctx.match as RegExpMatchArray)[1];
+    const clanLabel = CLAN_LABEL[clanId] ?? clanId;
     const supabase = (ctx.services as any).supabase;
 
     try {
@@ -471,7 +473,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       if (!regions || regions.length === 0) {
         await sendManagedPm(
           ctx,
-          `برای خاندان <b>${clan?.label ?? clanId}</b> هنوز منطقه‌ای ثبت نشده.`,
+          `برای خاندان <b>${clanLabel}</b> هنوز منطقه‌ای ثبت نشده.`,
           makeAdminMainKeyboard()
         );
         return;
@@ -485,7 +487,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
 
       await sendManagedPm(
         ctx,
-        `📜 لیست Regionهای خاندان <b>${clan?.label ?? clanId}</b>:`,
+        `📜 لیست Regionهای خاندان <b>${clanLabel}</b>:`,
         kb
       );
     } catch (e) {
@@ -498,12 +500,12 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     }
   });
 
-  // نمایش خلاصه اطلاعات Region
+  // اطلاعات یک Region
   bot.callbackQuery(/^adm_region_info:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
 
-    const regionId = Number(ctx.match![1]);
+    const regionId = Number((ctx.match as RegExpMatchArray)[1]);
     const supabase = (ctx.services as any).supabase;
 
     try {
@@ -541,11 +543,12 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
         console.error("supabase error (get region edges):", edgeErr);
       }
 
-      const clan = CLANS.find((c) => c.id === region.clan);
+      const clanLabel =
+        (region.clan && CLAN_LABEL[region.clan]) ?? region.clan ?? "-";
 
       const text =
         `<b>Region:</b> ${region.title ?? `#${region.id}`}\n` +
-        `<b>خاندان:</b> ${clan?.label ?? region.clan ?? "-"}\n` +
+        `<b>خاندان:</b> ${clanLabel}\n` +
         `<b>Spot ها:</b> ${spots ? spots.length : 0}\n` +
         `<b>Edge ها:</b> ${edges ? edges.length : 0}\n\n` +
         "فعلاً فقط نمایش اطلاعاته. بعداً اینجا حذف / ویرایش اضافه می‌کنیم.";
@@ -566,7 +569,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     }
   });
 
-  // ورودی متن در PV برای ساخت Spot و زمان Edge
+  // ورودی متن برای ساخت Spot و Edge time
   bot.on("message:text", async (ctx) => {
     if (!ctx.from || ctx.chat.type !== "private") return;
 
@@ -690,7 +693,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
     }
   });
 
-  // اسکلت مدیریت حذف/ویرایش
+  // اسکلت حذف / ویرایش
   bot.callbackQuery("adm_manage", async (ctx) => {
     await ctx.answerCallbackQuery();
     await sendManagedPm(
