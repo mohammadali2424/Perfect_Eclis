@@ -2,7 +2,6 @@ import { Bot, session } from "grammy";
 import { BOT_TOKEN } from "./config";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
-
 import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
