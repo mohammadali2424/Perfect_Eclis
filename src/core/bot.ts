@@ -1,5 +1,6 @@
 import { Bot, session } from "grammy";
 import { BOT_TOKEN } from "./config";
+import { registerRegistrationFeature } from "../features/players/registration";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
 
