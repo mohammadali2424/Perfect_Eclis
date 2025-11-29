@@ -1,6 +1,7 @@
 import { Bot, session } from "grammy";
 import { BOT_TOKEN, MASTER_ID } from "./config";
 import { supabase } from "./supabase";
+import { registerOnboardingFeature } from "../features/world/onboarding";
 import { MyContext, SessionData, Services } from "./types";
 import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
@@ -29,6 +30,7 @@ bot.use(session({ initial: initialSession }));
 
 registerSecurityFeature(bot);
 registerTravelFeature(bot);
+registerOnboardingFeature(bot);
 registerWorldAdminFeature(bot);
 
 bot.command("start", async (ctx) => {
