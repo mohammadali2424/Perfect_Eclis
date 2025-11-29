@@ -3,7 +3,6 @@ import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../core/types";
 import { MASTER_ID } from "../core/config";
 
-// اسم خوشگل خاندان‌ها
 const CLAN_LABEL: Record<string, string> = {
   stell: "🪽 Stellarieth",
   walk:  "⚡ Walker",
@@ -11,15 +10,19 @@ const CLAN_LABEL: Record<string, string> = {
   necr:  "🩸 Necroshade",
 };
 
-// ارباب ربات
+// ارباب ربات – از config
 const OWNER_ID = MASTER_ID;
 
 export function registerRegistrationFeature(bot: Bot<MyContext>) {
+  // دستور تست: ببینیم این فایل اصلا لود شده یا نه
+  bot.command("debug_reg", async (ctx) => {
+    await ctx.reply("✅ ماژول ثبت‌نام (registration.ts) فعاله.");
+  });
+
   // -------------------------
   // ۱) ثبت‌نام توی PV (ثبت من / register)
   // -------------------------
 
-  // /register
   bot.command("register", async (ctx) => {
     if (ctx.chat.type !== "private") return;
 
@@ -68,7 +71,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     );
   });
 
-  // «ثبت من» = شورتکات برای /register
+  // «ثبت من» توی PV
   bot.hears("ثبت من", async (ctx) => {
     if (ctx.chat.type !== "private") return;
 
@@ -116,7 +119,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     );
   });
 
-  // مرحله‌های ثبت‌نام در PV (اسم → انتخاب خاندان)
+  // هندل مرحله‌ی اسم → انتخاب خاندان
   bot.on("message:text", async (ctx) => {
     if (ctx.chat.type !== "private") return;
     const s = ctx.session as any;
@@ -149,7 +152,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     }
   });
 
-  // انتخاب خاندان → ساخت پلیر + پیام به ارباب
+  // انتخاب خاندان
   bot.callbackQuery(/^reg_clan:(.+)$/, async (ctx) => {
     if (ctx.chat.type !== "private") return;
     await ctx.answerCallbackQuery();
