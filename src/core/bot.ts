@@ -1,6 +1,5 @@
 import { Bot, session } from "grammy";
 import { BOT_TOKEN } from "./config";
-import { registerRegistrationFeature } from "../features/players/registration";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
 
@@ -49,6 +48,5 @@ bot.use((ctx, next) => {
 registerSecurityFeature(bot);
 registerOnboardingFeature(bot);
 registerWorldAdminFeature(bot);
-  registerRegistrationFeature(bot);
 registerTravelFeature(bot);
 registerRegistrationFeature(bot);
