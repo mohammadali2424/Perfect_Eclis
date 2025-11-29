@@ -1,67 +1,46 @@
 import { Bot, session } from "grammy";
-import { createClient } from "@supabase/supabase-js";
-import type { MyContext, SessionData } from "./types";
+import { BOT_TOKEN } from "./config";
+import { supabase } from "./supabase";
+import { MyContext, SessionData, Services } from "./types";
 
-import { registerWorldAdminFeature } from "../features/world/admin-builder";
+import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
+import { registerWorldAdminFeature } from "../features/world/admin-builder";
+import { registerRegistrationFeature } from "../features/registration";
 import { registerOnboardingFeature } from "../features/world/onboarding";
 
-/**
- * کمک‌کننده برای گرفتن env اجباری
- * اگر ست نشده باشد، هم در runtime خطا می‌ده و هم برای TS روشن است که خروجی string است.
- */
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Environment variable ${name} is required but not set`);
-  }
-  return value;
+if (!BOT_TOKEN) {
+  throw new Error("BOT_TOKEN is required");
 }
 
-// توکن بات از env
-const BOT_TOKEN: string = requireEnv("BOT_TOKEN");
+// خود بات اصلی
+export const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// تنظیم Supabase از env
-const SUPABASE_URL: string = requireEnv("SUPABASE_URL");
-const SUPABASE_KEY: string = (() => {
-  const direct = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
-  if (!direct) {
-    throw new Error(
-      "Either SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY must be set in env"
-    );
-  }
-  return direct;
-})();
+// سشن گرامی (حافظه موقت برای هر یوزر)
+bot.use(
+  session({
+    initial: (): SessionData => ({
+      // هر چیزی توی SessionData هست می‌تونه اینجا مقدار اولیه بگیره
+      ui_last_menu_id: undefined,
+      reg_step: undefined,
+      reg_clan: null,
+      reg_name: null,
+      // اگر توی SessionData چیزای دیگه‌ای هم داری، گرامی خودش بعداً اضافه می‌کنه
+    }),
+  })
+);
 
-// کلاینت Supabase – حالا هر دو پارامتر به‌طور قطعی string هستند
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// تزریق سرویس‌ها (مثل supabase) داخل ctx.services
+bot.use((ctx, next) => {
+  ctx.services = {
+    supabase,
+  } as Services;
+  return next();
+});
 
-// سشن اولیه همیشه یه آبجکت خالیه
-function initialSession(): SessionData {
-  return {};
-}
-
-// ساخت بات با تایپ MyContext
-export function createBot(): Bot<MyContext> {
-  const bot = new Bot<MyContext>(BOT_TOKEN);
-
-  // سشن in-memory
-  bot.use(
-    session({
-      initial: initialSession,
-    })
-  );
-
-  // تزریق supabase به ctx.services
-  bot.use(async (ctx, next) => {
-    (ctx as any).services = { supabase };
-    await next();
-  });
-
-  // ثبت فیچرهای جهان اکلیس
-  registerOnboardingFeature(bot);
-  registerWorldAdminFeature(bot);
-  registerTravelFeature(bot);
-
-  return bot;
-}
+// فیچرهای مختلف ربات
+registerSecurityFeature(bot);        // محافظت: ارباب، لفت از گروه‌های اضافی و…
+registerOnboardingFeature(bot);      // اطلس، ثبت‌نام، انتخاب خاندان
+registerWorldAdminFeature(bot);      // پنل ساخت Region/Spot/Edge
+registerTravelFeature(bot);          // سفر بین مسیرها، مسیرهای من، نقشه سریع من
+registerRegistrationFeature(bot);    // هرچی توی registration.ts نوشتی
