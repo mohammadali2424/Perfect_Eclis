@@ -1,20 +1,12 @@
 import { Bot, session } from "grammy";
-import { BOT_TOKEN } from "./config";
 import { supabase } from "./supabase";
+import { BOT_TOKEN } from "./config";
 import { MyContext, SessionData, Services } from "./types";
 
-import { registerSecurityFeature } from "../features/security/guard";
-import { registerTravelFeature } from "../features/world/travel";
-import { registerWorldAdminFeature } from "../features/world/admin-builder";
-import { registerRegistrationFeature } from "../features/registration";
-import { registerOnboardingFeature } from "../features/world/onboarding";
-
-if (!BOT_TOKEN) {
-  throw new Error("BOT_TOKEN is required");
-}
-
+// ساخت خود bot
 export const bot = new Bot<MyContext>(BOT_TOKEN);
 
+// اینجا: تنظیم سشن
 bot.use(
   session({
     initial: (): SessionData => ({
@@ -23,12 +15,17 @@ bot.use(
       reg_clan: null,
       reg_name: null,
 
-      // برای پنل ادمین
+      // فیلدهایی که پنل ادمین استفاده می‌کنه
       __admin_source_chat_id: undefined,
       __admin_source_chat_title: undefined,
+      __admin_state: undefined,
+      __current_region_id: undefined,
+      __edge_src_spot_id: undefined,
+      __edge_dst_spot_id: undefined,
+      __last_pm_id: undefined,
     }),
 
-    // سشن برای هر یوزر، نه برای هر چت
+    // سشن بر اساس یوزر، نه بر اساس چت
     getSessionKey: (ctx) => {
       if (ctx.from) {
         return `u:${ctx.from.id}`;
@@ -38,7 +35,7 @@ bot.use(
   })
 );
 
-// سرویس‌ها
+// سرویس‌ها (سوپابیس و ... )
 bot.use((ctx, next) => {
   ctx.services = {
     supabase,
