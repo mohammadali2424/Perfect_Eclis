@@ -1,6 +1,7 @@
 import { Bot, session } from "grammy";
 import { BOT_TOKEN } from "./config";
 import { supabase } from "./supabase";
+import type { SessionData } from "../types/session";
 import { MyContext, SessionData, Services } from "./types";
 
 import { registerSecurityFeature } from "../features/security/guard";
@@ -22,7 +23,19 @@ bot.use(
       reg_step: undefined,
       reg_clan: null,
       reg_name: null,
+
+      // برای پنل ادمین
+      __admin_source_chat_id: undefined,
+      __admin_source_chat_title: undefined,
     }),
+
+    // سشن برای هر یوزر، نه برای هر چت
+    getSessionKey: (ctx) => {
+      if (ctx.from) {
+        return `u:${ctx.from.id}`;
+      }
+      return undefined;
+    },
   })
 );
 
