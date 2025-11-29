@@ -3,6 +3,7 @@ import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../core/types";
 import { MASTER_ID } from "../core/config";
 
+// اسم خوشگل خاندان‌ها
 const CLAN_LABEL: Record<string, string> = {
   stell: "🪽 Stellarieth",
   walk:  "⚡ Walker",
@@ -10,11 +11,12 @@ const CLAN_LABEL: Record<string, string> = {
   necr:  "🩸 Necroshade",
 };
 
-const OWNER_ID = MASTER_ID; // ارباب ربات
+// ارباب ربات
+const OWNER_ID = MASTER_ID;
 
 export function registerRegistrationFeature(bot: Bot<MyContext>) {
   // -------------------------
-  // ۱) ثبت‌نام در PV (ثبت من / register)
+  // ۱) ثبت‌نام توی PV (ثبت من / register)
   // -------------------------
 
   // /register
@@ -66,7 +68,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     );
   });
 
-  // «ثبت من» مثل /register رفتار می‌کند
+  // «ثبت من» = شورتکات برای /register
   bot.hears("ثبت من", async (ctx) => {
     if (ctx.chat.type !== "private") return;
 
@@ -114,12 +116,12 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     );
   });
 
-  // هندل مرحله‌های ثبت‌نام در PV (اسم → انتخاب خاندان)
+  // مرحله‌های ثبت‌نام در PV (اسم → انتخاب خاندان)
   bot.on("message:text", async (ctx) => {
     if (ctx.chat.type !== "private") return;
     const s = ctx.session as any;
     const state = s.__reg_state as string | undefined;
-    if (!state) return; // ربطی به ثبت‌نام نداره
+    if (!state) return;
 
     const text = ctx.message.text.trim();
 
@@ -145,11 +147,9 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
       );
       return;
     }
-
-    // بقیه مرحله‌ها با دکمه انجام می‌شه
   });
 
-  // انتخاب خاندان → ساخت رکورد پلیر با approved=false + پیام به ارباب
+  // انتخاب خاندان → ساخت پلیر + پیام به ارباب
   bot.callbackQuery(/^reg_clan:(.+)$/, async (ctx) => {
     if (ctx.chat.type !== "private") return;
     await ctx.answerCallbackQuery();
@@ -202,7 +202,6 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
         { parse_mode: "HTML" }
       );
 
-      // پیام به ارباب با دکمه‌ی تأیید / رد
       if (OWNER_ID) {
         const kb = new InlineKeyboard()
           .text("✅ تأیید", `regappr:${userId}:ok`).row()
@@ -224,7 +223,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     }
   });
 
-  // ارباب: تأیید / رد ثبت‌نام
+  // ارباب: تأیید / رد
   bot.callbackQuery(/^regappr:(\d+):(ok|no)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
 
@@ -236,7 +235,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     const supabase = (ctx.services as any).supabase;
     const match = ctx.match as RegExpMatchArray;
     const userId = Number(match[1]);
-    const decision = match[2]; // ok | no
+    const decision = match[2];
 
     const { data: player, error } = await supabase
       .from("eclis_players")
@@ -279,7 +278,6 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    // تأیید
     const { error: updErr } = await supabase
       .from("eclis_players")
       .update({ approved: true })
@@ -306,9 +304,9 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     } catch {}
   });
 
-  // ------------------------------------------
-  // ۲) /regplayer در گروه برای تعیین لوکیشن
-  // ------------------------------------------
+  // -----------------------------
+  // ۲) /regplayer در گروه (لوکیشن)
+  // -----------------------------
 
   bot.command("regplayer", async (ctx) => {
     if (!ctx.chat || ctx.chat.type === "private") {
@@ -339,7 +337,6 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     const chatId = ctx.chat.id;
 
     try {
-      // باید قبلاً ثبت‌نام کرده باشد و approved=true
       const { data: player, error: plErr } = await supabase
         .from("eclis_players")
         .select("*")
@@ -368,7 +365,6 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
         return;
       }
 
-      // Region مربوط به این گروه
       const { data: region, error: regErr } = await supabase
         .from("eclis_regions")
         .select("*")
@@ -391,7 +387,6 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
 
       const regionId = (region as any).id;
 
-      // Spotهای این Region
       const { data: spots, error: spotErr } = await supabase
         .from("eclis_spots")
         .select("*")
@@ -412,7 +407,6 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
         return;
       }
 
-      // پیام دستور رو توی گروه پاک کنیم که تمیز بمونه
       try {
         await ctx.deleteMessage();
       } catch {}
@@ -435,7 +429,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     }
   });
 
-  // انتخاب Spot برای پلیر (در PV ارباب)
+  // انتخاب Spot در PV ارباب
   bot.callbackQuery(/^regpl_spot:(\d+):(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
 
@@ -505,9 +499,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
             `مکان فعلی تو: <b>${spotName}</b>`,
           { parse_mode: "HTML" }
         );
-      } catch {
-        // اگه هنوز /start نداده، این fail می‌شه؛ مهم نیست
-      }
+      } catch {}
     } catch (e) {
       console.error("unexpected error (regpl_spot):", e);
       try {
