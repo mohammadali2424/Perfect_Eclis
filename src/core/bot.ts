@@ -13,10 +13,8 @@ if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is required");
 }
 
-// ربات اصلی
 export const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// حافظهٔ سشن گِرَمی
 bot.use(
   session({
     initial: (): SessionData => ({
@@ -28,7 +26,7 @@ bot.use(
   })
 );
 
-// تزریق سرویس‌ها داخل ctx.services
+// تزریق supabase و بقیه سرویس‌ها توی ctx
 bot.use((ctx, next) => {
   ctx.services = {
     supabase,
@@ -36,7 +34,6 @@ bot.use((ctx, next) => {
   return next();
 });
 
-// رجیستر کردن فیچرها
 registerSecurityFeature(bot);
 registerOnboardingFeature(bot);
 registerWorldAdminFeature(bot);
