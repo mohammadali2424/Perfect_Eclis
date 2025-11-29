@@ -1,9 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
-import { SUPABASE_URL, SUPABASE_KEY } from "./config";
+import { config } from "./config";
 
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error("[config] Supabase URL or KEY missing. Set SUPABASE_URL and SUPABASE_KEY env vars.");
-  throw new Error("Supabase URL or KEY missing");
-}
-
-export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+export const supabase = createClient(
+  config.SUPABASE_URL,
+  config.SUPABASE_KEY
+);
