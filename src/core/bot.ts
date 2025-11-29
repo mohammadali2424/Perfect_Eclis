@@ -6,7 +6,6 @@ import { MyContext, SessionData, Services } from "./types";
 import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
-import { registerRegistrationFeature } from "../features/registration";
 import { registerOnboardingFeature } from "../features/world/onboarding";
 
 if (!BOT_TOKEN) {
