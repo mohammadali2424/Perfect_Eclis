@@ -49,5 +49,6 @@ bot.use((ctx, next) => {
 registerSecurityFeature(bot);
 registerOnboardingFeature(bot);
 registerWorldAdminFeature(bot);
+  registerRegistrationFeature(bot);
 registerTravelFeature(bot);
 registerRegistrationFeature(bot);
