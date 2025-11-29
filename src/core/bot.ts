@@ -1,7 +1,8 @@
-import { Bot, session } from "grammy";
-import { BOT_TOKEN } from "./config";
+import { Bot, session, Keyboard } from "grammy";
+import { BOT_TOKEN, MASTER_ID } from "./config";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
+
 import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
@@ -12,35 +13,46 @@ if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is required");
 }
 
-// ساخت بات
+// خود بات
 export const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// سشن: همون فیلدهای قبلی + تبدیلش به user-based
+// فقط برای اینکه MASTER_ID بی‌استفاده نمونده باشه و اگه noUnusedLocals روشنه گیر نده
+console.log("[config] MASTER_ID =", MASTER_ID);
+
+// سشن گرامی
 bot.use(
   session({
-    initial: (): SessionData => ({
-      ui_last_menu_id: undefined,
-      reg_step: undefined,
-      reg_clan: null,
-      reg_name: null,
-      // هیچ فیلد اضافه‌ای اینجا نذار، چون SessionData دقیق تعریف شده
-    }),
-    // سشن بر اساس یوزر، نه چت → گروه و PV برای یک یوزر، سشن مشترک می‌گیرن
-    getSessionKey: (ctx) => {
-      if (ctx.from) {
-        return `u:${ctx.from.id}`;
-      }
-      return undefined;
+    initial(): SessionData {
+      // هیچ فیلد اضافه‌ای اینجا تعریف نمی‌کنیم
+      // توی فیچرها از `ctx.session as any` استفاده می‌کنیم
+      return {} as SessionData;
     },
   })
 );
 
-// تزریق سرویس‌ها (مثل supabase) توی ctx
+// تزریق supabase توی ctx.services
 bot.use((ctx, next) => {
   ctx.services = {
     supabase,
   } as Services;
   return next();
+});
+
+// /start ساده + کیبورد اصلی PV
+bot.command("start", async (ctx) => {
+  const kb = new Keyboard()
+    .text("🧭 مسیر های من")
+    .row()
+    .text("🗺 نقشه سریع من")
+    .resized();
+
+  await ctx.reply(
+    "به Pathweaver خوش اومدی.\n" +
+      "من مسیریاب جهان اکلیس‌ام.\n\n" +
+      "از دکمه‌ی «🧭 مسیر های من» برای دیدن راه‌هایی که جلو پات بازه استفاده کن.\n" +
+      "قبلش باید ارباب تو رو ثبت و تأیید کنه.",
+    { reply_markup: kb }
+  );
 });
 
 // رجیستر کردن فیچرها
