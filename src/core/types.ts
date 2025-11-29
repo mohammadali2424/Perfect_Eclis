@@ -1,36 +1,18 @@
-import { Context, SessionFlavor } from "grammy";
-import type { SupabaseClient } from "@supabase/supabase-js";
+export interface Character {
+  id: number;
+  user_id: number;
+  name: string;
+  clan: string;
+  current_region_id: number | null;
+  current_spot_id: number | null;
 
-// هر چیزی که میخوایم تو سشن نگه داریم
-export interface SessionData {
-  // حالت ویزارد ادمین
-  mode?: "create_spot" | "edge_time";
+  movement_mode: "walk" | "ride" | "drive" | "transport";
 
-  // برای ساخت Spot
-  pending_region_id?: number;
+  current_vehicle_instance_id?: number | null;
+  current_mount_instance_id?: number | null;
 
-  // برای ساخت Edge
-  edge_from_spot_id?: number;
-  edge_to_spot_id?: number;
+  picking_target?: number | null;
+  picked_by?: number | null;
 
-  // برای آخرین پیام مدیریتی در پی‌وی (پنل worldadmin)
-  __last_pm_id?: number;
-
-  // برای منوهای فانتزی PV (اطلس، ثبت‌نام و...)
-  ui_last_menu_id?: number;
-
-  // ویزارد ثبت‌نام (onboarding)
-  reg_step?: "clan" | "name";
-  reg_clan?: string | null;
-  reg_name?: string | null;
+  carry_capacity: number;
 }
-
-// سرویس‌هایی که به ctx تزریق می‌کنیم
-export interface Services {
-  supabase: SupabaseClient;
-}
-
-// کانتکست اصلی بات
-export type MyContext = Context & SessionFlavor<SessionData> & {
-  services: Services;
-};
