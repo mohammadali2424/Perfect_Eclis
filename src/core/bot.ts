@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Bot, session } from "grammy";
+import { Bot, session, Keyboard } from "grammy";
 import { BOT_TOKEN } from "./config";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
@@ -39,9 +39,33 @@ bot.command("debug_alive", async (ctx) => {
   await ctx.reply("✅ Core bot زنده است و bot.ts درست لود شده.");
 });
 
-// رجیستر همه فیچرها (ترتیب مهمه: سیکیوریتی / آن‌بوردینگ / رجیستریشن / ادمین / سفر)
-registerSecurityFeature(bot);
+// /start ساده برای PV که منو رو ست کند
+bot.command("start", async (ctx) => {
+  if (ctx.chat.type !== "private") return;
+
+  const kb = new Keyboard()
+    .text("🧭 مسیر های من")
+    .row()
+    .text("🗺 نقشه سریع من")
+    .row()
+    .text("ثبت من")
+    .resized();
+
+  await ctx.reply(
+    "به Pathweaver خوش اومدی.\n" +
+      "من مسیریاب جهان اکلیس‌ام.\n\n" +
+      "برای ثبت‌نام از دکمه‌ی «ثبت من» استفاده کن.\n" +
+      "بعد از تأیید ارباب، مسیرها برات باز می‌شن.",
+    { reply_markup: kb }
+  );
+});
+
+// 🔴 نکته مهم: ترتیب رجیستر فیچرها
+// اول: آنبوردینگ، رجیستریشن، ساخت جهان، سفر
+// آخر: سکیوریتی، که چیزی رو قورت نده قبل از این‌ها
+
 registerOnboardingFeature(bot);
 registerRegistrationFeature(bot);
 registerWorldAdminFeature(bot);
 registerTravelFeature(bot);
+registerSecurityFeature(bot);
