@@ -1,22 +1,26 @@
 {
   "name": "eclis-pathweaver-bot",
-  "version": "0.2.0",
-  "description": "Pathweaver travel bot for the Eclis RP world",
+  "version": "0.3.0",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "nodemon src/index.ts",
+    "build": "tsc"
   },
   "dependencies": {
-    "grammy": "^1.24.0",
-    "@supabase/supabase-js": "^2.48.0",
-    "express": "^4.19.2"
+    "grammy": "^1.20.0",
+    "@grammyjs/conversations": "^1.2.0",
+    "@grammyjs/menu": "^1.2.0",
+    "@grammyjs/transformer-throttler": "^1.2.0",
+    "express": "^4.19.2",
+    "dotenv": "^16.4.1",
+    "node-fetch": "^3.3.2",
+    "@supabase/supabase-js": "^2.39.6"
   },
   "devDependencies": {
-    "@types/node": "^22.7.4",
-    "@types/express": "^4.17.21",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.3.3",
+    "nodemon": "^3.1.0",
+    "@types/node": "^20.11.30",
+    "@types/express": "^4.17.21"
   }
 }
