@@ -70,15 +70,7 @@ bot.command("start", async (ctx) => {
 });
 
 // =========================
-//  رجیستر فیچرهای دیگه
-// =========================
-registerSecurityFeature(bot);
-registerOnboardingFeature(bot);
-registerWorldAdminFeature(bot);
-registerTravelFeature(bot);
-
-// =========================
-//  ثبت‌نام و لوکیشن پلیرها (مستقیم اینجا)
+//  ثبت‌نام و لوکیشن پلیرها (داخلی، قبل از بقیه فیچرها)
 // =========================
 
 const CLAN_LABEL: Record<string, string> = {
@@ -581,3 +573,11 @@ bot.callbackQuery(/^regpl_spot:(\d+):(\d+)$/, async (ctx) => {
     } catch {}
   }
 });
+
+// =========================
+//  رجیستر بقیه فیچرها (بعد از رجیستریشن)
+// =========================
+registerSecurityFeature(bot);
+registerOnboardingFeature(bot);
+registerWorldAdminFeature(bot);
+registerTravelFeature(bot);
