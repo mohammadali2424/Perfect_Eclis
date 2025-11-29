@@ -16,7 +16,7 @@ if (!BOT_TOKEN) {
 // خود بات
 export const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// فقط برای اینکه TypeScript غر نزنه که MASTER_ID استفاده نشده
+// فقط برای اینکه مطمئن باشیم مقدار گرفته
 console.log("[config] MASTER_ID =", MASTER_ID);
 
 // سشن
@@ -28,7 +28,7 @@ bot.use(
   })
 );
 
-// تزریق سرویس‌ها (supabase و …)
+// سرویس‌ها (supabase و غیره)
 bot.use((ctx, next) => {
   ctx.services = {
     supabase,
@@ -36,7 +36,12 @@ bot.use((ctx, next) => {
   return next();
 });
 
-// /start و کیبورد PV
+// یک دستور تست برای اینکه ببینیم این فایل واقعا لود شده
+bot.command("debug_alive", async (ctx) => {
+  await ctx.reply("✅ Core bot زنده است و bot.ts جدید لود شده.");
+});
+
+// /start و کیبورد اصلی توی PV
 bot.command("start", async (ctx) => {
   if (ctx.chat.type !== "private") return;
 
@@ -44,18 +49,20 @@ bot.command("start", async (ctx) => {
     .text("🧭 مسیر های من")
     .row()
     .text("🗺 نقشه سریع من")
+    .row()
+    .text("ثبت من")
     .resized();
 
   await ctx.reply(
     "به Pathweaver خوش اومدی.\n" +
       "من مسیریاب جهان اکلیس‌ام.\n\n" +
-      "برای دیدن مسیر های فعالت از دکمه‌ی «🧭 مسیر های من» استفاده کن.\n" +
-      "اول باید توسط ارباب تأیید و روی نقشه مستقر بشی.",
+      "برای ثبت‌نام از دکمه‌ی «ثبت من» استفاده کن.\n" +
+      "بعد از تأیید ارباب، مسیرها برات باز می‌شن.",
     { reply_markup: kb }
   );
 });
 
-// اینجا تمام فیچرها رو واقعا وصل می‌کنیم
+// اینجا تمام فیچرها رو به بات وصل می‌کنیم
 registerSecurityFeature(bot);
 registerOnboardingFeature(bot);
 registerWorldAdminFeature(bot);
