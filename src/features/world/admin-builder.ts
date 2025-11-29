@@ -89,7 +89,11 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
   // برگشت به منوی اصلی
   bot.callbackQuery("adm_main", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await sendManagedPm(ctx, "بازگشت به منوی اصلی پنل ادمین:", makeAdminMainKeyboard());
+    await sendManagedPm(
+      ctx,
+      "بازگشت به منوی اصلی پنل ادمین:",
+      makeAdminMainKeyboard()
+    );
   });
 
   // ➊ ثبت Region برای همین گروه
@@ -152,7 +156,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
         const { error: updErr } = await supabase
           .from("eclis_regions")
           .update({ clan: clanId })
-          .eq("id", existing.id);
+          .eq("id", (existing as any).id);
 
         if (updErr) {
           console.error("supabase error (update region clan):", updErr);
@@ -248,7 +252,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       }
 
       s.__admin_state = "create_spot";
-      s.__current_region_id = region.id;
+      s.__current_region_id = (region as any).id;
 
       await sendManagedPm(
         ctx,
@@ -311,7 +315,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       const { data: spots, error: spotErr } = await supabase
         .from("eclis_spots")
         .select("*")
-        .eq("region_id", region.id)
+        .eq("region_id", (region as any).id)
         .order("id", { ascending: true });
 
       if (spotErr) {
@@ -324,7 +328,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
         return;
       }
 
-      if (!spots || spots.length < 2) {
+      if (!spots || (spots as any[]).length < 2) {
         await sendManagedPm(
           ctx,
           "برای ساخت Edge حداقل به دو Spot نیاز داری.",
@@ -334,11 +338,11 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       }
 
       const kb = new InlineKeyboard();
-      for (const sp of spots) {
+      for (const sp of spots as any[]) {
         kb.text(sp.name ?? `Spot #${sp.id}`, `edge_src:${sp.id}`).row();
       }
 
-      s.__current_region_id = region.id;
+      s.__current_region_id = (region as any).id;
       s.__admin_state = null;
       s.__edge_src_spot_id = null;
       s.__edge_dst_spot_id = null;
@@ -391,7 +395,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
         return;
       }
 
-      if (!spots || spots.length < 2) {
+      if (!spots || (spots as any[]).length < 2) {
         await sendManagedPm(
           ctx,
           "Spotهای کافی برای انتخاب مقصد وجود ندارد.",
@@ -403,7 +407,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       s.__edge_src_spot_id = srcId;
 
       const kb = new InlineKeyboard();
-      for (const sp of spots) {
+      for (const sp of spots as any[]) {
         if (sp.id === srcId) continue;
         kb.text(sp.name ?? `Spot #${sp.id}`, `edge_dst:${sp.id}`).row();
       }
@@ -470,7 +474,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
         return;
       }
 
-      if (!regions || regions.length === 0) {
+      if (!regions || (regions as any[]).length === 0) {
         await sendManagedPm(
           ctx,
           `برای خاندان <b>${clanLabel}</b> هنوز منطقه‌ای ثبت نشده.`,
@@ -480,7 +484,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
       }
 
       const kb = new InlineKeyboard();
-      for (const r of regions) {
+      for (const r of regions as any[]) {
         const title = r.title ?? `Region #${r.id}`;
         kb.text(title, `adm_region_info:${r.id}`).row();
       }
@@ -543,14 +547,16 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>) {
         console.error("supabase error (get region edges):", edgeErr);
       }
 
-      const clanLabel =
-        (region.clan && CLAN_LABEL[region.clan]) ?? region.clan ?? "-";
+      const clanLabelRegion =
+        (region as any).clan && CLAN_LABEL[(region as any).clan]
+          ? CLAN_LABEL[(region as any).clan]
+          : (region as any).clan ?? "-";
 
       const text =
-        `<b>Region:</b> ${region.title ?? `#${region.id}`}\n` +
-        `<b>خاندان:</b> ${clanLabel}\n` +
-        `<b>Spot ها:</b> ${spots ? spots.length : 0}\n` +
-        `<b>Edge ها:</b> ${edges ? edges.length : 0}\n\n` +
+        `<b>Region:</b> ${(region as any).title ?? `#${(region as any).id}`}\n` +
+        `<b>خاندان:</b> ${clanLabelRegion}\n` +
+        `<b>Spot ها:</b> ${spots ? (spots as any[]).length : 0}\n` +
+        `<b>Edge ها:</b> ${edges ? (edges as any[]).length : 0}\n\n` +
         "فعلاً فقط نمایش اطلاعاته. بعداً اینجا حذف / ویرایش اضافه می‌کنیم.";
 
       const kb = new InlineKeyboard()
