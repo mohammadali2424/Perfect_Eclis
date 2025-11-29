@@ -10,20 +10,17 @@ const CLAN_LABEL: Record<string, string> = {
   necr:  "🩸 Necroshade",
 };
 
-// ارباب ربات – از config
-const OWNER_ID = MASTER_ID;
-
 export function registerRegistrationFeature(bot: Bot<MyContext>) {
-  // دستور تست: ببینیم این فایل اصلا لود شده یا نه
+  const OWNER_ID = MASTER_ID;
+
+  // فقط برای چک کردن این فیچر وصل شده
   bot.command("debug_reg", async (ctx) => {
-    await ctx.reply("✅ ماژول ثبت‌نام (registration.ts) فعاله.");
+    await ctx.reply("✅ ماژول ثبت‌نام فعاله (features/registration.ts).");
   });
 
-  // -------------------------
-  // ۱) ثبت‌نام توی PV (ثبت من / register)
-  // -------------------------
+  // ---------- ثبت‌نام در PV: «ثبت من» و /register ----------
 
-  bot.command("register", async (ctx) => {
+  async function handleRegisterStart(ctx: MyContext) {
     if (ctx.chat.type !== "private") return;
 
     const supabase = (ctx.services as any).supabase;
@@ -69,57 +66,12 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
         "اسم رول‌پلی که می‌خوای باهاش زندگی کنی رو برام بفرست.\n" +
         "مثال: 𝑵𝒐𝒙 • 𝑵𝒆𝒄𝒓𝒐𝒔𝒉𝒂𝒅𝒆"
     );
-  });
+  }
 
-  // «ثبت من» توی PV
-  bot.hears("ثبت من", async (ctx) => {
-    if (ctx.chat.type !== "private") return;
+  bot.command("register", handleRegisterStart);
+  bot.hears("ثبت من", handleRegisterStart);
 
-    const supabase = (ctx.services as any).supabase;
-    const user = ctx.from!;
-    const userId = user.id;
-
-    const { data: existing, error } = await supabase
-      .from("eclis_players")
-      .select("*")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (error) {
-      console.error("supabase error (check player via hears):", error);
-      await ctx.reply("یک خطای دیتابیسی رخ داد. بعداً دوباره امتحان کن.");
-      return;
-    }
-
-    if (existing) {
-      const ex: any = existing;
-      if (ex.approved) {
-        await ctx.reply(
-          "تو قبلاً توسط ارباب تأیید شدی.\n" +
-            `نام ثبت‌شده: <b>${ex.display_name ?? "نام نامشخص"}</b>`,
-          { parse_mode: "HTML" }
-        );
-      } else {
-        await ctx.reply(
-          "درخواستت ثبت شده و در انتظار تأیید ارباب است.\n" +
-            "بعد از تأیید، مسیرها برای تو باز می‌شن."
-        );
-      }
-      return;
-    }
-
-    const s = ctx.session as any;
-    s.__reg_state = "ask_name";
-    s.__reg_name = null;
-    s.__reg_clan = null;
-
-    await ctx.reply(
-      "به اکلیس خوش اومدی.\n\n" +
-        "اسم رول‌پلی‌ات رو برام بفرست."
-    );
-  });
-
-  // هندل مرحله‌ی اسم → انتخاب خاندان
+  // دریافت اسم → انتخاب خاندان
   bot.on("message:text", async (ctx) => {
     if (ctx.chat.type !== "private") return;
     const s = ctx.session as any;
@@ -307,13 +259,13 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
     } catch {}
   });
 
-  // -----------------------------
-  // ۲) /regplayer در گروه (لوکیشن)
-  // -----------------------------
+  // ---------- /regplayer در گروه برای تعیین لوکیشن ----------
 
   bot.command("regplayer", async (ctx) => {
+    await ctx.reply("🛰 در حال بررسی شرایط /regplayer ...");
+
     if (!ctx.chat || ctx.chat.type === "private") {
-      await ctx.reply("این دستور باید داخل گروه روی پیام یک پلیر ریپلای شود.");
+      await ctx.reply("این دستور باید داخل گروه و روی پیام یک پلیر ریپلای شود.");
       return;
     }
 
@@ -324,7 +276,15 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    if (!OWNER_ID || ctx.from!.id !== OWNER_ID) {
+    if (!OWNER_ID) {
+      await ctx.reply(
+        "⚠ MASTER_ID در سرور تنظیم نشده.\n" +
+          "ENV متغیر MASTER_ID را روی user_id ارباب بگذار."
+      );
+      return;
+    }
+
+    if (ctx.from!.id !== OWNER_ID) {
       await ctx.reply("فقط اربابم می‌تواند موقعیت پلیرها را تعیین کند، حدت را بدان.");
       return;
     }
@@ -339,6 +299,13 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
 
     const chatId = ctx.chat.id;
 
+    await ctx.reply(
+      `🎯 شروع ثبت موقعیت برای:\n<b>${targetName}</b>\n\n` +
+        `🆔 user_id: <code>${targetUserId}</code>\n` +
+        `📍 chat_id این گروه: <code>${chatId}</code>`,
+      { parse_mode: "HTML" }
+    );
+
     try {
       const { data: player, error: plErr } = await supabase
         .from("eclis_players")
@@ -348,7 +315,10 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
 
       if (plErr) {
         console.error("supabase error (regplayer get player):", plErr);
-        await ctx.reply("خطا در بررسی وضعیت پلیر.");
+        await ctx.reply(
+          "❌ خطا در بررسی وضعیت پلیر.\n" +
+            `message: ${plErr.message ?? "نامشخص"}`
+        );
         return;
       }
 
@@ -376,14 +346,17 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
 
       if (regErr) {
         console.error("supabase error (get region for regplayer):", regErr);
-        await ctx.reply("خطا در دریافت Region این گروه.");
+        await ctx.reply(
+          "❌ خطا در دریافت Region این گروه.\n" +
+            `message: ${regErr.message ?? "نامشخص"}`
+        );
         return;
       }
 
       if (!region) {
         await ctx.reply(
           "برای این گروه هنوز Region ثبت نشده.\n" +
-            "اول با /aw در این گروه Region را ثبت کن."
+            "در همین گروه یک بار /aw بزن و آن را به یکی از خاندان‌ها وصل کن."
         );
         return;
       }
@@ -398,14 +371,17 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
 
       if (spotErr) {
         console.error("supabase error (get spots for regplayer):", spotErr);
-        await ctx.reply("خطا در دریافت Spotهای این Region.");
+        await ctx.reply(
+          "❌ خطا در دریافت Spotهای این Region.\n" +
+            `message: ${spotErr.message ?? "نامشخص"}`
+        );
         return;
       }
 
       if (!spots || (spots as any[]).length === 0) {
         await ctx.reply(
           "برای این Region هنوز Spot تعریف نشده.\n" +
-            "اول از پنل /aw یک Spot برای این گروه بساز."
+            "از پنل /aw یک Spot برای این گروه بساز."
         );
         return;
       }
@@ -455,7 +431,9 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
 
       if (spotErr || !spot) {
         console.error("supabase error (regpl get spot):", spotErr);
-        await ctx.editMessageText("Spot موردنظر پیدا نشد.");
+        await ctx.editMessageText(
+          "❌ Spot موردنظر پیدا نشد یا خطای دیتابیسی رخ داد."
+        );
         return;
       }
 
@@ -469,7 +447,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
 
       if (plErr || !player) {
         console.error("supabase error (regpl get player):", plErr);
-        await ctx.editMessageText("پلیر پیدا نشد.");
+        await ctx.editMessageText("❌ پلیر پیدا نشد یا خطای دیتابیسی رخ داد.");
         return;
       }
 
@@ -483,7 +461,7 @@ export function registerRegistrationFeature(bot: Bot<MyContext>) {
 
       if (updErr) {
         console.error("supabase error (regpl update player):", updErr);
-        await ctx.editMessageText("خطا در به‌روزرسانی موقعیت پلیر.");
+        await ctx.editMessageText("❌ خطا در به‌روزرسانی موقعیت پلیر.");
         return;
       }
 
