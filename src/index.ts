@@ -1,10 +1,18 @@
+import { webhookCallback } from "grammy";
+import express, { Request, Response } from "express";
 import { bot } from "./core/bot";
 
-// برای توسعهٔ لوکال: لانگ پولینگ
-if (!process.env.WEBHOOK_MODE) {
-  console.log("Starting bot in long-polling mode...");
-  bot.start();
-} else {
-  // برای Render باید وبهوک رو روی HTTP هندلر ست کنی.
-  console.log("WEBHOOK_MODE is enabled. Configure HTTP webhook handler for your platform.");
-}
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(express.json());
+
+app.post("/webhook", webhookCallback(bot, "express"));
+
+app.get("/", (req: Request, res: Response) => {
+  res.send("Eclis Pathweaver Bot Running");
+});
+
+app.listen(port, () => {
+  console.log(`Bot webhook server running on port ${port}`);
+});

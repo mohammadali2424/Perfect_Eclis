@@ -1,58 +1,66 @@
-import { Bot, InlineKeyboard } from "grammy";
+import { Bot } from "grammy";
 import { MyContext } from "../../core/types";
 import { MASTER_ID } from "../../core/config";
 
-export function registerWorldAdminFeature(bot: Bot<MyContext>) {
+// این نسخهٔ ساده فقط اسکلت /worldadmin را می‌سازد
+// و توضیح می‌دهد که باید Regions / Spots / Edges را چگونه در Supabase پر کنید.
+// می‌توانی بعداً آن را با دکمه‌های اینلاین و منوی کامل جایگزین کنی.
+
+export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
   bot.command("worldadmin", async (ctx) => {
-    if (ctx.from?.id !== MASTER_ID) {
-      await ctx.reply("فقط اربابم میتونه بهم دستور بده، حدتو بدون");
+    if (!ctx.from || ctx.from.id !== MASTER_ID) {
+      await ctx.reply("فقط اربابم به پنل جهان‌ساز دسترسی دارد.");
       return;
     }
 
-    const kb = new InlineKeyboard()
-      .text("➕ ساخت منطقه جدید", "admin:new_region").row()
-      .text("➕ ساخت لوکیشن جدید", "admin:new_spot").row()
-      .text("🔗 اتصال مسیرها", "admin:new_edge");
-
-    await ctx.reply("پنل مدیریت جهان اکلیس:", { reply_markup: kb });
-  });
-
-  bot.on("callback_query:data", async (ctx, next) => {
-    const data = ctx.callbackQuery.data || "";
-    if (!data.startsWith("admin:")) {
-      await next();
-      return;
-    }
-
-    if (ctx.from?.id !== MASTER_ID) {
-      await ctx.answerCallbackQuery({
-        text: "فقط اربابم میتونه بهم دستور بده، حدتو بدون",
-        show_alert: true,
-      });
-      return;
-    }
-
-    if (data === "admin:new_region") {
-      await ctx.answerCallbackQuery();
+    if (!ctx.chat || ctx.chat.type === "private") {
       await ctx.reply(
-        "برای ساخت منطقه جدید، فعلاً در Supabase رکورد بساز.\n" +
-          "در نسخه‌های بعدی، این بخش کاملاً اینلاین و تعاملی میشه."
+        "این دستور را باید داخل گروهی بفرستی که می‌خواهی به عنوان Region ثبت شود."
       );
       return;
     }
 
-    if (data === "admin:new_spot") {
-      await ctx.answerCallbackQuery();
-      await ctx.reply("ساخت لوکیشن جدید به‌زودی از طریق ربات فعال می‌شود.");
+    const chat = ctx.chat;
+    const chatId = chat.id;
+    const title = chat.title || "Unnamed Region";
+
+    const { supabase } = ctx.services;
+
+    const { data: existing, error: selErr } = await supabase
+      .from("regions")
+      .select("id")
+      .eq("telegram_chat_id", chatId)
+      .maybeSingle();
+
+    if (selErr) {
+      console.error("regions select error:", selErr);
+    }
+
+    if (existing) {
+      await ctx.reply(
+        "این گروه از قبل به عنوان یک Region ثبت شده است.\n" +
+          "می‌توانی Spots و Edges را مستقیماً در Supabase اضافه کنی."
+      );
       return;
     }
 
-    if (data === "admin:new_edge") {
-      await ctx.answerCallbackQuery();
-      await ctx.reply("ساخت مسیر (edge) جدید به‌زودی از طریق ربات فعال می‌شود.");
+    const { error: insErr } = await supabase.from("regions").insert({
+      title,
+      telegram_chat_id: chatId,
+    });
+
+    if (insErr) {
+      console.error("regions insert error:", insErr);
+      await ctx.reply("در ثبت Region جدید خطایی رخ داد.");
       return;
     }
 
-    await next();
+    await ctx.reply(
+      "Region جدید ثبت شد ✅\n" +
+        `نام: ${title}\n` +
+        `chat_id: ${chatId}\n\n` +
+        "حالا در Supabase جدول spots را باز کن و حداقل یک Spot برای این Region بساز،\n" +
+        "سپس از /regplayer برای ثبت پلیرها استفاده کن."
+    );
   });
 }
