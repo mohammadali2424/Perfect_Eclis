@@ -37,7 +37,7 @@ async function ensureCharacterFor(
     return null;
   }
 
-  // اگر بیش از ۷ روز از آخرین فعالیت گذشته، حذفش کن
+  // حذف بعد از ۷ روز عدم فعالیت
   if (char.last_move_at && diffDays(char.last_move_at as string) > INACTIVE_DAYS) {
     const { error: delErr } = await supabase
       .from("characters")
@@ -63,7 +63,7 @@ async function ensureCharacterFor(
     return null;
   }
 
-  // به‌روزرسانی last_move_at به عنوان آخرین فعالیت
+  // به‌روزرسانی آخرین فعالیت
   const nowIso = new Date().toISOString();
   const { error: upErr } = await supabase
     .from("characters")
@@ -83,6 +83,15 @@ async function showPaths(ctx: MyContext): Promise<void> {
 
   const char = await ensureCharacterFor(ctx, ctx.from.id);
   if (!char) return;
+
+  if (char.pending_region_id && char.travel_ready_at) {
+    // در سفر است، می‌توانی اینجا سخت‌گیرانه ممنوع کنی، فعلاً فقط اطلاع می‌دهیم
+    await ctx.reply(
+      "هم‌اکنون در حال سفر هستی.\n" +
+        "می‌توانی از دکمه «رسیدم؟» یا «لغو مسیر» برای مدیریت این سفر استفاده کنی."
+    );
+    // عمداً ادامه می‌دهیم که مسیرهای فعلی‌اش را ببیند، اگر نخواهی می‌توانی return کنی.
+  }
 
   if (!char.current_spot_id) {
     await ctx.reply(
@@ -250,9 +259,17 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
     return;
   }
 
-  const travelSeconds: number = edge.travel_seconds || 0;
+  const baseTravelSeconds: number = edge.travel_seconds || 0;
   const now = new Date();
-  const readyAt = new Date(now.getTime() + travelSeconds * 1000);
+
+  const currentCredit: number = char.travel_credit_seconds || 0;
+  const creditUsed = Math.min(currentCredit, baseTravelSeconds);
+  const effectiveTravelSeconds = baseTravelSeconds - creditUsed;
+
+  const readyAt =
+    effectiveTravelSeconds > 0
+      ? new Date(now.getTime() + effectiveTravelSeconds * 1000)
+      : now; // اگر اعتبار کامل پوشش داده، رسیدن آنی
 
   const { error: upErr } = await supabase
     .from("characters")
@@ -260,7 +277,10 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
       pending_region_id: destRegion.id,
       pending_spot_id: destSpot.id,
       travel_ready_at: readyAt.toISOString(),
+      travel_total_seconds: baseTravelSeconds,
+      travel_started_at: now.toISOString(),
       last_move_at: now.toISOString(),
+      travel_credit_seconds: currentCredit - creditUsed,
     })
     .eq("tg_id", ctx.from.id);
 
@@ -270,15 +290,24 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
     return;
   }
 
-  const kb = new InlineKeyboard().text("رسیدم؟", "travel:arrive");
+  const kb = new InlineKeyboard()
+    .text("رسیدم؟", "travel:arrive")
+    .text("لغو مسیر", "travel:cancel");
 
-  await ctx.reply(
+  let text =
     "سفر آغاز شد.\n\n" +
-      `مقصد: ${destRegion.title} / ${destSpot.title}\n` +
-      `زمان تقریبی سفر: ${travelSeconds} ثانیه.\n\n` +
-      "هر وقت فکر کردی زمانش گذشته، روی «رسیدم؟» بزن یا /arrive را ارسال کن.",
-    { reply_markup: kb }
-  );
+    `مقصد: ${destRegion.title} / ${destSpot.title}\n` +
+    `زمان پایه‌ی سفر: ${baseTravelSeconds} ثانیه.\n`;
+
+  if (creditUsed > 0) {
+    text += `اعتبار زمان اعمال‌شده: ${creditUsed} ثانیه.\n`;
+  }
+
+  text += `زمان تقریبی این سفر: ${effectiveTravelSeconds} ثانیه.\n\n` +
+    "هر وقت فکر کردی زمانش گذشته، روی «رسیدم؟» بزن یا /arrive را ارسال کن.\n" +
+    "اگر منصرف شدی، می‌توانی «لغو مسیر» را بزنی و بخشی از زمان را به‌عنوان اعتبار نگه داری.";
+
+  await ctx.reply(text, { reply_markup: kb });
 }
 
 async function handleArrive(ctx: MyContext): Promise<void> {
@@ -297,9 +326,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
   }
 
   if (!char.is_approved) {
-    await ctx.reply(
-      "درخواست ثبت‌نامت هنوز توسط ارباب تایید نشده است."
-    );
+    await ctx.reply("درخواست ثبت‌نامت هنوز توسط ارباب تایید نشده است.");
     return;
   }
 
@@ -332,6 +359,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     .eq("id", char.pending_spot_id)
     .maybeSingle();
 
+  // اول لوکیشن را در دیتابیس آپدیت می‌کنیم، بعد هر عملیات جانبی مثل kick
   const { error: upErr } = await supabase
     .from("characters")
     .update({
@@ -340,17 +368,19 @@ async function handleArrive(ctx: MyContext): Promise<void> {
       pending_region_id: null,
       pending_spot_id: null,
       travel_ready_at: null,
+      travel_total_seconds: null,
+      travel_started_at: null,
       last_move_at: new Date().toISOString(),
     })
     .eq("id", char.id);
 
   if (upErr) {
     console.error("characters arrive update error:", upErr);
-    await ctx.reply("در تکمیل سفر مشکلی پیش آمد.");
+    await ctx.reply("در تکمیل سفر مشکلی پیش آمد. لوکیشن در دیتابیس به‌روزرسانی نشد.");
     return;
   }
 
-  // تلاش برای kick از گروه قبلی
+  // بعد از موفقیت آپدیت، سراغ kick از گروه قبلی می‌رویم
   if (prevRegionId && destRegion && prevRegionId !== destRegion.id) {
     try {
       const { data: prevRegion } = await supabase
@@ -410,8 +440,74 @@ async function handleArrive(ctx: MyContext): Promise<void> {
   }
 }
 
+async function handleCancelTravel(ctx: MyContext): Promise<void> {
+  if (!ctx.from) return;
+  const { supabase } = ctx.services;
+
+  const { data: char, error: charErr } = await supabase
+    .from("characters")
+    .select("*")
+    .eq("tg_id", ctx.from.id)
+    .maybeSingle();
+
+  if (charErr || !char) {
+    await ctx.reply("هنوز کاراکتری برایت ثبت نشده.");
+    return;
+  }
+
+  if (!char.pending_region_id || !char.pending_spot_id || !char.travel_ready_at) {
+    await ctx.reply("در حال حاضر در سفری نیستی که بتوان آن را لغو کرد.");
+    return;
+  }
+
+  const now = new Date();
+  const startedAt = char.travel_started_at
+    ? new Date(char.travel_started_at as string)
+    : null;
+  const totalSeconds: number = char.travel_total_seconds || 0;
+
+  let elapsedSeconds = 0;
+  if (startedAt) {
+    const diffMs = now.getTime() - startedAt.getTime();
+    elapsedSeconds = Math.max(0, Math.floor(diffMs / 1000));
+  }
+
+  const creditGain = totalSeconds
+    ? Math.min(elapsedSeconds, totalSeconds)
+    : elapsedSeconds;
+
+  const currentCredit: number = char.travel_credit_seconds || 0;
+  const newCredit = currentCredit + creditGain;
+
+  const { error: upErr } = await supabase
+    .from("characters")
+    .update({
+      pending_region_id: null,
+      pending_spot_id: null,
+      travel_ready_at: null,
+      travel_total_seconds: null,
+      travel_started_at: null,
+      travel_credit_seconds: newCredit,
+      last_move_at: now.toISOString(),
+    })
+    .eq("id", char.id);
+
+  if (upErr) {
+    console.error("cancel travel update error:", upErr);
+    await ctx.reply("در لغو سفر مشکلی پیش آمد؛ دوباره تلاش کن.");
+    return;
+  }
+
+  await ctx.reply(
+    "سفر فعلی لغو شد ❌\n" +
+      `زمانی که در راه بودی: ${elapsedSeconds} ثانیه\n` +
+      `این مقدار به عنوان اعتبار به سفرت اضافه شد.\n` +
+      `اعتبار فعلی‌ات: ${newCredit} ثانیه`
+  );
+}
+
 export function registerTravelFeature(bot: Bot<MyContext>): void {
-  // ثبت پلیر با ریپلای و متن «ثبت پلیر»
+  // ثبت پلیر با متن «ثبت پلیر» روی ریپلای
   bot.hears("ثبت پلیر", async (ctx) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID) {
       await ctx.reply("🥷🏻 فقط ارباب من میتوته بهم دستور بده ، حدتو بدون");
@@ -517,7 +613,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     );
   });
 
-  // /regplayer قدیمی را هم نگه می‌داریم اگر بخواهی همچنان استفاده کنی
+  // /regplayer قدیمی
   bot.command("regplayer", async (ctx) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID) {
       await ctx.reply("🥷🏻 فقط ارباب من میتوته بهم دستور بده ، حدتو بدون");
@@ -645,7 +741,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await showQuickMap(ctx);
   });
 
-  // رسیدن
+  // /arrive
   bot.command("arrive", async (ctx) => {
     if (ctx.chat?.type !== "private") return;
     await handleArrive(ctx);
@@ -678,6 +774,12 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     if (data === "travel:arrive") {
       await ctx.answerCallbackQuery();
       await handleArrive(ctx);
+      return;
+    }
+
+    if (data === "travel:cancel") {
+      await ctx.answerCallbackQuery();
+      await handleCancelTravel(ctx);
       return;
     }
 
