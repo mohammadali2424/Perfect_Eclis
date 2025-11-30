@@ -2,6 +2,15 @@ import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
 import { MASTER_ID } from "../../core/config";
 
+const INACTIVE_DAYS = 7;
+
+function diffDays(fromIso: string): number {
+  const from = new Date(fromIso);
+  const now = new Date();
+  const diffMs = now.getTime() - from.getTime();
+  return diffMs / (1000 * 60 * 60 * 24);
+}
+
 async function ensureCharacterFor(
   ctx: MyContext,
   tgId: number
@@ -14,21 +23,58 @@ async function ensureCharacterFor(
     .eq("tg_id", tgId)
     .maybeSingle();
 
-  if (!error && char) return char;
-
-  const { data: inserted, error: insErr } = await supabase
-    .from("characters")
-    .insert({ tg_id: tgId })
-    .select("*")
-    .maybeSingle();
-
-  if (insErr || !inserted) {
-    console.error("ensureCharacter insert error:", insErr);
-    await ctx.reply("در ساخت پروفایل اکلیس مشکلی پیش آمد.");
+  if (error) {
+    console.error("ensureCharacter select error:", error);
+    await ctx.reply("در دسترسی به پروفایل اکلیس مشکلی پیش آمد.");
     return null;
   }
 
-  return inserted;
+  if (!char) {
+    await ctx.reply(
+      "هنوز در اکلیس ثبت نشده‌ای.\n" +
+        "در پی‌وی من بنویس: «ثبت من» تا فرایند ثبت‌نامت شروع شود."
+    );
+    return null;
+  }
+
+  // اگر بیش از ۷ روز از آخرین فعالیت گذشته، حذفش کن
+  if (char.last_move_at && diffDays(char.last_move_at as string) > INACTIVE_DAYS) {
+    const { error: delErr } = await supabase
+      .from("characters")
+      .delete()
+      .eq("id", char.id);
+
+    if (delErr) {
+      console.error("delete inactive character error:", delErr);
+    }
+
+    await ctx.reply(
+      "بیش از یک هفته در اکلیس بی‌حرکت بوده‌ای و از ربات حذف شدی.\n" +
+        "اگر می‌خواهی برگردی، دوباره در پی‌وی بنویس «ثبت من»."
+    );
+    return null;
+  }
+
+  if (!char.is_approved) {
+    await ctx.reply(
+      "درخواست ثبت‌نامت هنوز توسط ارباب تایید نشده است.\n" +
+        "وقتی تایید شد، می‌توانی از مسیرها و نقشه استفاده کنی."
+    );
+    return null;
+  }
+
+  // به‌روزرسانی last_move_at به عنوان آخرین فعالیت
+  const nowIso = new Date().toISOString();
+  const { error: upErr } = await supabase
+    .from("characters")
+    .update({ last_move_at: nowIso })
+    .eq("id", char.id);
+
+  if (upErr) {
+    console.error("update last_move_at error:", upErr);
+  }
+
+  return { ...char, last_move_at: nowIso };
 }
 
 async function showPaths(ctx: MyContext): Promise<void> {
@@ -41,12 +87,11 @@ async function showPaths(ctx: MyContext): Promise<void> {
   if (!char.current_spot_id) {
     await ctx.reply(
       "هنوز در هیچ نقطه‌ای قرار نگرفته‌ای.\n" +
-        "ارباب باید در یکی از گروه‌های Region روی پیامت ریپلای کند و /regplayer بزند تا وارد جهان شوی."
+        "ارباب باید در یکی از گروه‌های Region روی پیامت ریپلای کند و «ثبت پلیر» را بفرستد تا وارد جهان شوی."
     );
     return;
   }
 
-  // Spot فعلی
   const { data: spot, error: spotErr } = await supabase
     .from("spots")
     .select("*")
@@ -58,7 +103,6 @@ async function showPaths(ctx: MyContext): Promise<void> {
     return;
   }
 
-  // Region مرتبط با spot
   const { data: region, error: regErr } = await supabase
     .from("regions")
     .select("*")
@@ -70,7 +114,6 @@ async function showPaths(ctx: MyContext): Promise<void> {
     return;
   }
 
-  // Edgeهای قابل حرکت از spot فعلی
   const { data: edges, error: edgeErr } = await supabase
     .from("edges")
     .select("*")
@@ -123,8 +166,7 @@ async function showPaths(ctx: MyContext): Promise<void> {
     `نقطه فعلی: ${spot.title}\n\n` +
     "راه‌هایی که پیش رویت خودشان را آشکار کرده‌اند:";
 
-  const msg = await ctx.reply(text, { reply_markup: kb });
-  ctx.session.ui_last_menu_id = msg.message_id;
+  await ctx.reply(text, { reply_markup: kb });
 }
 
 async function showQuickMap(ctx: MyContext): Promise<void> {
@@ -137,7 +179,7 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
   if (!char.current_region_id || !char.current_spot_id) {
     await ctx.reply(
       "هنوز مکان فعلی برایت ثبت نشده است.\n" +
-        "ارباب باید در یکی از Regionها با /regplayer تو را وارد شهر کند."
+        "ارباب باید در یکی از Regionها با «ثبت پلیر» تو را وارد شهر کند."
     );
     return;
   }
@@ -171,6 +213,9 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
 async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void> {
   if (!ctx.from) return;
   const { supabase } = ctx.services;
+
+  const char = await ensureCharacterFor(ctx, ctx.from.id);
+  if (!char) return;
 
   const { data: edge, error: edgeErr } = await supabase
     .from("edges")
@@ -251,6 +296,13 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     return;
   }
 
+  if (!char.is_approved) {
+    await ctx.reply(
+      "درخواست ثبت‌نامت هنوز توسط ارباب تایید نشده است."
+    );
+    return;
+  }
+
   if (!char.pending_region_id || !char.pending_spot_id || !char.travel_ready_at) {
     await ctx.reply("در حال حاضر در سفر نیستی.");
     return;
@@ -288,6 +340,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
       pending_region_id: null,
       pending_spot_id: null,
       travel_ready_at: null,
+      last_move_at: new Date().toISOString(),
     })
     .eq("id", char.id);
 
@@ -308,8 +361,14 @@ async function handleArrive(ctx: MyContext): Promise<void> {
 
       if (prevRegion?.telegram_chat_id) {
         try {
-          await ctx.api.banChatMember(prevRegion.telegram_chat_id as number, ctx.from.id);
-          await ctx.api.unbanChatMember(prevRegion.telegram_chat_id as number, ctx.from.id);
+          await ctx.api.banChatMember(
+            prevRegion.telegram_chat_id as number,
+            ctx.from.id
+          );
+          await ctx.api.unbanChatMember(
+            prevRegion.telegram_chat_id as number,
+            ctx.from.id
+          );
         } catch (e) {
           console.warn("kick/unban from previous region failed:", e);
         }
@@ -352,10 +411,10 @@ async function handleArrive(ctx: MyContext): Promise<void> {
 }
 
 export function registerTravelFeature(bot: Bot<MyContext>): void {
-  // /regplayer فقط برای ارباب در گروه‌های Region
-  bot.command("regplayer", async (ctx) => {
+  // ثبت پلیر با ریپلای و متن «ثبت پلیر»
+  bot.hears("ثبت پلیر", async (ctx) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID) {
-      await ctx.reply("فقط اربابم می‌تواند پلیرها را در Regionها ثبت کند.");
+      await ctx.reply("🥷🏻 فقط ارباب من میتوته بهم دستور بده ، حدتو بدون");
       return;
     }
 
@@ -367,7 +426,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     const replyTo = ctx.message?.reply_to_message;
     if (!replyTo || !replyTo.from) {
       await ctx.reply(
-        "برای استفاده از /regplayer باید روی پیام بازیکن ریپلای کنی و بعد دستور را بفرستی."
+        "برای استفاده از «ثبت پلیر» باید روی پیام بازیکن ریپلای کنی و بعد این متن را بفرستی."
       );
       return;
     }
@@ -375,7 +434,6 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     const { supabase } = ctx.services;
     const chatId = ctx.chat.id;
 
-    // پیدا کردن Region مرتبط با این گروه
     const { data: region, error: regErr } = await supabase
       .from("regions")
       .select("*")
@@ -390,7 +448,112 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    // اولین Spot این Region
+    const { data: spot, error: spotErr } = await supabase
+      .from("spots")
+      .select("*")
+      .eq("region_id", region.id)
+      .order("id", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (spotErr || !spot) {
+      await ctx.reply(
+        "برای این Region هنوز هیچ Spotی تعریف نشده.\n" +
+          "در Supabase جدول spots را برای این Region پر کن."
+      );
+      return;
+    }
+
+    const playerId = replyTo.from.id;
+
+    const { data: existing, error: exErr } = await supabase
+      .from("characters")
+      .select("*")
+      .eq("tg_id", playerId)
+      .maybeSingle();
+
+    if (exErr) {
+      console.error("characters select for ثبت پلیر error:", exErr);
+      await ctx.reply("در ثبت پلیر مشکلی پیش آمد.");
+      return;
+    }
+
+    if (existing) {
+      const { error: upErr } = await supabase
+        .from("characters")
+        .update({
+          current_region_id: region.id,
+          current_spot_id: spot.id,
+          pending_region_id: null,
+          pending_spot_id: null,
+        })
+        .eq("id", existing.id);
+
+      if (upErr) {
+        console.error("characters update in ثبت پلیر error:", upErr);
+        await ctx.reply("در به‌روزرسانی مکان پلیر مشکلی پیش آمد.");
+        return;
+      }
+    } else {
+      const { error: insErr } = await supabase.from("characters").insert({
+        tg_id: playerId,
+        current_region_id: region.id,
+        current_spot_id: spot.id,
+      });
+
+      if (insErr) {
+        console.error("characters insert in ثبت پلیر error:", insErr);
+        await ctx.reply("در ثبت پلیر جدید مشکلی پیش آمد.");
+        return;
+      }
+    }
+
+    await ctx.reply(
+      "پلیر ثبت شد ✅\n" +
+        `کاربر: ${replyTo.from.first_name}${
+          replyTo.from.last_name ? " " + replyTo.from.last_name : ""
+        }\n` +
+        `مکان اولیه: ${region.title} / ${spot.title}`
+    );
+  });
+
+  // /regplayer قدیمی را هم نگه می‌داریم اگر بخواهی همچنان استفاده کنی
+  bot.command("regplayer", async (ctx) => {
+    if (!ctx.from || ctx.from.id !== MASTER_ID) {
+      await ctx.reply("🥷🏻 فقط ارباب من میتوته بهم دستور بده ، حدتو بدون");
+      return;
+    }
+
+    if (!ctx.chat || ctx.chat.type === "private") {
+      await ctx.reply("باید این دستور را داخل گروه Region بفرستی، نه در پی‌وی.");
+      return;
+    }
+
+    const replyTo = ctx.message?.reply_to_message;
+    if (!replyTo || !replyTo.from) {
+      await ctx.reply(
+        "برای استفاده از /regplayer باید روی پیام بازیکن ریپلای کنی."
+      );
+      return;
+    }
+
+    const { supabase } = ctx.services;
+    const chatId = ctx.chat.id;
+
+    const { data: region, error: regErr } = await supabase
+      .from("regions")
+      .select("*")
+      .eq("telegram_chat_id", chatId)
+      .maybeSingle();
+
+    if (regErr || !region) {
+      await ctx.reply(
+        "این گروه هنوز به عنوان Region ثبت نشده است.\n" +
+          "اول /worldadmin را اینجا بزن تا به عنوان Region ثبت شود."
+      );
+      return;
+    }
+
     const { data: spot, error: spotErr } = await supabase
       .from("spots")
       .select("*")
@@ -460,7 +623,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     );
   });
 
-  // 🧭 مسیر های من یا /path در پی‌وی
+  // 🧭 مسیر های من
   bot.command("path", async (ctx) => {
     if (ctx.chat?.type !== "private") return;
     await showPaths(ctx);
@@ -471,7 +634,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await showPaths(ctx);
   });
 
-  // 🗺 نقشه سریع من یا /mymap در پی‌وی
+  // 🗺 نقشه سریع من
   bot.command("mymap", async (ctx) => {
     if (ctx.chat?.type !== "private") return;
     await showQuickMap(ctx);
@@ -482,7 +645,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await showQuickMap(ctx);
   });
 
-  // /arrive برای چک‌کردن رسیدن
+  // رسیدن
   bot.command("arrive", async (ctx) => {
     if (ctx.chat?.type !== "private") return;
     await handleArrive(ctx);
