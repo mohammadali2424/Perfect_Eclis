@@ -14,6 +14,7 @@ if (!BOT_TOKEN) {
 
 export const bot = new Bot<MyContext>(BOT_TOKEN);
 
+// سشن مینیمال برای ثبت‌نام و ui
 bot.use(
   session({
     initial: (): SessionData => ({
@@ -25,11 +26,13 @@ bot.use(
   })
 );
 
+// تزریق سرویس‌ها (فعلاً فقط supabase)
 bot.use((ctx, next) => {
   ctx.services = { supabase } as Services;
   return next();
 });
 
+// رجیستر تمام فیچرها
 registerSecurityFeature(bot);
 registerOnboardingFeature(bot);
 registerWorldAdminFeature(bot);
