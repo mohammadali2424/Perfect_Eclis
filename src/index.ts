@@ -1,18 +1,25 @@
+import express from "express";
 import { webhookCallback } from "grammy";
-import express, { Request, Response } from "express";
 import { bot } from "./core/bot";
 
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
+// برای اینکه تلگرام بتونه JSON بفرسته
 app.use(express.json());
 
-app.post("/webhook", webhookCallback(bot, "express"));
-
-app.get("/", (req: Request, res: Response) => {
-  res.send("Eclis Pathweaver Bot Running");
+// تست ساده که ببینی سرویس بالا اومده
+app.get("/", (_req, res) => {
+  res.send("Pathweaver is alive ✨");
 });
 
-app.listen(port, () => {
-  console.log(`Bot webhook server running on port ${port}`);
+// وبهوک اصلی تلگرام
+app.post(
+  "/webhook",
+  webhookCallback(bot, "express")
+);
+
+// استارت سرور
+app.listen(PORT, () => {
+  console.log(`Bot server listening on port ${PORT}`);
 });
