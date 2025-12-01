@@ -18,7 +18,6 @@ async function sendScreen(
       });
       return;
     } catch (e) {
-      // اگر به هر دلیلی نتونست edit کنه، می‌افتیم روی reply
       console.warn("editMessageText failed, falling back to reply:", e);
     }
   }
@@ -296,7 +295,7 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
   const readyAt =
     effectiveTravelSeconds > 0
       ? new Date(now.getTime() + effectiveTravelSeconds * 1000)
-      : now; // اگر اعتبار کامل پوشش بده، رسیدن آنی
+      : now;
 
   const { error: upErr } = await supabase
     .from("characters")
@@ -395,7 +394,6 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     .eq("id", char.pending_spot_id)
     .maybeSingle();
 
-  // اول لوکیشن را امن آپدیت می‌کنیم
   const { error: upErr } = await supabase
     .from("characters")
     .update({
@@ -419,7 +417,6 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     return;
   }
 
-  // بعدش سراغ کیک از گروه قبلی
   if (prevRegionId && destRegion && prevRegionId !== destRegion.id) {
     try {
       const { data: prevRegion } = await supabase
@@ -447,7 +444,6 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     }
   }
 
-  // ساخت لینک ورود به گروه مقصد
   let inviteLink: string | null = null;
   if (destRegion?.telegram_chat_id) {
     try {
@@ -553,8 +549,6 @@ async function handleCancelTravel(ctx: MyContext): Promise<void> {
 }
 
 export function registerTravelFeature(bot: Bot<MyContext>): void {
-  const { command, hears } = bot;
-
   // ثبت پلیر با متن «ثبت پلیر» روی ریپلای
   bot.hears("ثبت پلیر", async (ctx) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID) {
@@ -661,8 +655,8 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     );
   });
 
-  // نسخه قدیمی /regplayer (برای سازگاری)
-  command("regplayer", async (ctx) => {
+  // نسخه قدیمی /regplayer
+  bot.command("regplayer", async (ctx) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID) {
       await ctx.reply("🥷🏻 فقط ارباب من میتوته بهم دستور بده ، حدتو بدون");
       return;
@@ -768,15 +762,25 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   });
 
   // 🧭 مسیر های من
-  command("path", showPaths);
-  hears("🧭 مسیر های من", showPaths);
+  bot.command("path", async (ctx) => {
+    await showPaths(ctx);
+  });
+  bot.hears("🧭 مسیر های من", async (ctx) => {
+    await showPaths(ctx);
+  });
 
   // 🗺 نقشه سریع من
-  command("mymap", showQuickMap);
-  hears("🗺 نقشه سریع من", showQuickMap);
+  bot.command("mymap", async (ctx) => {
+    await showQuickMap(ctx);
+  });
+  bot.hears("🗺 نقشه سریع من", async (ctx) => {
+    await showQuickMap(ctx);
+  });
 
   // /arrive
-  command("arrive", handleArrive);
+  bot.command("arrive", async (ctx) => {
+    await handleArrive(ctx);
+  });
 
   // callbackهای سفر
   bot.on("callback_query:data", async (ctx, next) => {
