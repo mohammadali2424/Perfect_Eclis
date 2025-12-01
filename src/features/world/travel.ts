@@ -4,6 +4,27 @@ import { MASTER_ID } from "../../core/config";
 
 const INACTIVE_DAYS = 7;
 
+// کمک‌کننده برای حالت «صفحه» در پی‌وی
+async function sendScreen(
+  ctx: MyContext,
+  text: string,
+  keyboard?: InlineKeyboard
+): Promise<void> {
+  const isCallback = !!ctx.callbackQuery?.message;
+  if (isCallback) {
+    try {
+      await ctx.editMessageText(text, {
+        reply_markup: keyboard,
+      });
+      return;
+    } catch (e) {
+      // اگر به هر دلیلی نتونست edit کنه، می‌افتیم روی reply
+      console.warn("editMessageText failed, falling back to reply:", e);
+    }
+  }
+  await ctx.reply(text, { reply_markup: keyboard });
+}
+
 function diffDays(fromIso: string): number {
   const from = new Date(fromIso);
   const now = new Date();
@@ -37,7 +58,7 @@ async function ensureCharacterFor(
     return null;
   }
 
-  // حذف بعد از ۷ روز عدم فعالیت
+  // حذف بعد از ۷ روز بی‌حرکتی
   if (char.last_move_at && diffDays(char.last_move_at as string) > INACTIVE_DAYS) {
     const { error: delErr } = await supabase
       .from("characters")
@@ -63,7 +84,7 @@ async function ensureCharacterFor(
     return null;
   }
 
-  // به‌روزرسانی آخرین فعالیت
+  // آپدیت آخرین فعالیت
   const nowIso = new Date().toISOString();
   const { error: upErr } = await supabase
     .from("characters")
@@ -77,24 +98,19 @@ async function ensureCharacterFor(
   return { ...char, last_move_at: nowIso };
 }
 
+// 🧭 مسیر ها
 async function showPaths(ctx: MyContext): Promise<void> {
   if (!ctx.from) return;
+  if (ctx.chat?.type !== "private") return;
+
   const { supabase } = ctx.services;
 
   const char = await ensureCharacterFor(ctx, ctx.from.id);
   if (!char) return;
 
-  if (char.pending_region_id && char.travel_ready_at) {
-    // در سفر است، می‌توانی اینجا سخت‌گیرانه ممنوع کنی، فعلاً فقط اطلاع می‌دهیم
-    await ctx.reply(
-      "هم‌اکنون در حال سفر هستی.\n" +
-        "می‌توانی از دکمه «رسیدم؟» یا «لغو مسیر» برای مدیریت این سفر استفاده کنی."
-    );
-    // عمداً ادامه می‌دهیم که مسیرهای فعلی‌اش را ببیند، اگر نخواهی می‌توانی return کنی.
-  }
-
   if (!char.current_spot_id) {
-    await ctx.reply(
+    await sendScreen(
+      ctx,
       "هنوز در هیچ نقطه‌ای قرار نگرفته‌ای.\n" +
         "ارباب باید در یکی از گروه‌های Region روی پیامت ریپلای کند و «ثبت پلیر» را بفرستد تا وارد جهان شوی."
     );
@@ -108,7 +124,7 @@ async function showPaths(ctx: MyContext): Promise<void> {
     .maybeSingle();
 
   if (spotErr || !spot) {
-    await ctx.reply("نقطه‌ی فعلی‌ات در نقشه پیدا نشد.");
+    await sendScreen(ctx, "نقطه‌ی فعلی‌ات در نقشه پیدا نشد.");
     return;
   }
 
@@ -119,7 +135,7 @@ async function showPaths(ctx: MyContext): Promise<void> {
     .maybeSingle();
 
   if (regErr || !region) {
-    await ctx.reply("Region مرتبط با موقعیت فعلی‌ات پیدا نشد.");
+    await sendScreen(ctx, "Region مرتبط با موقعیت فعلی‌ات پیدا نشد.");
     return;
   }
 
@@ -130,12 +146,13 @@ async function showPaths(ctx: MyContext): Promise<void> {
 
   if (edgeErr) {
     console.error("edges select error:", edgeErr);
-    await ctx.reply("در خواندن مسیرها مشکلی پیش آمد.");
+    await sendScreen(ctx, "در خواندن مسیرها مشکلی پیش آمد.");
     return;
   }
 
   if (!edges || edges.length === 0) {
-    await ctx.reply(
+    await sendScreen(
+      ctx,
       "در برابر تو هیچ مسیری تعریف نشده است.\n" +
         "در Supabase جدول edges را برای این Spot پر کن تا راه‌ها آشکار شوند."
     );
@@ -150,14 +167,12 @@ async function showPaths(ctx: MyContext): Promise<void> {
     .in("id", toIds);
 
   if (dsErr || !destSpots) {
-    await ctx.reply("نقاط مقصد مسیرها را نتوانستم پیدا کنم.");
+    await sendScreen(ctx, "نقاط مقصد مسیرها را نتوانستم پیدا کنم.");
     return;
   }
 
   const destMap = new Map<number, any>();
-  for (const s of destSpots) {
-    destMap.set(s.id, s);
-  }
+  for (const s of destSpots) destMap.set(s.id, s);
 
   const kb = new InlineKeyboard();
   for (const edge of edges) {
@@ -170,23 +185,29 @@ async function showPaths(ctx: MyContext): Promise<void> {
   kb.text("🔄 تازه‌سازی", "paths:open");
 
   const text =
-    "🧭 مسیرهای قابل حرکت از جایگاه فعلی‌ات:\n\n" +
+    "🧭 مسیرهای قابل حرکت از جایگاه فعلی‌ات:\n" +
+    "───────────────\n" +
     `Region: ${region.title}\n` +
-    `نقطه فعلی: ${spot.title}\n\n` +
+    `نقطه فعلی: ${spot.title}\n` +
+    "───────────────\n" +
     "راه‌هایی که پیش رویت خودشان را آشکار کرده‌اند:";
 
-  await ctx.reply(text, { reply_markup: kb });
+  await sendScreen(ctx, text, kb);
 }
 
+// 🗺 نقشه سریع
 async function showQuickMap(ctx: MyContext): Promise<void> {
   if (!ctx.from) return;
+  if (ctx.chat?.type !== "private") return;
+
   const { supabase } = ctx.services;
 
   const char = await ensureCharacterFor(ctx, ctx.from.id);
   if (!char) return;
 
   if (!char.current_region_id || !char.current_spot_id) {
-    await ctx.reply(
+    await sendScreen(
+      ctx,
       "هنوز مکان فعلی برایت ثبت نشده است.\n" +
         "ارباب باید در یکی از Regionها با «ثبت پلیر» تو را وارد شهر کند."
     );
@@ -209,18 +230,24 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
   const name = char.char_name || ctx.from.first_name || "نامشخص";
 
   const text =
-    "🗺 نقشه سریع تو:\n\n" +
+    "🗺 نقشه سریع تو\n" +
+    "───────────────\n" +
     `شخصیت: ${name}\n` +
-    `خاندان: ${clan}\n\n` +
+    `خاندان: ${clan}\n` +
+    "───────────────\n" +
     `Region فعلی: ${region?.title || "نامشخص"}\n` +
-    `نقطه فعلی: ${spot?.title || "نامشخص"}\n\n` +
+    `نقطه فعلی: ${spot?.title || "نامشخص"}\n` +
+    "───────────────\n" +
     "برای دیدن راه‌های قابل حرکت از 🧭 «مسیر های من» استفاده کن.";
 
-  await ctx.reply(text);
+  await sendScreen(ctx, text);
 }
 
+// شروع سفر از روی Edge
 async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void> {
   if (!ctx.from) return;
+  if (ctx.chat?.type !== "private") return;
+
   const { supabase } = ctx.services;
 
   const char = await ensureCharacterFor(ctx, ctx.from.id);
@@ -233,7 +260,7 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
     .maybeSingle();
 
   if (edgeErr || !edge) {
-    await ctx.reply("این مسیر دیگر وجود ندارد.");
+    await sendScreen(ctx, "این مسیر دیگر وجود ندارد.");
     return;
   }
 
@@ -244,7 +271,7 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
     .maybeSingle();
 
   if (dsErr || !destSpot) {
-    await ctx.reply("نقطه‌ی مقصد این مسیر پیدا نشد.");
+    await sendScreen(ctx, "نقطه‌ی مقصد این مسیر پیدا نشد.");
     return;
   }
 
@@ -255,7 +282,7 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
     .maybeSingle();
 
   if (drErr || !destRegion) {
-    await ctx.reply("Region مقصد این مسیر پیدا نشد.");
+    await sendScreen(ctx, "Region مقصد این مسیر پیدا نشد.");
     return;
   }
 
@@ -269,7 +296,7 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
   const readyAt =
     effectiveTravelSeconds > 0
       ? new Date(now.getTime() + effectiveTravelSeconds * 1000)
-      : now; // اگر اعتبار کامل پوشش داده، رسیدن آنی
+      : now; // اگر اعتبار کامل پوشش بده، رسیدن آنی
 
   const { error: upErr } = await supabase
     .from("characters")
@@ -286,7 +313,7 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
 
   if (upErr) {
     console.error("characters travel update error:", upErr);
-    await ctx.reply("در شروع سفر مشکلی پیش آمد.");
+    await sendScreen(ctx, "در شروع سفر مشکلی پیش آمد.");
     return;
   }
 
@@ -295,23 +322,29 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
     .text("لغو مسیر", "travel:cancel");
 
   let text =
-    "سفر آغاز شد.\n\n" +
+    "🚶‍♂️ سفر آغاز شد\n" +
+    "───────────────\n" +
     `مقصد: ${destRegion.title} / ${destSpot.title}\n` +
     `زمان پایه‌ی سفر: ${baseTravelSeconds} ثانیه.\n`;
 
   if (creditUsed > 0) {
-    text += `اعتبار زمان اعمال‌شده: ${creditUsed} ثانیه.\n`;
+    text += `اعتبار مصرف‌شده: ${creditUsed} ثانیه.\n`;
   }
 
-  text += `زمان تقریبی این سفر: ${effectiveTravelSeconds} ثانیه.\n\n` +
-    "هر وقت فکر کردی زمانش گذشته، روی «رسیدم؟» بزن یا /arrive را ارسال کن.\n" +
-    "اگر منصرف شدی، می‌توانی «لغو مسیر» را بزنی و بخشی از زمان را به‌عنوان اعتبار نگه داری.";
+  text +=
+    `زمان تقریبی این سفر: ${effectiveTravelSeconds} ثانیه.\n` +
+    "───────────────\n" +
+    "هر وقت فکر کردی زمانش گذشته، «رسیدم؟» را بزن یا /arrive را بفرست.\n" +
+    "اگر منصرف شدی، «لغو مسیر» را بزن؛ زمان طی‌شده به عنوان اعتبار برای سفرهای بعدی ذخیره می‌شود.";
 
-  await ctx.reply(text, { reply_markup: kb });
+  await sendScreen(ctx, text, kb);
 }
 
+// رسیدن به مقصد
 async function handleArrive(ctx: MyContext): Promise<void> {
   if (!ctx.from) return;
+  if (ctx.chat?.type !== "private") return;
+
   const { supabase } = ctx.services;
 
   const { data: char, error: charErr } = await supabase
@@ -321,17 +354,17 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     .maybeSingle();
 
   if (charErr || !char) {
-    await ctx.reply("هنوز کاراکتری برایت ثبت نشده.");
+    await sendScreen(ctx, "هنوز کاراکتری برایت ثبت نشده.");
     return;
   }
 
   if (!char.is_approved) {
-    await ctx.reply("درخواست ثبت‌نامت هنوز توسط ارباب تایید نشده است.");
+    await sendScreen(ctx, "درخواست ثبت‌نامت هنوز توسط ارباب تایید نشده است.");
     return;
   }
 
   if (!char.pending_region_id || !char.pending_spot_id || !char.travel_ready_at) {
-    await ctx.reply("در حال حاضر در سفر نیستی.");
+    await sendScreen(ctx, "در حال حاضر در سفر نیستی.");
     return;
   }
 
@@ -341,7 +374,10 @@ async function handleArrive(ctx: MyContext): Promise<void> {
   if (now < readyAt) {
     const diffMs = readyAt.getTime() - now.getTime();
     const secondsLeft = Math.ceil(diffMs / 1000);
-    await ctx.reply(`هنوز به مقصد نرسیده‌ای؛ تقریباً ${secondsLeft} ثانیه دیگر مانده.`);
+    await sendScreen(
+      ctx,
+      `⏳ هنوز به مقصد نرسیده‌ای.\nحدود ${secondsLeft} ثانیه‌ی دیگر در راهی.`
+    );
     return;
   }
 
@@ -359,7 +395,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     .eq("id", char.pending_spot_id)
     .maybeSingle();
 
-  // اول لوکیشن را در دیتابیس آپدیت می‌کنیم، بعد هر عملیات جانبی مثل kick
+  // اول لوکیشن را امن آپدیت می‌کنیم
   const { error: upErr } = await supabase
     .from("characters")
     .update({
@@ -376,11 +412,14 @@ async function handleArrive(ctx: MyContext): Promise<void> {
 
   if (upErr) {
     console.error("characters arrive update error:", upErr);
-    await ctx.reply("در تکمیل سفر مشکلی پیش آمد. لوکیشن در دیتابیس به‌روزرسانی نشد.");
+    await sendScreen(
+      ctx,
+      "در تکمیل سفر مشکلی پیش آمد.\nلوکیشن در دیتابیس به‌روزرسانی نشد؛ سفر را دوباره امتحان کن."
+    );
     return;
   }
 
-  // بعد از موفقیت آپدیت، سراغ kick از گروه قبلی می‌رویم
+  // بعدش سراغ کیک از گروه قبلی
   if (prevRegionId && destRegion && prevRegionId !== destRegion.id) {
     try {
       const { data: prevRegion } = await supabase
@@ -425,23 +464,26 @@ async function handleArrive(ctx: MyContext): Promise<void> {
   }
 
   let text =
-    "به مقصد رسیدی ✅\n\n" +
-    `مکان جدیدت:\n${destRegion?.title || "Region نامشخص"} / ${
-      destSpot?.title || "Spot نامشخص"
-    }`;
+    "✅ به مقصد رسیدی\n" +
+    "───────────────\n" +
+    `مکان جدیدت:\n${destRegion?.title || "Region نامشخص"}\n` +
+    `${destSpot?.title || "Spot نامشخص"}`;
 
   if (inviteLink) {
     const kb = new InlineKeyboard().url("ورود به مکان جدید", inviteLink);
-    await ctx.reply(text, { reply_markup: kb });
+    await sendScreen(ctx, text, kb);
   } else {
     text +=
       "\n\n(نتوانستم لینک دعوت گروه مقصد را بسازم؛ مطمئن شو من ادمین گروه مقصد هستم.)";
-    await ctx.reply(text);
+    await sendScreen(ctx, text);
   }
 }
 
+// لغو سفر + اعتبار
 async function handleCancelTravel(ctx: MyContext): Promise<void> {
   if (!ctx.from) return;
+  if (ctx.chat?.type !== "private") return;
+
   const { supabase } = ctx.services;
 
   const { data: char, error: charErr } = await supabase
@@ -451,12 +493,12 @@ async function handleCancelTravel(ctx: MyContext): Promise<void> {
     .maybeSingle();
 
   if (charErr || !char) {
-    await ctx.reply("هنوز کاراکتری برایت ثبت نشده.");
+    await sendScreen(ctx, "هنوز کاراکتری برایت ثبت نشده.");
     return;
   }
 
   if (!char.pending_region_id || !char.pending_spot_id || !char.travel_ready_at) {
-    await ctx.reply("در حال حاضر در سفری نیستی که بتوان آن را لغو کرد.");
+    await sendScreen(ctx, "در حال حاضر در سفری نیستی که بتوان آن را لغو کرد.");
     return;
   }
 
@@ -494,19 +536,25 @@ async function handleCancelTravel(ctx: MyContext): Promise<void> {
 
   if (upErr) {
     console.error("cancel travel update error:", upErr);
-    await ctx.reply("در لغو سفر مشکلی پیش آمد؛ دوباره تلاش کن.");
+    await sendScreen(ctx, "در لغو سفر مشکلی پیش آمد؛ دوباره تلاش کن.");
     return;
   }
 
-  await ctx.reply(
-    "سفر فعلی لغو شد ❌\n" +
-      `زمانی که در راه بودی: ${elapsedSeconds} ثانیه\n` +
-      `این مقدار به عنوان اعتبار به سفرت اضافه شد.\n` +
-      `اعتبار فعلی‌ات: ${newCredit} ثانیه`
-  );
+  const text =
+    "❌ سفر فعلی لغو شد\n" +
+    "───────────────\n" +
+    `زمانی که در راه بودی: ${elapsedSeconds} ثانیه\n` +
+    `اعتبار به‌دست‌آمده: ${creditGain} ثانیه\n` +
+    `اعتبار فعلی‌ات: ${newCredit} ثانیه\n` +
+    "───────────────\n" +
+    "در سفرهای بعدی، این اعتبار از زمان مسیرهای جدید کم می‌شود.";
+
+  await sendScreen(ctx, text);
 }
 
 export function registerTravelFeature(bot: Bot<MyContext>): void {
+  const { command, hears } = bot;
+
   // ثبت پلیر با متن «ثبت پلیر» روی ریپلای
   bot.hears("ثبت پلیر", async (ctx) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID) {
@@ -613,8 +661,8 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     );
   });
 
-  // /regplayer قدیمی
-  bot.command("regplayer", async (ctx) => {
+  // نسخه قدیمی /regplayer (برای سازگاری)
+  command("regplayer", async (ctx) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID) {
       await ctx.reply("🥷🏻 فقط ارباب من میتوته بهم دستور بده ، حدتو بدون");
       return;
@@ -720,42 +768,23 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   });
 
   // 🧭 مسیر های من
-  bot.command("path", async (ctx) => {
-    if (ctx.chat?.type !== "private") return;
-    await showPaths(ctx);
-  });
-
-  bot.hears("🧭 مسیر های من", async (ctx) => {
-    if (ctx.chat?.type !== "private") return;
-    await showPaths(ctx);
-  });
+  command("path", showPaths);
+  hears("🧭 مسیر های من", showPaths);
 
   // 🗺 نقشه سریع من
-  bot.command("mymap", async (ctx) => {
-    if (ctx.chat?.type !== "private") return;
-    await showQuickMap(ctx);
-  });
-
-  bot.hears("🗺 نقشه سریع من", async (ctx) => {
-    if (ctx.chat?.type !== "private") return;
-    await showQuickMap(ctx);
-  });
+  command("mymap", showQuickMap);
+  hears("🗺 نقشه سریع من", showQuickMap);
 
   // /arrive
-  bot.command("arrive", async (ctx) => {
-    if (ctx.chat?.type !== "private") return;
-    await handleArrive(ctx);
-  });
+  command("arrive", handleArrive);
 
-  // مدیریت callbackهای سفر
+  // callbackهای سفر
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data || "";
 
     if (data === "paths:open") {
       await ctx.answerCallbackQuery();
-      if (ctx.chat?.type === "private") {
-        await showPaths(ctx);
-      }
+      await showPaths(ctx);
       return;
     }
 
@@ -766,7 +795,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
       if (!Number.isNaN(edgeId)) {
         await startTravelFromEdge(ctx, edgeId);
       } else {
-        await ctx.reply("شناسه‌ی مسیر نامعتبر است.");
+        await sendScreen(ctx, "شناسه‌ی مسیر نامعتبر است.");
       }
       return;
     }
