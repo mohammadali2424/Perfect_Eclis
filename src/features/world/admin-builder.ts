@@ -50,7 +50,6 @@ function regionPanelKeyboard(regionId: number, hasClan: boolean): InlineKeyboard
   return kb;
 }
 
-// کمک‌کننده برای قفل‌ها
 async function showRegionLockMenu(ctx: MyContext, regionId: number) {
   const { supabase } = ctx.services;
 
@@ -66,9 +65,14 @@ async function showRegionLockMenu(ctx: MyContext, regionId: number) {
   }
 
   const kb = new InlineKeyboard()
-    .text(region.is_locked ? "🔓 باز کردن Region" : "🔒 قفل کردن Region", `lock:region:${region.id}`)
+    .text(
+      region.is_locked ? "🔓 باز کردن Region" : "🔒 قفل کردن Region",
+      `lock:region:${region.id}`
+    )
     .row()
-    .text("🧬 قفل/بازکردن مسیرهای این Region", `lock:edges:${region.id}`);
+    .text("🧬 قفل/بازکردن مسیرهای این Region", `lock:edges:${region.id}`)
+    .row()
+    .text("🔙 بازگشت به پنل Region", `admin:openregion:${region.id}`);
 
   const text =
     "🔐 مدیریت قفل Region\n" +
@@ -128,6 +132,8 @@ async function showEdgeLockMenu(ctx: MyContext, regionId: number) {
     kb.text(`${icon} ${baseLabel}`, `lock:edge:${regionId}:${e.id}`).row();
   }
 
+  kb.text("🔙 بازگشت به قفل Region", `lock:region:${regionId}`);
+
   const text =
     "🧬 قفل/بازکردن مسیرهای این Region\n" +
     "فقط Edge‌هایی که به Spotهای این Region وصل‌اند لیست شده‌اند.\n\n" +
@@ -135,6 +141,7 @@ async function showEdgeLockMenu(ctx: MyContext, regionId: number) {
 
   await sendScreen(ctx, text, kb);
 }
+
 
 export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
   // /worldadmin داخل گروه → ثبت/خواندن Region + ارسال پنل به پی‌وی ارباب
