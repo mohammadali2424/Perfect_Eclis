@@ -2,7 +2,7 @@ import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
 import { MASTER_ID } from "../../core/config";
 
-type ClanKey = "walker" | "stellarieth" | "necroshade" | "torrentress";
+type ClanKey = "walker" | "stellarieth" | "necroshade" | "torrentress" | "neutral";
 
 function clanLabel(key: ClanKey): string {
   switch (key) {
@@ -14,22 +14,20 @@ function clanLabel(key: ClanKey): string {
       return "🖤 𝐍𝐞𝐜𝐫𝐨𝐬𝐡𝐚𝐝𝐞";
     case "torrentress":
       return "🌟 𝐓𝐨𝐫𝐫𝐞𝐧𝐭𝐫𝐞𝐬𝐬";
+    case "neutral":
+      return "⚪ 𝙉𝙚𝙪𝙩𝙧𝙖𝙡";
     default:
       return key;
   }
 }
 
 function clanKeys(): ClanKey[] {
-  return ["walker", "stellarieth", "necroshade", "torrentress"];
+  return ["walker", "stellarieth", "necroshade", "torrentress", "neutral"];
 }
 
 function regionPanelKeyboard(regionId: number, hasClan: boolean): InlineKeyboard {
   const kb = new InlineKeyboard();
-  if (!hasClan) {
-    kb.text("🏳️ انتخاب خاندان", `admin:setclan:${regionId}`).row();
-  } else {
-    kb.text("🏳️ تغییر خاندان", `admin:setclan:${regionId}`).row();
-  }
+  kb.text(hasClan ? "🏳️ تغییر خاندان" : "🏳️ انتخاب خاندان", `admin:setclan:${regionId}`).row();
   kb.text("📍 Spot جدید", `admin:addspot:${regionId}`).row();
   kb.text("📜 لیست Spotها", `admin:listspots:${regionId}`).row();
   kb.text("🔗 Edge جدید", `admin:addedge:${regionId}`).row();
@@ -40,7 +38,7 @@ function regionPanelKeyboard(regionId: number, hasClan: boolean): InlineKeyboard
 }
 
 export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
-  // /worldadmin داخل گروه: ثبت Region + ارسال پنل به پی‌وی ارباب
+  // /worldadmin داخل گروه → ثبت/خواندن Region + ارسال پنل به پی‌وی ارباب
   bot.command("worldadmin", async (ctx) => {
     const chat = ctx.chat;
 
@@ -96,7 +94,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       clanName = inserted.clan_name || null;
     }
 
-    // پاک کردن پیام دستور در گروه
+    // حذف پیام دستور در گروه
     try {
       if (ctx.message) {
         await ctx.deleteMessage();
@@ -132,7 +130,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
     }
   });
 
-  // دستور متنی در پی‌وی: «مدیریت مناطق» → انتخاب بر اساس خاندان
+  // متنی در پی‌وی: «مدیریت مناطق»
   bot.hears("مدیریت مناطق", async (ctx) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID) {
       await ctx.reply("🥷🏻 فقط ارباب من میتوته بهم دستور بده ، حدتو بدون");
@@ -145,6 +143,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
     kb.text(clanLabel("stellarieth"), "admin:regions:stellarieth").row();
     kb.text(clanLabel("necroshade"), "admin:regions:necroshade").row();
     kb.text(clanLabel("torrentress"), "admin:regions:torrentress").row();
+    kb.text(clanLabel("neutral"), "admin:regions:neutral").row();
     kb.text("همه مناطق", "admin:regions:all");
 
     await ctx.reply("کدام خاندان/فیلتر را برای نمایش مناطق می‌خواهی؟", {
@@ -152,7 +151,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
     });
   });
 
-  // message:text برای state ساخت Spot و Edge (اسم spot / زمان سفر)
+  // پیام متنی برای state ساخت Spot و زمان Edge
   bot.on("message:text", async (ctx, next) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID) return next();
     if (ctx.chat?.type !== "private") return next();
@@ -165,7 +164,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
     const { supabase } = ctx.services;
     const text = ctx.message.text.trim();
 
-    // ۱) ساخت Spot: admin_mode = add_spot
+    // ساخت Spot جدید
     if (mode === "add_spot" && regionId) {
       if (!text) {
         await ctx.reply("نام Spot نمی‌تواند خالی باشد. دوباره تلاش کن.");
@@ -177,7 +176,6 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         title: text,
       });
 
-      // پاک کردن state
       ctx.session.admin_mode = undefined;
       ctx.session.admin_region_id = undefined;
 
@@ -191,7 +189,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    // ۲) ساخت Edge: admin_mode = add_edge_time
+    // زمان سفر Edge
     if (mode === "add_edge_time" && regionId && fromSpotId && toSpotId) {
       const seconds = Number(text);
       if (!Number.isFinite(seconds) || seconds <= 0) {
@@ -223,15 +221,11 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
     return next();
   });
 
-  // مدیریت تمام callbackهای admin
+  // همه callbackهای admin
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data || "";
 
-    // فقط ارباب
-    if (
-      data.startsWith("admin:") &&
-      (!ctx.from || ctx.from.id !== MASTER_ID)
-    ) {
+    if (data.startsWith("admin:") && (!ctx.from || ctx.from.id !== MASTER_ID)) {
       await ctx.answerCallbackQuery({
         text: "🥷🏻 فقط ارباب من میتوته بهم دستور بده ، حدتو بدون",
         show_alert: true,
@@ -241,7 +235,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
 
     const { supabase } = ctx.services;
 
-    // ۱) انتخاب Regionها بر اساس خاندان: admin:regions:...
+    // لیست Regionها بر اساس خاندان/همه
     if (data.startsWith("admin:regions:")) {
       await ctx.answerCallbackQuery();
       const key = data.split(":")[2]; // walker | ... | all
@@ -251,8 +245,12 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       });
 
       if (key !== "all") {
-        const label = clanLabel(key as ClanKey);
-        query = query.eq("clan_name", label);
+        if (key === "neutral") {
+          query = query.is("clan_name", null);
+        } else {
+          const label = clanLabel(key as ClanKey);
+          query = query.eq("clan_name", label);
+        }
       }
 
       const { data: regions, error } = await query;
@@ -281,7 +279,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    // ۲) باز کردن پنل Region از پی‌وی: admin:openregion:<regionId>
+    // باز کردن پنل Region از پی‌وی
     if (data.startsWith("admin:openregion:")) {
       await ctx.answerCallbackQuery();
       const regionId = Number(data.split(":")[2]);
@@ -310,7 +308,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    // ۳) ست/تغییر خاندان Region: admin:setclan:<regionId>
+    // ست/تغییر خاندان Region
     if (data.startsWith("admin:setclan:")) {
       const regionId = Number(data.split(":")[2]);
 
@@ -320,7 +318,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       }
 
       await ctx.answerCallbackQuery();
-      await ctx.reply("این Region زیرمجموعه کدام خاندان است؟", {
+      await ctx.reply("این Region زیرمجموعه کدام خاندان/بی‌طرف است؟", {
         reply_markup: kb,
       });
 
@@ -331,7 +329,9 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       const parts = data.split(":");
       const regionId = Number(parts[2]);
       const clanKey = parts[3] as ClanKey;
-      const label = clanLabel(clanKey);
+
+      const label =
+        clanKey === "neutral" ? null : clanLabel(clanKey as ClanKey);
 
       const { error } = await supabase
         .from("regions")
@@ -352,11 +352,15 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         show_alert: false,
       });
 
-      await ctx.reply(`خاندان این Region روی ${label} تنظیم شد.`);
+      await ctx.reply(
+        `خاندان این Region روی ${
+          label || "Neutral / بی‌طرف"
+        } تنظیم شد.`
+      );
       return;
     }
 
-    // ۴) Spot جدید: admin:addspot:<regionId>
+    // Spot جدید
     if (data.startsWith("admin:addspot:")) {
       await ctx.answerCallbackQuery();
       const regionId = Number(data.split(":")[2]);
@@ -371,7 +375,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    // ۵) لیست Spotها: admin:listspots:<regionId>
+    // لیست Spotها
     if (data.startsWith("admin:listspots:")) {
       await ctx.answerCallbackQuery();
       const regionId = Number(data.split(":")[2]);
@@ -402,7 +406,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    // ۶) Edge جدید (مرحله ۱: انتخاب مبدا): admin:addedge:<regionId>
+    // Edge جدید (مرحله ۱: انتخاب Spot مبدا در Region فعلی)
     if (data.startsWith("admin:addedge:")) {
       await ctx.answerCallbackQuery();
       const regionId = Number(data.split(":")[2]);
@@ -425,84 +429,138 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         kb.text(s.title, `admin:edge_from:${regionId}:${s.id}`).row();
       }
 
-      await ctx.reply("مبدا Edge را انتخاب کن:", {
+      await ctx.reply("مبدا Edge را (Spot مبدأ) انتخاب کن:", {
         reply_markup: kb,
       });
       return;
     }
 
-    // ۷) Edge جدید (مرحله ۲: انتخاب مقصد): admin:edge_from:regionId:fromSpotId
+    // Edge جدید (مرحله ۲: انتخاب خاندان مقصد)
     if (data.startsWith("admin:edge_from:")) {
       await ctx.answerCallbackQuery();
       const parts = data.split(":");
-      const regionId = Number(parts[2]);
+      const fromRegionId = Number(parts[2]);
       const fromSpotId = Number(parts[3]);
+
+      const kb = new InlineKeyboard();
+      kb.text(clanLabel("walker"), `admin:edge_destclan:${fromRegionId}:${fromSpotId}:walker`).row();
+      kb.text(clanLabel("stellarieth"), `admin:edge_destclan:${fromRegionId}:${fromSpotId}:stellarieth`).row();
+      kb.text(clanLabel("necroshade"), `admin:edge_destclan:${fromRegionId}:${fromSpotId}:necroshade`).row();
+      kb.text(clanLabel("torrentress"), `admin:edge_destclan:${fromRegionId}:${fromSpotId}:torrentress`).row();
+      kb.text(clanLabel("neutral"), `admin:edge_destclan:${fromRegionId}:${fromSpotId}:neutral`).row();
+      kb.text("همه مناطق", `admin:edge_destclan:${fromRegionId}:${fromSpotId}:all`);
+
+      await ctx.reply(
+        "خاندان/بی‌طرف/همه برای Region مقصد را انتخاب کن:",
+        { reply_markup: kb }
+      );
+      return;
+    }
+
+    // Edge جدید (مرحله ۳: انتخاب Region مقصد بر اساس خاندان)
+    if (data.startsWith("admin:edge_destclan:")) {
+      await ctx.answerCallbackQuery();
+      const parts = data.split(":");
+      const fromRegionId = Number(parts[2]);
+      const fromSpotId = Number(parts[3]);
+      const clanKey = parts[4]; // walker | ... | neutral | all
+
+      let query = supabase.from("regions").select("*").order("id", { ascending: true });
+
+      if (clanKey !== "all") {
+        if (clanKey === "neutral") {
+          query = query.is("clan_name", null);
+        } else {
+          const label = clanLabel(clanKey as ClanKey);
+          query = query.eq("clan_name", label);
+        }
+      }
+
+      const { data: regions, error } = await query;
+
+      if (error) {
+        console.error("edge dest region list error:", error);
+        await ctx.reply("در خواندن Regionهای مقصد مشکلی پیش آمد.");
+        return;
+      }
+
+      if (!regions || regions.length === 0) {
+        await ctx.reply("Region مناسبی برای این فیلتر پیدا نشد.");
+        return;
+      }
+
+      const kb = new InlineKeyboard();
+      for (const r of regions) {
+        const name = r.title || `Region #${r.id}`;
+        kb.text(
+          name,
+          `admin:edge_destreg:${fromRegionId}:${fromSpotId}:${r.id}`
+        ).row();
+      }
+
+      await ctx.reply("Region مقصد را انتخاب کن:", { reply_markup: kb });
+      return;
+    }
+
+    // Edge جدید (مرحله ۴: انتخاب Spot مقصد در Region مقصد)
+    if (data.startsWith("admin:edge_destreg:")) {
+      await ctx.answerCallbackQuery();
+      const parts = data.split(":");
+      const fromRegionId = Number(parts[2]);
+      const fromSpotId = Number(parts[3]);
+      const toRegionId = Number(parts[4]);
 
       const { data: spots, error } = await supabase
         .from("spots")
         .select("*")
-        .eq("region_id", regionId)
+        .eq("region_id", toRegionId)
         .order("id", { ascending: true });
 
       if (error || !spots || spots.length === 0) {
         await ctx.reply(
-          "برای این Region هنوز Spotی تعریف نشده که بتوان مسیری ساخت."
+          "برای Region مقصد هنوز هیچ Spotی تعریف نشده."
         );
         return;
       }
 
       const kb = new InlineKeyboard();
       for (const s of spots) {
-        kb.text(s.title, `admin:edge_to:${regionId}:${fromSpotId}:${s.id}`).row();
+        kb.text(
+          s.title,
+          `admin:edge_to:${fromRegionId}:${fromSpotId}:${toRegionId}:${s.id}`
+        ).row();
       }
 
-      await ctx.reply("مقصد Edge را انتخاب کن:", {
-        reply_markup: kb,
-      });
+      await ctx.reply("Spot مقصد را انتخاب کن:", { reply_markup: kb });
       return;
     }
 
-    // ۸) Edge جدید (مرحله ۳: زمان سفر): admin:edge_to:regionId:fromSpotId:toSpotId
+    // Edge جدید (مرحله ۵: دریافت زمان سفر)
     if (data.startsWith("admin:edge_to:")) {
       await ctx.answerCallbackQuery();
       const parts = data.split(":");
-      const regionId = Number(parts[2]);
+      const fromRegionId = Number(parts[2]);
       const fromSpotId = Number(parts[3]);
-      const toSpotId = Number(parts[4]);
+      const toRegionId = Number(parts[4]);
+      const toSpotId = Number(parts[5]);
 
       ctx.session.admin_mode = "add_edge_time";
-      ctx.session.admin_region_id = regionId;
+      ctx.session.admin_region_id = fromRegionId;
       ctx.session.admin_from_spot_id = fromSpotId;
       ctx.session.admin_to_spot_id = toSpotId;
 
       await ctx.reply(
         "مدت زمان سفر بین این دو Spot را به ثانیه بفرست.\n" +
-          "مثال: 120"
+          "مثال: 600"
       );
       return;
     }
 
-    // ۹) لیست Edgeها: admin:listedges:<regionId>
+    // لیست Edgeها برای یک Region (فقط Edgeهایی که یکی از Spotهایش مربوط به این Region است)
     if (data.startsWith("admin:listedges:")) {
       await ctx.answerCallbackQuery();
       const regionId = Number(data.split(":")[2]);
 
-      const { data: edges, error: edgeErr } = await supabase
-        .from("edges")
-        .select("*");
-
-      if (edgeErr) {
-        console.error("list edges error:", edgeErr);
-        await ctx.reply("در خواندن Edgeها مشکلی پیش آمد.");
-        return;
-      }
-
-      if (!edges || edges.length === 0) {
-        await ctx.reply("هنوز هیچ Edgeی در جهان تعریف نشده.");
-        return;
-      }
-
-      // فقط Edgeهایی که از/به Spotهای این Region هستند
       const { data: spots, error: spotErr } = await supabase
         .from("spots")
         .select("*")
@@ -516,7 +574,16 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       const spotMap = new Map<number, any>();
       for (const s of spots) spotMap.set(s.id, s);
 
-      let text = "Edgeهای مربوط به این Region:\n\n";
+      const { data: edges, error: edgeErr } = await supabase
+        .from("edges")
+        .select("*");
+
+      if (edgeErr || !edges || edges.length === 0) {
+        await ctx.reply("هیچ Edgeی در جهان تعریف نشده.");
+        return;
+      }
+
+      let text = "Edgeهای مرتبط با Spotهای این Region:\n\n";
       for (const e of edges) {
         const fromSpot = spotMap.get(e.from_spot_id);
         const toSpot = spotMap.get(e.to_spot_id);
@@ -527,8 +594,8 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         } (${e.travel_seconds}ث)\n`;
       }
 
-      if (text.trim() === "Edgeهای مربوط به این Region:") {
-        await ctx.reply("هیچ Edgeی مربوط به Spotهای این Region پیدا نشد.");
+      if (text.trim() === "Edgeهای مرتبط با Spotهای این Region:") {
+        await ctx.reply("هیچ Edgeی مرتبط با Spotهای این Region پیدا نشد.");
         return;
       }
 
@@ -536,7 +603,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    // ۱۰) حذف Spot: admin:delspot:<regionId> → انتخاب Spot
+    // حذف Spot (مرحله ۱)
     if (data.startsWith("admin:delspot:")) {
       await ctx.answerCallbackQuery();
       const regionId = Number(data.split(":")[2]);
@@ -554,9 +621,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
 
       const kb = new InlineKeyboard();
       for (const s of spots) {
-        kb
-          .text(`🗑 ${s.title}`, `admin:delspot2:${regionId}:${s.id}`)
-          .row();
+        kb.text(`🗑 ${s.title}`, `admin:delspot2:${regionId}:${s.id}`).row();
       }
 
       await ctx.reply("کدام Spot را می‌خواهی حذف کنی؟", {
@@ -565,6 +630,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       return;
     }
 
+    // حذف Spot (مرحله ۲)
     if (data.startsWith("admin:delspot2:")) {
       const parts = data.split(":");
       const regionId = Number(parts[2]);
@@ -586,11 +652,13 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       }
 
       await ctx.answerCallbackQuery({ text: "Spot حذف شد.", show_alert: false });
-      await ctx.reply("Spot انتخاب‌شده حذف شد ✅ (Edgeهای متصل هم به‌خاطر FK ممکن است حذف شوند).");
+      await ctx.reply(
+        "Spot انتخاب‌شده حذف شد ✅ (اگر Edgeهای متصل بوده، به‌خاطر FK احتمالاً آن‌ها هم حذف شده‌اند)."
+      );
       return;
     }
 
-    // ۱۱) حذف Edge: admin:deledge:<regionId> → لیست Edgeها
+    // حذف Edge (مرحله ۱: انتخاب از لیست)
     if (data.startsWith("admin:deledge:")) {
       await ctx.answerCallbackQuery();
       const regionId = Number(data.split(":")[2]);
@@ -635,6 +703,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       return;
     }
 
+    // حذف Edge (مرحله ۲)
     if (data.startsWith("admin:deledge2:")) {
       const edgeId = Number(data.split(":")[2]);
 
