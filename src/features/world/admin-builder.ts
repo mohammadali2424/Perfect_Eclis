@@ -25,6 +25,19 @@ function clanKeys(): ClanKey[] {
   return ["walker", "stellarieth", "necroshade", "torrentress", "neutral"];
 }
 
+// حالت "صفحه" برای پی‌وی ارباب
+async function sendScreen(ctx: MyContext, text: string, kb?: InlineKeyboard) {
+  if (ctx.callbackQuery?.message) {
+    try {
+      await ctx.editMessageText(text, { reply_markup: kb });
+      return;
+    } catch (e) {
+      console.warn("admin sendScreen edit failed, fallback to reply:", e);
+    }
+  }
+  await ctx.reply(text, { reply_markup: kb });
+}
+
 function regionPanelKeyboard(regionId: number, hasClan: boolean): InlineKeyboard {
   const kb = new InlineKeyboard();
   kb.text(hasClan ? "🏳️ تغییر خاندان" : "🏳️ انتخاب خاندان", `admin:setclan:${regionId}`).row();
@@ -35,6 +48,92 @@ function regionPanelKeyboard(regionId: number, hasClan: boolean): InlineKeyboard
   kb.text("🗑 حذف Spot", `admin:delspot:${regionId}`).row();
   kb.text("🗑 حذف Edge", `admin:deledge:${regionId}`);
   return kb;
+}
+
+// کمک‌کننده برای قفل‌ها
+async function showRegionLockMenu(ctx: MyContext, regionId: number) {
+  const { supabase } = ctx.services;
+
+  const { data: region, error } = await supabase
+    .from("regions")
+    .select("*")
+    .eq("id", regionId)
+    .maybeSingle();
+
+  if (error || !region) {
+    await sendScreen(ctx, "این Region در دیتابیس پیدا نشد.");
+    return;
+  }
+
+  const kb = new InlineKeyboard()
+    .text(region.is_locked ? "🔓 باز کردن Region" : "🔒 قفل کردن Region", `lock:region:${region.id}`)
+    .row()
+    .text("🧬 قفل/بازکردن مسیرهای این Region", `lock:edges:${region.id}`);
+
+  const text =
+    "🔐 مدیریت قفل Region\n" +
+    "───────────────\n" +
+    `نام: ${region.title}\n` +
+    `region_id: ${region.id}\n` +
+    `وضعیت: ${region.is_locked ? "قفل 🔒" : "باز 🔓"}`;
+
+  await sendScreen(ctx, text, kb);
+}
+
+async function showEdgeLockMenu(ctx: MyContext, regionId: number) {
+  const { supabase } = ctx.services;
+
+  const { data: spots, error: spotErr } = await supabase
+    .from("spots")
+    .select("*")
+    .eq("region_id", regionId);
+
+  if (spotErr || !spots || spots.length === 0) {
+    await sendScreen(ctx, "برای این Region هنوز Spotی تعریف نشده.");
+    return;
+  }
+
+  const spotIds = spots.map((s: any) => s.id as number);
+  const spotMap = new Map<number, any>();
+  for (const s of spots) spotMap.set(s.id, s);
+
+  const { data: edges, error: edgeErr } = await supabase
+    .from("edges")
+    .select("*");
+
+  if (edgeErr || !edges || edges.length === 0) {
+    await sendScreen(ctx, "هیچ Edgeی در جهان تعریف نشده.");
+    return;
+  }
+
+  const related = edges.filter(
+    (e: any) =>
+      spotIds.includes(e.from_spot_id as number) ||
+      spotIds.includes(e.to_spot_id as number)
+  );
+
+  if (related.length === 0) {
+    await sendScreen(ctx, "هیچ Edgeی مرتبط با این Region پیدا نشد.");
+    return;
+  }
+
+  const kb = new InlineKeyboard();
+  for (const e of related) {
+    const fromSpot = spotMap.get(e.from_spot_id);
+    const toSpot = spotMap.get(e.to_spot_id);
+    const baseLabel = `${fromSpot?.title || e.from_spot_id} → ${
+      toSpot?.title || e.to_spot_id
+    } (${e.travel_seconds}ث)`;
+    const icon = e.is_locked ? "🔒" : "🔓";
+    kb.text(`${icon} ${baseLabel}`, `lock:edge:${regionId}:${e.id}`).row();
+  }
+
+  const text =
+    "🧬 قفل/بازکردن مسیرهای این Region\n" +
+    "فقط Edge‌هایی که به Spotهای این Region وصل‌اند لیست شده‌اند.\n\n" +
+    "روی هر کدام که بزنی، وضعیت قفلش برعکس می‌شود.";
+
+  await sendScreen(ctx, text, kb);
 }
 
 export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
@@ -67,7 +166,6 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
 
     if (exErr) {
       console.error("regions select error:", exErr);
-      await ctx.reply("در بررسی Region مشکلی پیش آمد.");
       return;
     }
 
@@ -86,7 +184,6 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
 
       if (insErr || !inserted) {
         console.error("regions insert error:", insErr);
-        await ctx.reply("در ثبت Region جدید خطایی رخ داد.");
         return;
       }
 
@@ -94,7 +191,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       clanName = inserted.clan_name || null;
     }
 
-    // حذف پیام دستور در گروه
+    // حذف پیام دستور در گروه، بدون هیچ پیام دیگری
     try {
       if (ctx.message) {
         await ctx.deleteMessage();
@@ -103,31 +200,70 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       console.warn("delete worldadmin message failed:", e);
     }
 
-    // پیام کوتاه در گروه
-    try {
-      await ctx.api.sendMessage(
-        chatId,
-        "پنل جهان‌ساز برای این گروه به پی‌وی ارباب ارسال شد."
-      );
-    } catch (_e) {}
-
     // ارسال پنل به پی‌وی ارباب
     try {
       const kb = regionPanelKeyboard(regionId, !!clanName);
 
       await ctx.api.sendMessage(
         MASTER_ID,
-        "پنل جهان‌ساز برای Region:\n\n" +
+        "🧩 پنل جهان‌ساز برای این Region:\n\n" +
           `نام: ${title}\n` +
           `chat_id: ${chatId}\n` +
           `region_id: ${regionId}\n` +
           `خاندان: ${clanName || "هنوز تعیین نشده"}\n\n` +
-          "از دکمه‌های زیر برای ساخت Spot و Edge و مدیریت استفاده کن.",
+          "با دکمه‌ها می‌توانی Spot بسازی، Edge تعریف کنی و جهان را شکل بدهی.",
         { reply_markup: kb }
       );
     } catch (e) {
       console.error("send worldadmin panel to MASTER failed:", e);
     }
+  });
+
+  // دستور «قفل» داخل گروه → قفل Region / مسیرها
+  bot.hears("قفل", async (ctx) => {
+    if (!ctx.from || ctx.from.id !== MASTER_ID) return;
+    if (!ctx.chat || ctx.chat.type === "private") return;
+
+    const { supabase } = ctx.services;
+    const chatId = ctx.chat.id;
+
+    // پیام قفل را در گروه پاک کن
+    try {
+      if (ctx.message) await ctx.deleteMessage();
+    } catch (e) {
+      console.warn("delete قفل message failed:", e);
+    }
+
+    const { data: region, error } = await supabase
+      .from("regions")
+      .select("*")
+      .eq("telegram_chat_id", chatId)
+      .maybeSingle();
+
+    if (error || !region) {
+      await ctx.api.sendMessage(
+        MASTER_ID,
+        "🔐 دستور «قفل» در گروهی زده شد که هنوز به عنوان Region ثبت نشده.\n" +
+          "اول در آن گروه /worldadmin بزن."
+      );
+      return;
+    }
+
+    await ctx.api.sendMessage(
+      MASTER_ID,
+      "🔐 مدیریت قفل برای Region:\n" +
+        `نام: ${region.title}\n` +
+        `region_id: ${region.id}`,
+      {
+        reply_markup: new InlineKeyboard()
+          .text(
+            region.is_locked ? "🔓 باز کردن Region" : "🔒 قفل کردن Region",
+            `lock:region:${region.id}`
+          )
+          .row()
+          .text("🧬 قفل/بازکردن مسیرهای این Region", `lock:edges:${region.id}`),
+      }
+    );
   });
 
   // متنی در پی‌وی: «مدیریت مناطق»
@@ -146,7 +282,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
     kb.text(clanLabel("neutral"), "admin:regions:neutral").row();
     kb.text("همه مناطق", "admin:regions:all");
 
-    await ctx.reply("کدام خاندان/فیلتر را برای نمایش مناطق می‌خواهی؟", {
+    await ctx.reply("برای شروع، یک خاندان یا فیلتر برای نمایش مناطق انتخاب کن:", {
       reply_markup: kb,
     });
   });
@@ -160,7 +296,6 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
     const regionId = ctx.session.admin_region_id;
     const fromSpotId = ctx.session.admin_from_spot_id;
     const toSpotId = ctx.session.admin_to_spot_id;
-
     const { supabase } = ctx.services;
     const text = ctx.message.text.trim();
 
@@ -185,11 +320,11 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         return;
       }
 
-      await ctx.reply("Spot جدید ساخته شد ✅");
+      await ctx.reply("📍 Spot جدید ساخته شد ✅");
       return;
     }
 
-    // زمان سفر Edge
+    // زمان سفر Edge (یک‌طرفه / دوطرفه)
     if (mode === "add_edge_time" && regionId && fromSpotId && toSpotId) {
       const seconds = Number(text);
       if (!Number.isFinite(seconds) || seconds <= 0) {
@@ -197,35 +332,63 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         return;
       }
 
-      const { error: insErr } = await supabase.from("edges").insert({
-        from_spot_id: fromSpotId,
-        to_spot_id: toSpotId,
-        travel_seconds: Math.floor(seconds),
-      });
+      const twoSided = !!ctx.session.admin_edge_twosided;
+
+      let error: any = null;
+      if (twoSided) {
+        const { error: insErr } = await supabase.from("edges").insert([
+          {
+            from_spot_id: fromSpotId,
+            to_spot_id: toSpotId,
+            travel_seconds: Math.floor(seconds),
+          },
+          {
+            from_spot_id: toSpotId,
+            to_spot_id: fromSpotId,
+            travel_seconds: Math.floor(seconds),
+          },
+        ]);
+        error = insErr;
+      } else {
+        const { error: insErr } = await supabase.from("edges").insert({
+          from_spot_id: fromSpotId,
+          to_spot_id: toSpotId,
+          travel_seconds: Math.floor(seconds),
+        });
+        error = insErr;
+      }
 
       ctx.session.admin_mode = undefined;
       ctx.session.admin_region_id = undefined;
       ctx.session.admin_from_spot_id = undefined;
       ctx.session.admin_to_spot_id = undefined;
+      ctx.session.admin_edge_twosided = undefined;
 
-      if (insErr) {
-        console.error("insert edge error:", insErr);
+      if (error) {
+        console.error("insert edge error:", error);
         await ctx.reply("در ساخت Edge جدید مشکلی پیش آمد.");
         return;
       }
 
-      await ctx.reply("Edge جدید ساخته شد ✅");
+      await ctx.reply(
+        twoSided
+          ? "🔁 Edge دوطرفه ساخته شد ✅"
+          : "➡️ Edge یک‌طرفه ساخته شد ✅"
+      );
       return;
     }
 
     return next();
   });
 
-  // همه callbackهای admin
+  // همه callbackهای admin + lock
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data || "";
 
-    if (data.startsWith("admin:") && (!ctx.from || ctx.from.id !== MASTER_ID)) {
+    const isAdminAction = data.startsWith("admin:");
+    const isLockAction = data.startsWith("lock:");
+
+    if ((isAdminAction || isLockAction) && (!ctx.from || ctx.from.id !== MASTER_ID)) {
       await ctx.answerCallbackQuery({
         text: "🥷🏻 فقط ارباب من میتوته بهم دستور بده ، حدتو بدون",
         show_alert: true,
@@ -235,7 +398,83 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
 
     const { supabase } = ctx.services;
 
-    // لیست Regionها بر اساس خاندان/همه
+    // --- قفل‌ها ---
+
+    if (data.startsWith("lock:region:")) {
+      await ctx.answerCallbackQuery();
+      const regionId = Number(data.split(":")[2]);
+
+      const { data: region, error } = await supabase
+        .from("regions")
+        .select("*")
+        .eq("id", regionId)
+        .maybeSingle();
+
+      if (error || !region) {
+        await sendScreen(ctx, "این Region در دیتابیس پیدا نشد.");
+        return;
+      }
+
+      const newLocked = !region.is_locked;
+
+      const { error: upErr } = await supabase
+        .from("regions")
+        .update({ is_locked: newLocked })
+        .eq("id", regionId);
+
+      if (upErr) {
+        console.error("lock region update error:", upErr);
+        await sendScreen(ctx, "در تغییر وضعیت قفل Region مشکلی پیش آمد.");
+        return;
+      }
+
+      await showRegionLockMenu(ctx, regionId);
+      return;
+    }
+
+    if (data.startsWith("lock:edges:")) {
+      await ctx.answerCallbackQuery();
+      const regionId = Number(data.split(":")[2]);
+      await showEdgeLockMenu(ctx, regionId);
+      return;
+    }
+
+    if (data.startsWith("lock:edge:")) {
+      await ctx.answerCallbackQuery();
+      const parts = data.split(":");
+      const regionId = Number(parts[2]);
+      const edgeId = Number(parts[3]);
+
+      const { data: edge, error } = await supabase
+        .from("edges")
+        .select("*")
+        .eq("id", edgeId)
+        .maybeSingle();
+
+      if (error || !edge) {
+        await sendScreen(ctx, "این Edge در دیتابیس پیدا نشد.");
+        return;
+      }
+
+      const newLocked = !edge.is_locked;
+
+      const { error: upErr } = await supabase
+        .from("edges")
+        .update({ is_locked: newLocked })
+        .eq("id", edgeId);
+
+      if (upErr) {
+        console.error("lock edge update error:", upErr);
+        await sendScreen(ctx, "در قفل/بازکردن این Edge مشکلی پیش آمد.");
+        return;
+      }
+
+      await showEdgeLockMenu(ctx, regionId);
+      return;
+    }
+
+    // --- admin:regions:... نمایش مناطق بر اساس خاندان/همه ---
+
     if (data.startsWith("admin:regions:")) {
       await ctx.answerCallbackQuery();
       const key = data.split(":")[2]; // walker | ... | all
@@ -257,12 +496,12 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
 
       if (error) {
         console.error("list regions error:", error);
-        await ctx.reply("در خواندن لیست مناطق خطایی رخ داد.");
+        await sendScreen(ctx, "در خواندن لیست مناطق خطایی رخ داد.");
         return;
       }
 
       if (!regions || regions.length === 0) {
-        await ctx.reply("هیچ Region با این فیلتر پیدا نشد.");
+        await sendScreen(ctx, "هیچ Region با این فیلتر پیدا نشد.");
         return;
       }
 
@@ -272,14 +511,13 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         kb.text(name, `admin:openregion:${r.id}`).row();
       }
 
-      await ctx.reply("یکی از Regionها را انتخاب کن:", {
+      await sendScreen(ctx, "یکی از Regionها را انتخاب کن:", {
         reply_markup: kb,
-      });
-
+      } as any);
       return;
     }
 
-    // باز کردن پنل Region از پی‌وی
+    // باز کردن پنل Region
     if (data.startsWith("admin:openregion:")) {
       await ctx.answerCallbackQuery();
       const regionId = Number(data.split(":")[2]);
@@ -291,24 +529,25 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         .maybeSingle();
 
       if (error || !region) {
-        await ctx.reply("این Region در دیتابیس پیدا نشد.");
+        await sendScreen(ctx, "این Region در دیتابیس پیدا نشد.");
         return;
       }
 
       const kb = regionPanelKeyboard(region.id, !!region.clan_name);
 
-      await ctx.reply(
-        "پنل Region:\n\n" +
-          `نام: ${region.title}\n` +
-          `chat_id: ${region.telegram_chat_id}\n` +
-          `region_id: ${region.id}\n` +
-          `خاندان: ${region.clan_name || "هنوز تعیین نشده"}`,
-        { reply_markup: kb }
-      );
+      const text =
+        "🧩 پنل Region\n" +
+        "───────────────\n" +
+        `نام: ${region.title}\n` +
+        `chat_id: ${region.telegram_chat_id}\n` +
+        `region_id: ${region.id}\n` +
+        `خاندان: ${region.clan_name || "هنوز تعیین نشده"}`;
+
+      await sendScreen(ctx, text, kb);
       return;
     }
 
-    // ست/تغییر خاندان Region
+    // ست/تغییر خاندان Region (مرحله ۱)
     if (data.startsWith("admin:setclan:")) {
       const regionId = Number(data.split(":")[2]);
 
@@ -318,13 +557,11 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       }
 
       await ctx.answerCallbackQuery();
-      await ctx.reply("این Region زیرمجموعه کدام خاندان/بی‌طرف است؟", {
-        reply_markup: kb,
-      });
-
+      await sendScreen(ctx, "این Region زیرمجموعه کدام خاندان/بی‌طرف است؟", kb);
       return;
     }
 
+    // ست/تغییر خاندان Region (مرحله ۲)
     if (data.startsWith("admin:setclan2:")) {
       const parts = data.split(":");
       const regionId = Number(parts[2]);
@@ -352,10 +589,9 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         show_alert: false,
       });
 
-      await ctx.reply(
-        `خاندان این Region روی ${
-          label || "Neutral / بی‌طرف"
-        } تنظیم شد.`
+      await sendScreen(
+        ctx,
+        `خاندان این Region روی ${label || "Neutral / بی‌طرف"} تنظیم شد.`
       );
       return;
     }
@@ -368,7 +604,8 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       ctx.session.admin_mode = "add_spot";
       ctx.session.admin_region_id = regionId;
 
-      await ctx.reply(
+      await sendScreen(
+        ctx,
         "نام Spot جدید برای این Region را بفرست.\n" +
           "مثال: «بازار مرکزی» یا «دروازه شمالی»"
       );
@@ -388,21 +625,21 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
 
       if (error) {
         console.error("list spots error:", error);
-        await ctx.reply("در خواندن Spotها مشکلی پیش آمد.");
+        await sendScreen(ctx, "در خواندن Spotها مشکلی پیش آمد.");
         return;
       }
 
       if (!spots || spots.length === 0) {
-        await ctx.reply("برای این Region هنوز هیچ Spotی تعریف نشده.");
+        await sendScreen(ctx, "برای این Region هنوز هیچ Spotی تعریف نشده.");
         return;
       }
 
-      let text = "Spotهای این Region:\n\n";
+      let text = "📍 Spotهای این Region:\n\n";
       for (const s of spots) {
         text += `#${s.id} — ${s.title}\n`;
       }
 
-      await ctx.reply(text);
+      await sendScreen(ctx, text);
       return;
     }
 
@@ -418,7 +655,8 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         .order("id", { ascending: true });
 
       if (error || !spots || spots.length === 0) {
-        await ctx.reply(
+        await sendScreen(
+          ctx,
           "برای این Region هنوز Spotی تعریف نشده که بتوان مسیری ساخت."
         );
         return;
@@ -429,9 +667,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         kb.text(s.title, `admin:edge_from:${regionId}:${s.id}`).row();
       }
 
-      await ctx.reply("مبدا Edge را (Spot مبدأ) انتخاب کن:", {
-        reply_markup: kb,
-      });
+      await sendScreen(ctx, "مبدا Edge را (Spot مبدأ) انتخاب کن:", kb);
       return;
     }
 
@@ -450,9 +686,10 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       kb.text(clanLabel("neutral"), `admin:edge_destclan:${fromRegionId}:${fromSpotId}:neutral`).row();
       kb.text("همه مناطق", `admin:edge_destclan:${fromRegionId}:${fromSpotId}:all`);
 
-      await ctx.reply(
+      await sendScreen(
+        ctx,
         "خاندان/بی‌طرف/همه برای Region مقصد را انتخاب کن:",
-        { reply_markup: kb }
+        kb
       );
       return;
     }
@@ -465,7 +702,9 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       const fromSpotId = Number(parts[3]);
       const clanKey = parts[4]; // walker | ... | neutral | all
 
-      let query = supabase.from("regions").select("*").order("id", { ascending: true });
+      let query = supabase.from("regions").select("*").order("id", {
+        ascending: true,
+      });
 
       if (clanKey !== "all") {
         if (clanKey === "neutral") {
@@ -480,12 +719,12 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
 
       if (error) {
         console.error("edge dest region list error:", error);
-        await ctx.reply("در خواندن Regionهای مقصد مشکلی پیش آمد.");
+        await sendScreen(ctx, "در خواندن Regionهای مقصد مشکلی پیش آمد.");
         return;
       }
 
       if (!regions || regions.length === 0) {
-        await ctx.reply("Region مناسبی برای این فیلتر پیدا نشد.");
+        await sendScreen(ctx, "Region مناسبی برای این فیلتر پیدا نشد.");
         return;
       }
 
@@ -498,7 +737,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         ).row();
       }
 
-      await ctx.reply("Region مقصد را انتخاب کن:", { reply_markup: kb });
+      await sendScreen(ctx, "Region مقصد را انتخاب کن:", kb);
       return;
     }
 
@@ -517,7 +756,8 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         .order("id", { ascending: true });
 
       if (error || !spots || spots.length === 0) {
-        await ctx.reply(
+        await sendScreen(
+          ctx,
           "برای Region مقصد هنوز هیچ Spotی تعریف نشده."
         );
         return;
@@ -531,11 +771,11 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         ).row();
       }
 
-      await ctx.reply("Spot مقصد را انتخاب کن:", { reply_markup: kb });
+      await sendScreen(ctx, "Spot مقصد را انتخاب کن:", kb);
       return;
     }
 
-    // Edge جدید (مرحله ۵: دریافت زمان سفر)
+    // Edge جدید (مرحله ۵: انتخاب یک‌طرفه / دوطرفه)
     if (data.startsWith("admin:edge_to:")) {
       await ctx.answerCallbackQuery();
       const parts = data.split(":");
@@ -544,12 +784,50 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       const toRegionId = Number(parts[4]);
       const toSpotId = Number(parts[5]);
 
-      ctx.session.admin_mode = "add_edge_time";
       ctx.session.admin_region_id = fromRegionId;
       ctx.session.admin_from_spot_id = fromSpotId;
       ctx.session.admin_to_spot_id = toSpotId;
+      ctx.session.admin_edge_twosided = false;
 
-      await ctx.reply(
+      const kb = new InlineKeyboard()
+        .text(
+          "➡️ مسیر یک‌طرفه",
+          `admin:edge_dir:${fromRegionId}:${fromSpotId}:${toRegionId}:${toSpotId}:one`
+        )
+        .row()
+        .text(
+          "🔁 مسیر دوطرفه",
+          `admin:edge_dir:${fromRegionId}:${fromSpotId}:${toRegionId}:${toSpotId}:two`
+        );
+
+      await sendScreen(
+        ctx,
+        "این مسیر یک‌طرفه باشد یا دوطرفه؟\n\n" +
+          "یک‌طرفه: فقط از مبدأ به مقصد.\n" +
+          "دوطرفه: هم از مبدأ به مقصد، هم از مقصد به مبدأ.",
+        kb
+      );
+      return;
+    }
+
+    // Edge جدید (مرحله ۶: بعد انتخاب جهت → سوال زمان سفر)
+    if (data.startsWith("admin:edge_dir:")) {
+      await ctx.answerCallbackQuery();
+      const parts = data.split(":");
+      const fromRegionId = Number(parts[2]);
+      const fromSpotId = Number(parts[3]);
+      const toRegionId = Number(parts[4]);
+      const toSpotId = Number(parts[5]);
+      const mode = parts[6]; // one | two
+
+      ctx.session.admin_region_id = fromRegionId;
+      ctx.session.admin_from_spot_id = fromSpotId;
+      ctx.session.admin_to_spot_id = toSpotId;
+      ctx.session.admin_edge_twosided = mode === "two";
+      ctx.session.admin_mode = "add_edge_time";
+
+      await sendScreen(
+        ctx,
         "مدت زمان سفر بین این دو Spot را به ثانیه بفرست.\n" +
           "مثال: 600"
       );
@@ -567,11 +845,12 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         .eq("region_id", regionId);
 
       if (spotErr || !spots || spots.length === 0) {
-        await ctx.reply("برای این Region Spotی پیدا نشد.");
+        await sendScreen(ctx, "برای این Region Spotی پیدا نشد.");
         return;
       }
 
       const spotMap = new Map<number, any>();
+      const spotIds = spots.map((s: any) => s.id as number);
       for (const s of spots) spotMap.set(s.id, s);
 
       const { data: edges, error: edgeErr } = await supabase
@@ -579,27 +858,38 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         .select("*");
 
       if (edgeErr || !edges || edges.length === 0) {
-        await ctx.reply("هیچ Edgeی در جهان تعریف نشده.");
+        await sendScreen(ctx, "هیچ Edgeی در جهان تعریف نشده.");
         return;
       }
 
-      let text = "Edgeهای مرتبط با Spotهای این Region:\n\n";
+      let text = "🧬 Edgeهای مرتبط با Spotهای این Region:\n\n";
+      let count = 0;
+
       for (const e of edges) {
+        const inRegion =
+          spotIds.includes(e.from_spot_id as number) ||
+          spotIds.includes(e.to_spot_id as number);
+        if (!inRegion) continue;
+
         const fromSpot = spotMap.get(e.from_spot_id);
         const toSpot = spotMap.get(e.to_spot_id);
-        if (!fromSpot && !toSpot) continue;
+        const lockIcon = e.is_locked ? "🔒" : "🔓";
 
-        text += `#${e.id} — ${fromSpot?.title || e.from_spot_id} → ${
+        text += `#${e.id} — ${lockIcon} ${fromSpot?.title || e.from_spot_id} → ${
           toSpot?.title || e.to_spot_id
         } (${e.travel_seconds}ث)\n`;
+        count++;
       }
 
-      if (text.trim() === "Edgeهای مرتبط با Spotهای این Region:") {
-        await ctx.reply("هیچ Edgeی مرتبط با Spotهای این Region پیدا نشد.");
+      if (count === 0) {
+        await sendScreen(
+          ctx,
+          "هیچ Edgeی که به Spotهای این Region وصل باشد پیدا نشد."
+        );
         return;
       }
 
-      await ctx.reply(text);
+      await sendScreen(ctx, text);
       return;
     }
 
@@ -615,7 +905,10 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         .order("id", { ascending: true });
 
       if (error || !spots || spots.length === 0) {
-        await ctx.reply("برای این Region Spotی وجود ندارد که حذف شود.");
+        await sendScreen(
+          ctx,
+          "برای این Region Spotی وجود ندارد که حذف شود."
+        );
         return;
       }
 
@@ -624,9 +917,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         kb.text(`🗑 ${s.title}`, `admin:delspot2:${regionId}:${s.id}`).row();
       }
 
-      await ctx.reply("کدام Spot را می‌خواهی حذف کنی؟", {
-        reply_markup: kb,
-      });
+      await sendScreen(ctx, "کدام Spot را می‌خواهی حذف کنی؟", kb);
       return;
     }
 
@@ -652,8 +943,10 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
       }
 
       await ctx.answerCallbackQuery({ text: "Spot حذف شد.", show_alert: false });
-      await ctx.reply(
-        "Spot انتخاب‌شده حذف شد ✅ (اگر Edgeهای متصل بوده، به‌خاطر FK احتمالاً آن‌ها هم حذف شده‌اند)."
+      await sendScreen(
+        ctx,
+        "Spot انتخاب‌شده حذف شد ✅\n" +
+          "(اگر Edgeهای متصل بوده، به‌خاطر FK احتمالاً آن‌ها هم حذف شده‌اند)."
       );
       return;
     }
@@ -669,11 +962,12 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         .eq("region_id", regionId);
 
       if (spotErr || !spots || spots.length === 0) {
-        await ctx.reply("برای این Region Spotی وجود ندارد.");
+        await sendScreen(ctx, "برای این Region Spotی وجود ندارد.");
         return;
       }
 
       const spotMap = new Map<number, any>();
+      const spotIds = spots.map((s: any) => s.id as number);
       for (const s of spots) spotMap.set(s.id, s);
 
       const { data: edges, error: edgeErr } = await supabase
@@ -681,25 +975,36 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         .select("*");
 
       if (edgeErr || !edges || edges.length === 0) {
-        await ctx.reply("هیچ Edgeی برای حذف وجود ندارد.");
+        await sendScreen(ctx, "هیچ Edgeی برای حذف وجود ندارد.");
         return;
       }
 
       const kb = new InlineKeyboard();
+      let count = 0;
       for (const e of edges) {
+        const inRegion =
+          spotIds.includes(e.from_spot_id as number) ||
+          spotIds.includes(e.to_spot_id as number);
+        if (!inRegion) continue;
+
         const fromSpot = spotMap.get(e.from_spot_id);
         const toSpot = spotMap.get(e.to_spot_id);
-        if (!fromSpot && !toSpot) continue;
-
         const label = `${fromSpot?.title || e.from_spot_id} → ${
           toSpot?.title || e.to_spot_id
         } (${e.travel_seconds}ث)`;
         kb.text(label, `admin:deledge2:${e.id}`).row();
+        count++;
       }
 
-      await ctx.reply("کدام Edge را می‌خواهی حذف کنی؟", {
-        reply_markup: kb,
-      });
+      if (count === 0) {
+        await sendScreen(
+          ctx,
+          "هیچ Edgeی مرتبط با این Region برای حذف پیدا نشد."
+        );
+        return;
+      }
+
+      await sendScreen(ctx, "کدام Edge را می‌خواهی حذف کنی؟", kb);
       return;
     }
 
@@ -725,7 +1030,7 @@ export function registerWorldAdminFeature(bot: Bot<MyContext>): void {
         text: "Edge حذف شد.",
         show_alert: false,
       });
-      await ctx.reply("Edge انتخاب‌شده حذف شد ✅");
+      await sendScreen(ctx, "Edge انتخاب‌شده حذف شد ✅");
       return;
     }
 
