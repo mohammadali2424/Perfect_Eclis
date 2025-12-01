@@ -138,10 +138,20 @@ async function showPaths(ctx: MyContext): Promise<void> {
     return;
   }
 
+  if (region.is_locked) {
+    await sendScreen(
+      ctx,
+      "🛑 بادها خبر می‌آورند که این Region موقتاً قفل شده است.\n" +
+        "هیچ مسیری فعلاً از این‌جا باز نیست."
+    );
+    return;
+  }
+
   const { data: edges, error: edgeErr } = await supabase
     .from("edges")
     .select("*")
-    .eq("from_spot_id", spot.id);
+    .eq("from_spot_id", spot.id)
+    .eq("is_locked", false);
 
   if (edgeErr) {
     console.error("edges select error:", edgeErr);
@@ -153,7 +163,7 @@ async function showPaths(ctx: MyContext): Promise<void> {
     await sendScreen(
       ctx,
       "در برابر تو هیچ مسیری تعریف نشده است.\n" +
-        "در Supabase جدول edges را برای این Spot پر کن تا راه‌ها آشکار شوند."
+        "در پنل جهان‌ساز Edgeها را برای این Spot بساز."
     );
     return;
   }
@@ -252,6 +262,33 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
   const char = await ensureCharacterFor(ctx, ctx.from.id);
   if (!char) return;
 
+  // قانون: تا یک پیام در گروه فعلی نداده، اجازه‌ی تغییر مسیر ندارد
+  if (char.must_speak_before_travel) {
+    await sendScreen(
+      ctx,
+      "🗣 پیش از آن‌که دوباره مسیرت را عوض کنی، باید در گروه فعلی‌ات دست‌کم یک پیام بنویسی.\n" +
+        "بعد از آن، راه‌ها دوباره برایت باز می‌شوند."
+    );
+    return;
+  }
+
+  // چک‌کردن قفل Region فعلی
+  if (char.current_region_id) {
+    const { data: curRegion } = await supabase
+      .from("regions")
+      .select("*")
+      .eq("id", char.current_region_id)
+      .maybeSingle();
+
+    if (curRegion?.is_locked) {
+      await sendScreen(
+        ctx,
+        "🛑 این Region در حال حاضر قفل است و نمی‌توانی از آن حرکت کنی."
+      );
+      return;
+    }
+  }
+
   const { data: edge, error: edgeErr } = await supabase
     .from("edges")
     .select("*")
@@ -260,6 +297,11 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
 
   if (edgeErr || !edge) {
     await sendScreen(ctx, "این مسیر دیگر وجود ندارد.");
+    return;
+  }
+
+  if (edge.is_locked) {
+    await sendScreen(ctx, "این مسیر اکنون قفل شده و قابل استفاده نیست.");
     return;
   }
 
@@ -282,6 +324,14 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
 
   if (drErr || !destRegion) {
     await sendScreen(ctx, "Region مقصد این مسیر پیدا نشد.");
+    return;
+  }
+
+  if (destRegion.is_locked) {
+    await sendScreen(
+      ctx,
+      "🛑 مقصد این مسیر فعلاً قفل است و راه بسته شده."
+    );
     return;
   }
 
@@ -405,6 +455,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
       travel_total_seconds: null,
       travel_started_at: null,
       last_move_at: new Date().toISOString(),
+      must_speak_before_travel: true, // ⬅️ باید اول در گروه جدید صحبت کند
     })
     .eq("id", char.id);
 
@@ -463,7 +514,9 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     "✅ به مقصد رسیدی\n" +
     "───────────────\n" +
     `مکان جدیدت:\n${destRegion?.title || "Region نامشخص"}\n` +
-    `${destSpot?.title || "Spot نامشخص"}`;
+    `${destSpot?.title || "Spot نامشخص"}\n` +
+    "───────────────\n" +
+    "برای آن‌که دوباره حرکت کنی، اول در گروه جدید دست‌کم یک پیام بفرست تا جهان حضور تو را ثبت کند.";
 
   if (inviteLink) {
     const kb = new InlineKeyboard().url("ورود به مکان جدید", inviteLink);
@@ -780,6 +833,44 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   // /arrive
   bot.command("arrive", async (ctx) => {
     await handleArrive(ctx);
+  });
+
+  // هر پیام در گروه → اگر پلیر تازه رسیده و باید حرف بزند، قفل سفر بعدی را باز کن
+  bot.on("message", async (ctx, next) => {
+    if (!ctx.from || !ctx.chat || ctx.chat.type === "private") {
+      return next();
+    }
+
+    const { supabase } = ctx.services;
+
+    const chatId = ctx.chat.id;
+    const userId = ctx.from.id;
+
+    const { data: region } = await supabase
+      .from("regions")
+      .select("id")
+      .eq("telegram_chat_id", chatId)
+      .maybeSingle();
+
+    if (!region) return next();
+
+    const { data: char } = await supabase
+      .from("characters")
+      .select("id, must_speak_before_travel, current_region_id")
+      .eq("tg_id", userId)
+      .eq("current_region_id", region.id)
+      .maybeSingle();
+
+    if (!char) return next();
+
+    if (!char.must_speak_before_travel) return next();
+
+    await supabase
+      .from("characters")
+      .update({ must_speak_before_travel: false })
+      .eq("id", char.id);
+
+    return next();
   });
 
   // callbackهای سفر
