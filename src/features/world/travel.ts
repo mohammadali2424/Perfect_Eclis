@@ -238,6 +238,8 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
   const clan = char.clan_name || "بی‌خاندان";
   const name = char.char_name || ctx.from.first_name || "نامشخص";
 
+  const kb = new InlineKeyboard().text("🧭 مسیر های من", "paths:open");
+
   const text =
     "🗺 نقشه سریع تو\n" +
     "───────────────\n" +
@@ -247,9 +249,9 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
     `Region فعلی: ${region?.title || "نامشخص"}\n` +
     `نقطه فعلی: ${spot?.title || "نامشخص"}\n` +
     "───────────────\n" +
-    "برای دیدن راه‌های قابل حرکت از 🧭 «مسیر های من» استفاده کن.";
+    "برای دیدن راه‌های قابل حرکت می‌توانی از دکمه‌ی زیر استفاده کنی.";
 
-  await sendScreen(ctx, text);
+  await sendScreen(ctx, text, kb);
 }
 
 // شروع سفر از روی Edge
@@ -264,10 +266,13 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
 
   // قانون: تا یک پیام در گروه فعلی نداده، اجازه‌ی تغییر مسیر ندارد
   if (char.must_speak_before_travel) {
+    const kb = new InlineKeyboard().text("🔙 مسیرها", "paths:open");
+
     await sendScreen(
       ctx,
       "🗣 پیش از آن‌که دوباره مسیرت را عوض کنی، باید در گروه فعلی‌ات دست‌کم یک پیام بنویسی.\n" +
-        "بعد از آن، راه‌ها دوباره برایت باز می‌شوند."
+        "بعد از آن، راه‌ها دوباره برایت باز می‌شوند.",
+      kb
     );
     return;
   }
@@ -281,9 +286,12 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
       .maybeSingle();
 
     if (curRegion?.is_locked) {
+      const kb = new InlineKeyboard().text("🔙 مسیرها", "paths:open");
+
       await sendScreen(
         ctx,
-        "🛑 این Region در حال حاضر قفل است و نمی‌توانی از آن حرکت کنی."
+        "🛑 این Region در حال حاضر قفل است و نمی‌توانی از آن حرکت کنی.",
+        kb
       );
       return;
     }
@@ -296,12 +304,14 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
     .maybeSingle();
 
   if (edgeErr || !edge) {
-    await sendScreen(ctx, "این مسیر دیگر وجود ندارد.");
+    const kb = new InlineKeyboard().text("🔙 مسیرها", "paths:open");
+    await sendScreen(ctx, "این مسیر دیگر وجود ندارد.", kb);
     return;
   }
 
   if (edge.is_locked) {
-    await sendScreen(ctx, "این مسیر اکنون قفل شده و قابل استفاده نیست.");
+    const kb = new InlineKeyboard().text("🔙 مسیرها", "paths:open");
+    await sendScreen(ctx, "این مسیر اکنون قفل شده و قابل استفاده نیست.", kb);
     return;
   }
 
@@ -312,7 +322,8 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
     .maybeSingle();
 
   if (dsErr || !destSpot) {
-    await sendScreen(ctx, "نقطه‌ی مقصد این مسیر پیدا نشد.");
+    const kb = new InlineKeyboard().text("🔙 مسیرها", "paths:open");
+    await sendScreen(ctx, "نقطه‌ی مقصد این مسیر پیدا نشد.", kb);
     return;
   }
 
@@ -323,14 +334,17 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
     .maybeSingle();
 
   if (drErr || !destRegion) {
-    await sendScreen(ctx, "Region مقصد این مسیر پیدا نشد.");
+    const kb = new InlineKeyboard().text("🔙 مسیرها", "paths:open");
+    await sendScreen(ctx, "Region مقصد این مسیر پیدا نشد.", kb);
     return;
   }
 
   if (destRegion.is_locked) {
+    const kb = new InlineKeyboard().text("🔙 مسیرها", "paths:open");
     await sendScreen(
       ctx,
-      "🛑 مقصد این مسیر فعلاً قفل است و راه بسته شده."
+      "🛑 مقصد این مسیر فعلاً قفل است و راه بسته شده.",
+      kb
     );
     return;
   }
@@ -362,13 +376,16 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
 
   if (upErr) {
     console.error("characters travel update error:", upErr);
-    await sendScreen(ctx, "در شروع سفر مشکلی پیش آمد.");
+    const kb = new InlineKeyboard().text("🔙 مسیرها", "paths:open");
+    await sendScreen(ctx, "در شروع سفر مشکلی پیش آمد.", kb);
     return;
   }
 
   const kb = new InlineKeyboard()
     .text("رسیدم؟", "travel:arrive")
-    .text("لغو مسیر", "travel:cancel");
+    .text("لغو مسیر", "travel:cancel")
+    .row()
+    .text("🔙 مسیرها", "paths:open");
 
   let text =
     "🚶‍♂️ سفر آغاز شد\n" +
@@ -403,17 +420,24 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     .maybeSingle();
 
   if (charErr || !char) {
-    await sendScreen(ctx, "هنوز کاراکتری برایت ثبت نشده.");
+    const kb = new InlineKeyboard().text("🧭 مسیرها", "paths:open");
+    await sendScreen(ctx, "هنوز کاراکتری برایت ثبت نشده.", kb);
     return;
   }
 
   if (!char.is_approved) {
-    await sendScreen(ctx, "درخواست ثبت‌نامت هنوز توسط ارباب تایید نشده است.");
+    const kb = new InlineKeyboard().text("🧭 مسیرها", "paths:open");
+    await sendScreen(
+      ctx,
+      "درخواست ثبت‌نامت هنوز توسط ارباب تایید نشده است.",
+      kb
+    );
     return;
   }
 
   if (!char.pending_region_id || !char.pending_spot_id || !char.travel_ready_at) {
-    await sendScreen(ctx, "در حال حاضر در سفر نیستی.");
+    const kb = new InlineKeyboard().text("🧭 مسیرها", "paths:open");
+    await sendScreen(ctx, "در حال حاضر در سفر نیستی.", kb);
     return;
   }
 
@@ -423,9 +447,16 @@ async function handleArrive(ctx: MyContext): Promise<void> {
   if (now < readyAt) {
     const diffMs = readyAt.getTime() - now.getTime();
     const secondsLeft = Math.ceil(diffMs / 1000);
+
+    const kb = new InlineKeyboard()
+      .text("🔁 چک دوباره", "travel:arrive")
+      .row()
+      .text("🔙 مسیرها", "paths:open");
+
     await sendScreen(
       ctx,
-      `⏳ هنوز به مقصد نرسیده‌ای.\nحدود ${secondsLeft} ثانیه‌ی دیگر در راهی.`
+      `⏳ هنوز به مقصد نرسیده‌ای.\nحدود ${secondsLeft} ثانیه‌ی دیگر در راهی.`,
+      kb
     );
     return;
   }
@@ -455,15 +486,17 @@ async function handleArrive(ctx: MyContext): Promise<void> {
       travel_total_seconds: null,
       travel_started_at: null,
       last_move_at: new Date().toISOString(),
-      must_speak_before_travel: true, // ⬅️ باید اول در گروه جدید صحبت کند
+      must_speak_before_travel: true, // باید در گروه جدید پیام بدهد
     })
     .eq("id", char.id);
 
   if (upErr) {
     console.error("characters arrive update error:", upErr);
+    const kb = new InlineKeyboard().text("🔙 مسیرها", "paths:open");
     await sendScreen(
       ctx,
-      "در تکمیل سفر مشکلی پیش آمد.\nلوکیشن در دیتابیس به‌روزرسانی نشد؛ سفر را دوباره امتحان کن."
+      "در تکمیل سفر مشکلی پیش آمد.\nلوکیشن در دیتابیس به‌روزرسانی نشد؛ سفر را دوباره امتحان کن.",
+      kb
     );
     return;
   }
@@ -510,7 +543,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     }
   }
 
-  let text =
+  const baseText =
     "✅ به مقصد رسیدی\n" +
     "───────────────\n" +
     `مکان جدیدت:\n${destRegion?.title || "Region نامشخص"}\n` +
@@ -519,12 +552,17 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     "برای آن‌که دوباره حرکت کنی، اول در گروه جدید دست‌کم یک پیام بفرست تا جهان حضور تو را ثبت کند.";
 
   if (inviteLink) {
-    const kb = new InlineKeyboard().url("ورود به مکان جدید", inviteLink);
-    await sendScreen(ctx, text, kb);
+    const kb = new InlineKeyboard()
+      .url("ورود به مکان جدید", inviteLink)
+      .row()
+      .text("🧭 مسیرها", "paths:open");
+    await sendScreen(ctx, baseText, kb);
   } else {
-    text +=
+    const text =
+      baseText +
       "\n\n(نتوانستم لینک دعوت گروه مقصد را بسازم؛ مطمئن شو من ادمین گروه مقصد هستم.)";
-    await sendScreen(ctx, text);
+    const kb = new InlineKeyboard().text("🧭 مسیرها", "paths:open");
+    await sendScreen(ctx, text, kb);
   }
 }
 
@@ -542,12 +580,18 @@ async function handleCancelTravel(ctx: MyContext): Promise<void> {
     .maybeSingle();
 
   if (charErr || !char) {
-    await sendScreen(ctx, "هنوز کاراکتری برایت ثبت نشده.");
+    const kb = new InlineKeyboard().text("🧭 مسیرها", "paths:open");
+    await sendScreen(ctx, "هنوز کاراکتری برایت ثبت نشده.", kb);
     return;
   }
 
   if (!char.pending_region_id || !char.pending_spot_id || !char.travel_ready_at) {
-    await sendScreen(ctx, "در حال حاضر در سفری نیستی که بتوان آن را لغو کرد.");
+    const kb = new InlineKeyboard().text("🧭 مسیرها", "paths:open");
+    await sendScreen(
+      ctx,
+      "در حال حاضر در سفری نیستی که بتوان آن را لغو کرد.",
+      kb
+    );
     return;
   }
 
@@ -585,9 +629,12 @@ async function handleCancelTravel(ctx: MyContext): Promise<void> {
 
   if (upErr) {
     console.error("cancel travel update error:", upErr);
-    await sendScreen(ctx, "در لغو سفر مشکلی پیش آمد؛ دوباره تلاش کن.");
+    const kb = new InlineKeyboard().text("🧭 مسیرها", "paths:open");
+    await sendScreen(ctx, "در لغو سفر مشکلی پیش آمد؛ دوباره تلاش کن.", kb);
     return;
   }
+
+  const kb = new InlineKeyboard().text("🧭 برگشت به مسیرها", "paths:open");
 
   const text =
     "❌ سفر فعلی لغو شد\n" +
@@ -598,7 +645,7 @@ async function handleCancelTravel(ctx: MyContext): Promise<void> {
     "───────────────\n" +
     "در سفرهای بعدی، این اعتبار از زمان مسیرهای جدید کم می‌شود.";
 
-  await sendScreen(ctx, text);
+  await sendScreen(ctx, text, kb);
 }
 
 export function registerTravelFeature(bot: Bot<MyContext>): void {
