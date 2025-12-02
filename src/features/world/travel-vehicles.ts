@@ -914,15 +914,21 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
   //
   // 🎛 هندل ویزارد سوخت / ظرف (در پی‌وی)
   //
-  bot.on("message:text", async (ctx) => {
-    if (ctx.chat.type !== "private") return;
+  bot.on("message:text", async (ctx, next) => {
+    if (ctx.chat.type !== "private") {
+      // پیام‌های گروهی مربوط به این ماژول نیستن → بدیم بقیه هندلرها
+      return next();
+    }
 
     const s = ctx.session as SessionData;
     const { supabase } = ctx.services;
     const text = ctx.message.text.trim();
 
     const fw = s.fuelWizard;
-    if (!fw) return;
+    if (!fw) {
+      // هیچ ویزارد سوخت فعالی نیست → بذار travel.ts و بقیه جواب بدن
+      return next();
+    }
 
     if (fw.step === "ask_amount") {
       const num = Number(text);
