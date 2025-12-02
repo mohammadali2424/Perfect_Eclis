@@ -5,6 +5,7 @@ import { MyContext, SessionData, Services } from "./types";
 import { registerWorldAdminCommands } from "../features/world/admin-commands";
 import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
+import { registerWorldVehicleShop } from "../features/world/vehicle-shop";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
 import { registerOnboardingFeature } from "../features/world/onboarding";
 
@@ -37,4 +38,5 @@ registerSecurityFeature(bot);
 registerWorldAdminCommands(bot);
 registerOnboardingFeature(bot);
 registerWorldAdminFeature(bot);
+registerWorldVehicleShop(bot);
 registerTravelFeature(bot);
