@@ -76,17 +76,6 @@ async function isShopAdminOrMaster(ctx: MyContext): Promise<boolean> {
   return !!data;
 }
 
-/** Helper: safe delete message */
-async function safeDeleteMessage(ctx: MyContext) {
-  try {
-    if (ctx.message) {
-      await ctx.deleteMessage();
-    }
-  } catch (e) {
-    console.warn("vehicle-shop: failed to delete message:", e);
-  }
-}
-
 /** Helper: send DM */
 async function sendDM(ctx: MyContext, userId: number, text: string, kb?: InlineKeyboard) {
   try {
@@ -107,8 +96,6 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
 
     const { supabase } = ctx.services;
     const chatId = ctx.chat!.id;
-
-    await safeDeleteMessage(ctx);
 
     const { error } = await supabase
       .from("bank_settings")
@@ -131,8 +118,6 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
 
     const { supabase } = ctx.services;
     const chatId = ctx.chat!.id;
-
-    await safeDeleteMessage(ctx);
 
     const currentBankId = await getBankChatId(ctx);
     if (currentBankId !== chatId) {
@@ -166,8 +151,6 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
     const { supabase } = ctx.services;
     const chatId = ctx.chat!.id;
 
-    await safeDeleteMessage(ctx);
-
     const { error } = await supabase
       .from("shop_settings")
       .upsert({ id: 1, shop_chat_id: chatId }, { onConflict: "id" });
@@ -189,8 +172,6 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
 
     const { supabase } = ctx.services;
     const chatId = ctx.chat!.id;
-
-    await safeDeleteMessage(ctx);
 
     const currentShopId = await getShopChatId(ctx);
     if (currentShopId !== chatId) {
@@ -221,8 +202,6 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
     const { supabase } = ctx.services;
     const chatId = ctx.chat!.id;
     const shopId = await getShopChatId(ctx);
-
-    await safeDeleteMessage(ctx);
 
     if (shopId === null || shopId !== chatId) {
       await ctx.reply("این گروه شاپ ثبت‌شده نیست. ابتدا «ثبت گروه شاپ» را بزن.");
@@ -257,8 +236,6 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
     const chatId = ctx.chat!.id;
     const shopId = await getShopChatId(ctx);
 
-    await safeDeleteMessage(ctx);
-
     if (shopId === null || shopId !== chatId) {
       await ctx.reply("این گروه شاپ ثبت‌شده نیست.");
       return;
@@ -292,8 +269,6 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
   bot.hears("ثبت سراسری قیمت فلوکس", async (ctx) => {
     if (!isMaster(ctx)) return;
 
-    await safeDeleteMessage(ctx);
-
     const kb = new InlineKeyboard().text(
       "🧪 تنظیم قیمت پایه فلوکس",
       "econ:fluxprice:start"
@@ -307,17 +282,21 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
         "مثال: اگر ۵ بفرستی، پر کردن ۲۰٪ باک = ۱۰۰ Solen.",
       kb
     );
+
+    // پیام گروه رو نگه می‌داریم، فقط در پی‌وی ادامه می‌دیم
+    if (isGroup(ctx)) {
+      await ctx.reply("لینک تنظیم قیمت فلوکس به پی‌وی ارباب ارسال شد.");
+    }
   });
 
   bot.callbackQuery("econ:fluxprice:start", async (ctx) => {
     (ctx.session as SessionData).vehicleWizard = undefined;
-    // برای سادگی، از همین SessionData استفاده می‌کنیم یک فلگ ساده ست کنیم:
     (ctx.session as any).awaitingFluxPrice = true;
 
     await ctx.editMessageText(
       "🧪 قیمت پایه فلوکس:\n" +
         "یک عدد بفرست (Solen برای هر ۱٪ باک).\n" +
-        "مثال: 5 یا 7.5",
+        "مثال: 5 یا 7.5"
     );
   });
 
@@ -335,10 +314,8 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
       return;
     }
 
-    await safeDeleteMessage(ctx);
-
     const adminId = ctx.from!.id;
-    const s = (ctx.session as SessionData);
+    const s = ctx.session as SessionData;
     s.vehicleWizard = {
       mode: "create",
       step: "ask_char_code",
@@ -351,6 +328,8 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
         "ابتدا آیدی شخصی کاراکتر (char_code) را بفرست.\n" +
         "مثال: NECRO_ASHEN_01"
     );
+
+    await ctx.reply("ویزارد ثبت وسیله در پی‌وی برایت شروع شد.");
   });
 
   //
@@ -359,7 +338,7 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
   bot.on("message:text", async (ctx) => {
     if (ctx.chat.type !== "private") return;
 
-    const s = (ctx.session as SessionData);
+    const s = ctx.session as SessionData;
     const { supabase } = ctx.services;
 
     // هندل ثبت قیمت فلوکس
@@ -483,7 +462,7 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
   // تایید / لغو ثبت وسیله
   //
   bot.callbackQuery("shop:vehicle:confirm", async (ctx) => {
-    const s = (ctx.session as SessionData);
+    const s = ctx.session as SessionData;
     const w = s.vehicleWizard;
     const { supabase } = ctx.services;
 
@@ -556,12 +535,15 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
   });
 
   bot.callbackQuery("shop:vehicle:cancel", async (ctx) => {
-    const s = (ctx.session as SessionData);
+    const s = ctx.session as SessionData;
     s.vehicleWizard = undefined;
     await ctx.editMessageText("❌ ثبت وسیله لغو شد.");
   });
 
   //
-  // (بعداً می‌شود اینجا «حذف وسیله»، «ویرایش وسیله» و «لیست افراد دارای وسیله» را هم اضافه کرد)
+  // TODO:
+  // - حذف وسیله
+  // - ویرایش وسیله
+  // - لیست افراد دارای وسیله نقلیه (گزارش بر اساس خاندان)
   //
 }
