@@ -84,51 +84,52 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
   //
   // 🧾 ماشین‌های من (فقط در پی‌وی)
   //
-  bot.hears(["ماشین های من", "ماشین‌ های من", "ماشین های من 🚗"], async (ctx) => {
-    if (ctx.chat.type !== "private") return;
+bot.hears(/ماشین.?های.?من/i, async (ctx) => {
+  if (ctx.chat.type !== "private") return;
 
-    const { supabase } = ctx.services;
-    const { char, errorText } = await getCharacterByTg(ctx);
+  const { supabase } = ctx.services;
+  const { char, errorText } = await getCharacterByTg(ctx);
 
-    if (!char) {
-      await ctx.reply(errorText!);
-      return;
-    }
+  if (!char) {
+    await ctx.reply(errorText!);
+    return;
+  }
 
-    const { data: vehicles, error } = await supabase
-      .from("vehicles")
-      .select("id, title, type, capacity, fuel_percent, current_region_id, current_spot_id")
-      .eq("owner_char_id", char.id);
+  const { data: vehicles, error } = await supabase
+    .from("vehicles")
+    .select("id, title, type, capacity, fuel_percent, current_region_id, current_spot_id")
+    .eq("owner_char_id", char.id);
 
-    if (error) {
-      console.error("list my vehicles error:", error);
-      await ctx.reply("در خواندن وسایل نقلیه مشکلی پیش آمد.");
-      return;
-    }
+  if (error) {
+    console.error("list my vehicles error:", error);
+    await ctx.reply("در خواندن وسایل نقلیه مشکلی پیش آمد.");
+    return;
+  }
 
-    if (!vehicles || vehicles.length === 0) {
-      await ctx.reply(
-        "هنوز هیچ وسیله‌ای در جهان اکلیس برایت ثبت نشده.\n" +
-          "از ارباب یا شاپ درخواست کن برایت وسیله ثبت کنند."
-      );
-      return;
-    }
-
-    const lines: string[] = [];
-    const kb = new InlineKeyboard();
-
-    for (const v of vehicles) {
-      lines.push(
-        `• [${v.id}] ${v.title} (${v.type}) – ظرفیت: ${v.capacity} – سوخت: ${v.fuel_percent}%`
-      );
-      kb.text(`سوار ${v.title}`, `veh:board:${v.id}`).row();
-    }
-
+  if (!vehicles || vehicles.length === 0) {
     await ctx.reply(
-      "🚗 وسایل نقلیه‌ی تو در اکلیس:\n\n" + lines.join("\n"),
-      { reply_markup: kb }
+      "هنوز هیچ وسیله‌ای در جهان اکلیس برایت ثبت نشده.\n" +
+      "از ارباب یا شاپ درخواست کن برایت وسیله ثبت کنند."
     );
-  });
+    return;
+  }
+
+  const lines: string[] = [];
+  const kb = new InlineKeyboard();
+
+  for (const v of vehicles) {
+    lines.push(
+      `• [${v.id}] ${v.title} (${v.type}) – ظرفیت: ${v.capacity} – سوخت: ${v.fuel_percent}%`
+    );
+    kb.text(`سوار ${v.title}`, `veh:board:${v.id}`).row();
+  }
+
+  await ctx.reply(
+    "🚗 وسایل نقلیه‌ی تو در اکلیس:\n\n" + lines.join("\n"),
+    { reply_markup: kb }
+  );
+});
+
 
   //
   // 🚗 سوار شدن روی وسیله
