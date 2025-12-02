@@ -380,25 +380,34 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
       return;
     }
 
-    // ویزارد ثبت وسیله
-    if (!s.vehicleWizard) {
-      // هیچ ویزارد فعالی نیست → بقیه هندلرها (مثل مسیر های من) اجرا بشن
-      return next();
-    }
+     // ویزارد ثبت وسیله
+  if (!s.vehicleWizard) {
+    // هیچ ویزارد فعالی نیست → بقیه هندلرها (مثل مسیر های من) اجرا بشن
+    return next();
+  }
 
-    const w = s.vehicleWizard;
+  const w = s.vehicleWizard;
 
-    // فقط پیام‌های ادمین همان چت
-    if (
-      !ctx.chat ||
-      ctx.chat.id !== w.chatId ||
-      !ctx.from ||
-      ctx.from.id !== w.adminId
-    ) {
-      return next();
-    }
+  // فقط پیام‌های ادمین همان چت
+  if (
+    !ctx.chat ||
+    ctx.chat.id !== w.chatId ||
+    !ctx.from ||
+    ctx.from.id !== w.adminId
+  ) {
+    return next();
+  }
 
-    const step = w.step;
+  const step = w.step;
+
+
+      // امکان لغو در هر مرحله با نوشتن «لغو»
+  if (text === "لغو") {
+    s.vehicleWizard = undefined;
+    await ctx.reply("❌ فرایند ثبت وسیله لغو شد.");
+    return;
+  }
+
 
     if (step === "ask_char_code") {
       const { data: char, error } = await supabase
