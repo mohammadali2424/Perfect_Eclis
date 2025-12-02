@@ -464,3 +464,104 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
       const w = s.vehicleWizard;
       await ctx.reply(
         "🧾 خلاصه اطلاعات وسیله:\n" +
+          `صاحب:\n` +
+          `• نام: ${w.targetCharName || "—"}\n` +
+          `• کد: ${w.targetCharCode}\n` +
+          `• خاندان: ${w.targetClanName || "—"}\n\n` +
+          `وسیله:\n` +
+          `• نوع: ${w.vehicleType}\n` +
+          `• ظرفیت سرنشین: ${w.capacity}\n` +
+          `• نام: ${w.title}\n\n` +
+          "آیا تایید می‌کنی؟",
+        { reply_markup: kb }
+      );
+      return;
+    }
+  });
+
+  //
+  // تایید / لغو ثبت وسیله
+  //
+  bot.callbackQuery("shop:vehicle:confirm", async (ctx) => {
+    const s = (ctx.session as SessionData);
+    const w = s.vehicleWizard;
+    const { supabase } = ctx.services;
+
+    if (!w || w.mode !== "create" || w.step !== "confirm") {
+      await ctx.answerCallbackQuery({
+        text: "ویزارد ثبت وسیله فعال نیست.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (
+      !w.targetCharId ||
+      !w.vehicleType ||
+      w.capacity === undefined ||
+      !w.title
+    ) {
+      await ctx.answerCallbackQuery({
+        text: "اطلاعات ناقص است.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    // گرفتن لوکیشن فعلی کاراکتر برای لوکیشن اولیه ماشین
+    const { data: char, error: charErr } = await supabase
+      .from("characters")
+      .select("current_region_id, current_spot_id")
+      .eq("id", w.targetCharId)
+      .maybeSingle();
+
+    if (charErr) {
+      console.error("reload character error:", charErr);
+    }
+
+    const insertPayload: any = {
+      owner_char_id: w.targetCharId,
+      title: w.title,
+      type: w.vehicleType,
+      capacity: w.capacity,
+      fuel_percent: 100,
+    };
+
+    if (char) {
+      insertPayload.current_region_id = char.current_region_id;
+      insertPayload.current_spot_id = char.current_spot_id;
+    }
+
+    const { error } = await supabase
+      .from("vehicles")
+      .insert(insertPayload)
+      .single();
+
+    if (error) {
+      console.error("insert vehicle error:", error);
+      await ctx.editMessageText(
+        "در ثبت وسیله مشکلی پیش آمد. لطفاً بعداً دوباره تلاش کن."
+      );
+      s.vehicleWizard = undefined;
+      return;
+    }
+
+    await ctx.editMessageText(
+      "✅ وسیله با موفقیت ثبت شد.\n" +
+        "سوخت اولیه: ۱۰۰٪ فلوکس.\n" +
+        "اگر لوکیشن کاراکتر مشخص بود، این همان نقطه‌ی اولیه‌ی وسیله است."
+    );
+
+    s.vehicleWizard = undefined;
+  });
+
+  bot.callbackQuery("shop:vehicle:cancel", async (ctx) => {
+    const s = (ctx.session as SessionData);
+    s.vehicleWizard = undefined;
+    await ctx.editMessageText("❌ ثبت وسیله لغو شد.");
+  });
+
+  //
+  // (بعداً می‌شود اینجا «حذف وسیله»، «ویرایش وسیله» و «لیست افراد دارای وسیله» را هم اضافه کرد)
+  //
+}
