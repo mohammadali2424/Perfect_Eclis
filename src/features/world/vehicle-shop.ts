@@ -1,10 +1,12 @@
-import { Bot, InlineKeyboard } from "grammy";
+import { Bot } from "grammy";
 import { MyContext } from "../../core/types";
 import { MASTER_ID } from "../../core/config";
 
 type SessionData = MyContext["session"] & {
   vehicleWizard?: {
     mode: "create";
+    chatId: number;              // چتی که ویزارد توش فعاله (گروه شاپ)
+    adminId: number;             // کی داره ویزارد رو می‌ره
     step: "ask_char_code" | "ask_type" | "ask_capacity" | "ask_title" | "confirm";
     targetCharId?: number;
     targetCharCode?: string;
@@ -14,9 +16,17 @@ type SessionData = MyContext["session"] & {
     capacity?: number;
     title?: string;
   };
+  awaitingFluxPrice?: boolean;   // برای ثبت سراسری قیمت فلوکس
 };
 
-/** Helper: load shop_settings */
+function isMaster(ctx: MyContext): boolean {
+  return !!ctx.from && ctx.from.id === MASTER_ID;
+}
+
+function isGroup(ctx: MyContext): boolean {
+  return !!ctx.chat && ctx.chat.type !== "private";
+}
+
 async function getShopChatId(ctx: MyContext): Promise<number | null> {
   const { supabase } = ctx.services;
   const { data, error } = await supabase
@@ -32,7 +42,6 @@ async function getShopChatId(ctx: MyContext): Promise<number | null> {
   return data?.shop_chat_id ?? null;
 }
 
-/** Helper: load bank_settings */
 async function getBankChatId(ctx: MyContext): Promise<number | null> {
   const { supabase } = ctx.services;
   const { data, error } = await supabase
@@ -48,21 +57,11 @@ async function getBankChatId(ctx: MyContext): Promise<number | null> {
   return data?.bank_chat_id ?? null;
 }
 
-/** Helper: is master */
-function isMaster(ctx: MyContext): boolean {
-  return !!ctx.from && ctx.from.id === MASTER_ID;
-}
-
-/** Helper: is in group */
-function isGroup(ctx: MyContext): boolean {
-  return !!ctx.chat && ctx.chat.type !== "private";
-}
-
-/** Helper: check shop admin */
 async function isShopAdminOrMaster(ctx: MyContext): Promise<boolean> {
   if (isMaster(ctx)) return true;
   const { supabase } = ctx.services;
   if (!ctx.from) return false;
+
   const { data, error } = await supabase
     .from("shop_admins")
     .select("id")
@@ -76,20 +75,33 @@ async function isShopAdminOrMaster(ctx: MyContext): Promise<boolean> {
   return !!data;
 }
 
-/** Helper: send DM */
-async function sendDM(ctx: MyContext, userId: number, text: string, kb?: InlineKeyboard) {
-  try {
-    await ctx.api.sendMessage(userId, text, {
-      reply_markup: kb,
-    });
-  } catch (e) {
-    console.error("sendDM failed:", e);
+async function getCharacterByTg(ctx: MyContext) {
+  const { supabase } = ctx.services;
+  if (!ctx.from) return { char: null, errorText: "کاربر تلگرام نامشخص است." };
+
+  const { data, error } = await supabase
+    .from("characters")
+    .select("*")
+    .eq("tg_id", ctx.from.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("getCharacterByTg error:", error);
+    return { char: null, errorText: "خطا در خواندن اطلاعات کاراکتر." };
   }
+  if (!data) {
+    return {
+      char: null,
+      errorText:
+        "هنوز کاراکتر برایت ثبت نشده.\nبا دستور ثبت من / یا سیستم ثبت نام، اول کاراکترت را بساز.",
+    };
+  }
+  return { char: data, errorText: null as string | null };
 }
 
 export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
   //
-  // ثبت / حذف گروه بانک
+  // 🏦 ثبت / حذف گروه بانک
   //
   bot.hears("ثبت گروه بانک", async (ctx) => {
     if (!isMaster(ctx) || !isGroup(ctx)) return;
@@ -138,12 +150,12 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
 
     await ctx.reply(
       "🏦 این گروه دیگر به عنوان گروه بانک شناخته نمی‌شود.\n" +
-        "تا ثبت دوباره بانک، تراکنش جدیدی ارسال نخواهد شد."
+        "تا ثبت دوباره بانک، تراکنش جدیدی ثبت نمی‌شود."
     );
   });
 
   //
-  // ثبت / حذف گروه شاپ
+  // 🛒 ثبت / حذف گروه شاپ
   //
   bot.hears("ثبت گروه شاپ", async (ctx) => {
     if (!isMaster(ctx) || !isGroup(ctx)) return;
@@ -194,7 +206,7 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
   });
 
   //
-  // ثبت / حذف ادمین شاپ (با ریپلای)
+  // 👤 ثبت / حذف ادمین شاپ (با ریپلای)
   //
   bot.hears("ثبت ادمین شاپ", async (ctx) => {
     if (!isMaster(ctx) || !isGroup(ctx)) return;
@@ -264,44 +276,23 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
   });
 
   //
-  // ثبت سراسری قیمت فلوکس
+  // 🧪 ثبت سراسری قیمت فلوکس (در هر گروهی، ولی فقط برای ارباب)
   //
   bot.hears("ثبت سراسری قیمت فلوکس", async (ctx) => {
     if (!isMaster(ctx)) return;
 
-    const kb = new InlineKeyboard().text(
-      "🧪 تنظیم قیمت پایه فلوکس",
-      "econ:fluxprice:start"
-    );
+    const s = ctx.session as SessionData;
+    s.awaitingFluxPrice = true;
 
-    await sendDM(
-      ctx,
-      MASTER_ID,
+    await ctx.reply(
       "🧪 ثبت سراسری قیمت فلوکس\n" +
         "یک عدد بفرست که قیمت پایه فلوکس را مشخص کند (Solen برای هر ۱٪ باک).\n" +
-        "مثال: اگر ۵ بفرستی، پر کردن ۲۰٪ باک = ۱۰۰ Solen.",
-      kb
-    );
-
-    // پیام گروه رو نگه می‌داریم، فقط در پی‌وی ادامه می‌دیم
-    if (isGroup(ctx)) {
-      await ctx.reply("لینک تنظیم قیمت فلوکس به پی‌وی ارباب ارسال شد.");
-    }
-  });
-
-  bot.callbackQuery("econ:fluxprice:start", async (ctx) => {
-    (ctx.session as SessionData).vehicleWizard = undefined;
-    (ctx.session as any).awaitingFluxPrice = true;
-
-    await ctx.editMessageText(
-      "🧪 قیمت پایه فلوکس:\n" +
-        "یک عدد بفرست (Solen برای هر ۱٪ باک).\n" +
-        "مثال: 5 یا 7.5"
+        "مثال: اگر ۵ بفرستی، پر کردن ۲۰٪ باک = ۱۰۰ Solen."
     );
   });
 
   //
-  // ثبت وسیله – شروع از گروه شاپ، ادامه در پی‌وی ادمین
+  // 🚗 ثبت وسیله (در گروه شاپ، ویزارد در همان گروه)
   //
   bot.hears("ثبت وسیله", async (ctx) => {
     if (!isGroup(ctx)) return;
@@ -314,37 +305,38 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
       return;
     }
 
-    const adminId = ctx.from!.id;
     const s = ctx.session as SessionData;
     s.vehicleWizard = {
       mode: "create",
+      chatId: ctx.chat!.id,
+      adminId: ctx.from!.id,
       step: "ask_char_code",
     };
 
-    await sendDM(
-      ctx,
-      adminId,
+    await ctx.reply(
       "🚗 ثبت وسیله جدید\n" +
         "ابتدا آیدی شخصی کاراکتر (char_code) را بفرست.\n" +
         "مثال: NECRO_ASHEN_01"
     );
-
-    await ctx.reply("ویزارد ثبت وسیله در پی‌وی برایت شروع شد.");
   });
 
   //
-  // Wizard ثبت وسیله در پی‌وی ادمین شاپ
+  // 🎛 هندل پیام‌های متنی برای:
+  //  - قیمت فلوکس (awaitingFluxPrice)
+  //  - ویزارد ثبت وسیله (vehicleWizard)
   //
   bot.on("message:text", async (ctx) => {
-    if (ctx.chat.type !== "private") return;
-
     const s = ctx.session as SessionData;
     const { supabase } = ctx.services;
+    const text = ctx.message.text.trim();
 
-    // هندل ثبت قیمت فلوکس
-    if ((ctx.session as any).awaitingFluxPrice && isMaster(ctx)) {
-      const raw = ctx.message.text.trim().replace(",", ".");
+    //
+    // قیمت فلوکس
+    //
+    if (s.awaitingFluxPrice && isMaster(ctx)) {
+      const raw = text.replace(",", ".");
       const value = Number(raw);
+
       if (!isFinite(value) || value <= 0) {
         await ctx.reply("عدد نامعتبر. یک مقدار مثبت بفرست.");
         return;
@@ -363,23 +355,38 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
         return;
       }
 
-      (ctx.session as any).awaitingFluxPrice = false;
+      s.awaitingFluxPrice = false;
       await ctx.reply(
         `✅ قیمت پایه فلوکس روی ${value} Solen برای هر ۱٪ باک تنظیم شد.`
       );
       return;
     }
 
-    if (!s.vehicleWizard || s.vehicleWizard.mode !== "create") return;
+    //
+    // ویزارد ثبت وسیله
+    //
+    if (!s.vehicleWizard) return;
 
-    const step = s.vehicleWizard.step;
-    const text = ctx.message.text.trim();
+    const w = s.vehicleWizard;
+
+    // فقط پیام‌های ادمین همان چت
+    if (
+      !ctx.chat ||
+      ctx.chat.id !== w.chatId ||
+      !ctx.from ||
+      ctx.from.id !== w.adminId
+    ) {
+      return;
+    }
+
+    const step = w.step;
 
     if (step === "ask_char_code") {
-      // پیدا کردن کاراکتر با char_code
       const { data: char, error } = await supabase
         .from("characters")
-        .select("id, char_name, clan_name, char_code, current_region_id, current_spot_id")
+        .select(
+          "id, char_name, clan_name, char_code, current_region_id, current_spot_id"
+        )
         .eq("char_code", text)
         .maybeSingle();
 
@@ -395,11 +402,11 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
         return;
       }
 
-      s.vehicleWizard.targetCharId = char.id;
-      s.vehicleWizard.targetCharCode = char.char_code;
-      s.vehicleWizard.targetCharName = char.char_name;
-      s.vehicleWizard.targetClanName = char.clan_name;
-      s.vehicleWizard.step = "ask_type";
+      w.targetCharId = char.id;
+      w.targetCharCode = char.char_code;
+      w.targetCharName = char.char_name;
+      w.targetClanName = char.clan_name;
+      w.step = "ask_type";
 
       await ctx.reply(
         `کاراکتر پیدا شد:\n` +
@@ -412,8 +419,8 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
     }
 
     if (step === "ask_type") {
-      s.vehicleWizard.vehicleType = text;
-      s.vehicleWizard.step = "ask_capacity";
+      w.vehicleType = text;
+      w.step = "ask_capacity";
       await ctx.reply(
         "ظرفیت سرنشین را بنویس (چند نفر می‌توانند سوار شوند؟ عدد صحیح)."
       );
@@ -426,21 +433,16 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
         await ctx.reply("ظرفیت باید یک عدد صحیح صفر یا بیشتر باشد.");
         return;
       }
-      s.vehicleWizard.capacity = cap;
-      s.vehicleWizard.step = "ask_title";
+      w.capacity = cap;
+      w.step = "ask_title";
       await ctx.reply("نام نمایش وسیله را بفرست (مثال: شبح نقره‌ای).");
       return;
     }
 
     if (step === "ask_title") {
-      s.vehicleWizard.title = text;
-      s.vehicleWizard.step = "confirm";
+      w.title = text;
+      w.step = "confirm";
 
-      const kb = new InlineKeyboard()
-        .text("✅ تایید", "shop:vehicle:confirm")
-        .text("❌ لغو", "shop:vehicle:cancel");
-
-      const w = s.vehicleWizard;
       await ctx.reply(
         "🧾 خلاصه اطلاعات وسیله:\n" +
           `صاحب:\n` +
@@ -451,99 +453,82 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
           `• نوع: ${w.vehicleType}\n` +
           `• ظرفیت سرنشین: ${w.capacity}\n` +
           `• نام: ${w.title}\n\n` +
-          "آیا تایید می‌کنی؟",
-        { reply_markup: kb }
+          "اگر تایید می‌کنی، بنویس: «تایید»\n" +
+          "اگر نمی‌خواهی، بنویس: «لغو»"
       );
       return;
     }
-  });
 
-  //
-  // تایید / لغو ثبت وسیله
-  //
-  bot.callbackQuery("shop:vehicle:confirm", async (ctx) => {
-    const s = ctx.session as SessionData;
-    const w = s.vehicleWizard;
-    const { supabase } = ctx.services;
+    if (step === "confirm") {
+      if (text === "لغو") {
+        s.vehicleWizard = undefined;
+        await ctx.reply("❌ ثبت وسیله لغو شد.");
+        return;
+      }
+      if (text !== "تایید") {
+        await ctx.reply("برای تایید بنویس «تایید»، برای لغو بنویس «لغو».");
+        return;
+      }
 
-    if (!w || w.mode !== "create" || w.step !== "confirm") {
-      await ctx.answerCallbackQuery({
-        text: "ویزارد ثبت وسیله فعال نیست.",
-        show_alert: true,
-      });
-      return;
-    }
+      if (
+        !w.targetCharId ||
+        !w.vehicleType ||
+        w.capacity === undefined ||
+        !w.title
+      ) {
+        await ctx.reply("اطلاعات ناقص است، ویزارد ریست می‌شود.");
+        s.vehicleWizard = undefined;
+        return;
+      }
 
-    if (
-      !w.targetCharId ||
-      !w.vehicleType ||
-      w.capacity === undefined ||
-      !w.title
-    ) {
-      await ctx.answerCallbackQuery({
-        text: "اطلاعات ناقص است.",
-        show_alert: true,
-      });
-      return;
-    }
+      // لوکیشن فعلی کاراکتر برای لوکیشن اولیه وسیله
+      const { data: char, error: charErr } = await supabase
+        .from("characters")
+        .select("current_region_id, current_spot_id")
+        .eq("id", w.targetCharId)
+        .maybeSingle();
 
-    // گرفتن لوکیشن فعلی کاراکتر برای لوکیشن اولیه ماشین
-    const { data: char, error: charErr } = await supabase
-      .from("characters")
-      .select("current_region_id, current_spot_id")
-      .eq("id", w.targetCharId)
-      .maybeSingle();
+      if (charErr) {
+        console.error("reload character error:", charErr);
+      }
 
-    if (charErr) {
-      console.error("reload character error:", charErr);
-    }
+      const insertPayload: any = {
+        owner_char_id: w.targetCharId,
+        title: w.title,
+        type: w.vehicleType,
+        capacity: w.capacity,
+        fuel_percent: 100,
+      };
 
-    const insertPayload: any = {
-      owner_char_id: w.targetCharId,
-      title: w.title,
-      type: w.vehicleType,
-      capacity: w.capacity,
-      fuel_percent: 100,
-    };
+      if (char) {
+        insertPayload.current_region_id = char.current_region_id;
+        insertPayload.current_spot_id = char.current_spot_id;
+      }
 
-    if (char) {
-      insertPayload.current_region_id = char.current_region_id;
-      insertPayload.current_spot_id = char.current_spot_id;
-    }
+      const { error } = await supabase
+        .from("vehicles")
+        .insert(insertPayload)
+        .single();
 
-    const { error } = await supabase
-      .from("vehicles")
-      .insert(insertPayload)
-      .single();
+      if (error) {
+        console.error("insert vehicle error:", error);
+        await ctx.reply("در ثبت وسیله مشکلی پیش آمد. لطفاً بعداً دوباره تلاش کن.");
+        s.vehicleWizard = undefined;
+        return;
+      }
 
-    if (error) {
-      console.error("insert vehicle error:", error);
-      await ctx.editMessageText(
-        "در ثبت وسیله مشکلی پیش آمد. لطفاً بعداً دوباره تلاش کن."
+      await ctx.reply(
+        "✅ وسیله با موفقیت ثبت شد.\n" +
+          "سوخت اولیه: ۱۰۰٪ فلوکس.\n" +
+          "اگر لوکیشن کاراکتر مشخص بود، این همان نقطه‌ی اولیه‌ی وسیله است."
       );
+
       s.vehicleWizard = undefined;
       return;
     }
-
-    await ctx.editMessageText(
-      "✅ وسیله با موفقیت ثبت شد.\n" +
-        "سوخت اولیه: ۱۰۰٪ فلوکس.\n" +
-        "اگر لوکیشن کاراکتر مشخص بود، این همان نقطه‌ی اولیه‌ی وسیله است."
-    );
-
-    s.vehicleWizard = undefined;
-  });
-
-  bot.callbackQuery("shop:vehicle:cancel", async (ctx) => {
-    const s = ctx.session as SessionData;
-    s.vehicleWizard = undefined;
-    await ctx.editMessageText("❌ ثبت وسیله لغو شد.");
   });
 
   //
-  // TODO:
-  // - حذف وسیله
-  // - ویرایش وسیله
-  // - لیست افراد دارای وسیله نقلیه (گزارش بر اساس خاندان)
+  // (بعداً اینجا می‌تونیم: حذف وسیله، ویرایش وسیله، لیست افراد دارای وسیله نقلیه رو هم اضافه کنیم)
   //
 }
