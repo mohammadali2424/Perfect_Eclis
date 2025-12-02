@@ -345,6 +345,27 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
   //
   // 🎛 هندل پیام‌های متنی برای قیمت فلوکس و ویزارد ثبت وسیله
   //
+
+    bot.hears("لغو ثبت وسیله", async (ctx) => {
+    if (!isGroup(ctx)) return;
+
+    const shopId = await getShopChatId(ctx);
+    if (!shopId || ctx.chat!.id !== shopId) return;
+
+    if (!(await isShopAdminOrMaster(ctx))) {
+      await ctx.reply("این دستور فقط برای ارباب یا ادمین‌های شاپ فعال است.");
+      return;
+    }
+
+    const s = ctx.session as SessionData;
+    if (s.vehicleWizard) {
+      s.vehicleWizard = undefined;
+      await ctx.reply("❌ فرایند ثبت وسیله برای این ادمین لغو شد.");
+    } else {
+      await ctx.reply("هیچ فرایند فعالی برای ثبت وسیله در حال حاضر وجود ندارد.");
+    }
+  });
+
   bot.on("message:text", async (ctx, next) => {
     const s = ctx.session as SessionData;
     const { supabase } = ctx.services;
