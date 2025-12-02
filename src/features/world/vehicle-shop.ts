@@ -325,7 +325,7 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
   //  - قیمت فلوکس (awaitingFluxPrice)
   //  - ویزارد ثبت وسیله (vehicleWizard)
   //
-  bot.on("message:text", async (ctx) => {
+bot.on("message:text", async (ctx, next) => {
     const s = ctx.session as SessionData;
     const { supabase } = ctx.services;
     const text = ctx.message.text.trim();
@@ -333,13 +333,9 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
     //
     // قیمت فلوکس
     //
-    if (s.awaitingFluxPrice && isMaster(ctx)) {
-      const raw = text.replace(",", ".");
-      const value = Number(raw);
-
       if (!isFinite(value) || value <= 0) {
         await ctx.reply("عدد نامعتبر. یک مقدار مثبت بفرست.");
-        return;
+        return; // اینجا من هندل کردم، دیگه لازم نیست next
       }
 
       const { error } = await supabase
@@ -365,9 +361,12 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
     //
     // ویزارد ثبت وسیله
     //
-    if (!s.vehicleWizard) return;
+    if (!s.vehicleWizard) {
+      // ⬅️ یعنی این هندلر کاری با این پیام ندارد، بقیه هندلرها رو صدا کن
+      return next();
+    }
 
-    const w = s.vehicleWizard;
+  const w = s.vehicleWizard;
 
     // فقط پیام‌های ادمین همان چت
     if (
@@ -376,7 +375,8 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
       !ctx.from ||
       ctx.from.id !== w.adminId
     ) {
-      return;
+      // این پیام اصلاً به ویزارد ما ربطی ندارد → بدیم بقیه هندلرها
+      return next();
     }
 
     const step = w.step;
