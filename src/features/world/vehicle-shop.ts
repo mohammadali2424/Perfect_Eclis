@@ -2,21 +2,30 @@ import { Bot } from "grammy";
 import { MyContext } from "../../core/types";
 import { MASTER_ID } from "../../core/config";
 
+type VehicleWizardStep =
+  | "ask_char_code"
+  | "ask_type"
+  | "ask_capacity"
+  | "ask_title"
+  | "confirm";
+
+type VehicleWizard = {
+  mode: "create";
+  chatId: number; // چتی که ویزارد توش فعاله (گروه شاپ)
+  adminId: number; // کی داره ویزارد رو می‌ره
+  step: VehicleWizardStep;
+  targetCharId?: number;
+  targetCharCode?: string;
+  targetCharName?: string | null;
+  targetClanName?: string | null;
+  vehicleType?: string;
+  capacity?: number;
+  title?: string;
+};
+
 type SessionData = MyContext["session"] & {
-  vehicleWizard?: {
-    mode: "create";
-    chatId: number;              // چتی که ویزارد توش فعاله (گروه شاپ)
-    adminId: number;             // کی داره ویزارد رو می‌ره
-    step: "ask_char_code" | "ask_type" | "ask_capacity" | "ask_title" | "confirm";
-    targetCharId?: number;
-    targetCharCode?: string;
-    targetCharName?: string | null;
-    targetClanName?: string | null;
-    vehicleType?: string;
-    capacity?: number;
-    title?: string;
-  };
-  awaitingFluxPrice?: boolean;   // برای ثبت سراسری قیمت فلوکس
+  vehicleWizard?: VehicleWizard;
+  awaitingFluxPrice?: boolean;
 };
 
 function isMaster(ctx: MyContext): boolean {
@@ -39,6 +48,7 @@ async function getShopChatId(ctx: MyContext): Promise<number | null> {
     console.error("getShopChatId error:", error);
     return null;
   }
+
   return data?.shop_chat_id ?? null;
 }
 
@@ -54,11 +64,13 @@ async function getBankChatId(ctx: MyContext): Promise<number | null> {
     console.error("getBankChatId error:", error);
     return null;
   }
+
   return data?.bank_chat_id ?? null;
 }
 
 async function isShopAdminOrMaster(ctx: MyContext): Promise<boolean> {
   if (isMaster(ctx)) return true;
+
   const { supabase } = ctx.services;
   if (!ctx.from) return false;
 
@@ -72,12 +84,14 @@ async function isShopAdminOrMaster(ctx: MyContext): Promise<boolean> {
     console.error("isShopAdmin error:", error);
     return false;
   }
+
   return !!data;
 }
 
 async function getCharacterByTg(ctx: MyContext) {
   const { supabase } = ctx.services;
-  if (!ctx.from) return { char: null, errorText: "کاربر تلگرام نامشخص است." };
+  if (!ctx.from)
+    return { char: null, errorText: "کاربر تلگرام نامشخص است." };
 
   const { data, error } = await supabase
     .from("characters")
@@ -89,6 +103,7 @@ async function getCharacterByTg(ctx: MyContext) {
     console.error("getCharacterByTg error:", error);
     return { char: null, errorText: "خطا در خواندن اطلاعات کاراکتر." };
   }
+
   if (!data) {
     return {
       char: null,
@@ -96,6 +111,7 @@ async function getCharacterByTg(ctx: MyContext) {
         "هنوز کاراکتر برایت ثبت نشده.\nبا دستور ثبت من / یا سیستم ثبت نام، اول کاراکترت را بساز.",
     };
   }
+
   return { char: data, errorText: null as string | null };
 }
 
@@ -133,7 +149,9 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
 
     const currentBankId = await getBankChatId(ctx);
     if (currentBankId !== chatId) {
-      await ctx.reply("این گروه در حال حاضر به عنوان گروه بانک ثبت نشده است.");
+      await ctx.reply(
+        "این گروه در حال حاضر به عنوان گروه بانک ثبت نشده است."
+      );
       return;
     }
 
@@ -187,7 +205,9 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
 
     const currentShopId = await getShopChatId(ctx);
     if (currentShopId !== chatId) {
-      await ctx.reply("این گروه در حال حاضر به عنوان گروه شاپ ثبت نشده است.");
+      await ctx.reply(
+        "این گروه در حال حاضر به عنوان گروه شاپ ثبت نشده است."
+      );
       return;
     }
 
@@ -202,7 +222,7 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
       return;
     }
 
-    await ctx.reply("🛒 این گروه دیگر به عنوان گروه شاپ شناخته نمی‌شود.");
+    await ctx.reply("🛒 این گروه دیگر به عنوان شاپ شناخته نمی‌شود.");
   });
 
   //
@@ -216,7 +236,9 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
     const shopId = await getShopChatId(ctx);
 
     if (shopId === null || shopId !== chatId) {
-      await ctx.reply("این گروه شاپ ثبت‌شده نیست. ابتدا «ثبت گروه شاپ» را بزن.");
+      await ctx.reply(
+        "این گروه شاپ ثبت‌شده نیست. ابتدا «ثبت گروه شاپ» را بزن."
+      );
       return;
     }
 
@@ -276,7 +298,7 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
   });
 
   //
-  // 🧪 ثبت سراسری قیمت فلوکس (در هر گروهی، ولی فقط برای ارباب)
+  // 🧪 ثبت سراسری قیمت فلوکس
   //
   bot.hears("ثبت سراسری قیمت فلوکس", async (ctx) => {
     if (!isMaster(ctx)) return;
@@ -321,21 +343,21 @@ export function registerWorldVehicleShop(bot: Bot<MyContext>): void {
   });
 
   //
-  // 🎛 هندل پیام‌های متنی برای:
-  //  - قیمت فلوکس (awaitingFluxPrice)
-  //  - ویزارد ثبت وسیله (vehicleWizard)
+  // 🎛 هندل پیام‌های متنی برای قیمت فلوکس و ویزارد ثبت وسیله
   //
-bot.on("message:text", async (ctx, next) => {
+  bot.on("message:text", async (ctx, next) => {
     const s = ctx.session as SessionData;
     const { supabase } = ctx.services;
     const text = ctx.message.text.trim();
 
-    //
     // قیمت فلوکس
-    //
+    if (s.awaitingFluxPrice && isMaster(ctx)) {
+      const raw = text.replace(",", ".");
+      const value = Number(raw);
+
       if (!isFinite(value) || value <= 0) {
         await ctx.reply("عدد نامعتبر. یک مقدار مثبت بفرست.");
-        return; // اینجا من هندل کردم، دیگه لازم نیست next
+        return;
       }
 
       const { error } = await supabase
@@ -358,15 +380,13 @@ bot.on("message:text", async (ctx, next) => {
       return;
     }
 
-    //
     // ویزارد ثبت وسیله
-    //
     if (!s.vehicleWizard) {
-      // ⬅️ یعنی این هندلر کاری با این پیام ندارد، بقیه هندلرها رو صدا کن
+      // هیچ ویزارد فعالی نیست → بقیه هندلرها (مثل مسیر های من) اجرا بشن
       return next();
     }
 
-  const w = s.vehicleWizard;
+    const w = s.vehicleWizard;
 
     // فقط پیام‌های ادمین همان چت
     if (
@@ -375,7 +395,6 @@ bot.on("message:text", async (ctx, next) => {
       !ctx.from ||
       ctx.from.id !== w.adminId
     ) {
-      // این پیام اصلاً به ویزارد ما ربطی ندارد → بدیم بقیه هندلرها
       return next();
     }
 
@@ -512,7 +531,9 @@ bot.on("message:text", async (ctx, next) => {
 
       if (error) {
         console.error("insert vehicle error:", error);
-        await ctx.reply("در ثبت وسیله مشکلی پیش آمد. لطفاً بعداً دوباره تلاش کن.");
+        await ctx.reply(
+          "در ثبت وسیله مشکلی پیش آمد. لطفاً بعداً دوباره تلاش کن."
+        );
         s.vehicleWizard = undefined;
         return;
       }
@@ -526,6 +547,9 @@ bot.on("message:text", async (ctx, next) => {
       s.vehicleWizard = undefined;
       return;
     }
+
+    // اگر به هیچ مرحله‌ای نخورد:
+    return;
   });
 
   //
