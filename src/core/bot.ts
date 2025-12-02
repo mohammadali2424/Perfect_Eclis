@@ -2,7 +2,7 @@ import { Bot, session } from "grammy";
 import { BOT_TOKEN } from "./config";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
-
+import { registerWorldAdminCommands } from "../features/world/admin-commands";
 import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
@@ -34,6 +34,7 @@ bot.use((ctx, next) => {
 
 // رجیستر تمام فیچرها
 registerSecurityFeature(bot);
+registerWorldAdminCommands(bot);
 registerOnboardingFeature(bot);
 registerWorldAdminFeature(bot);
 registerTravelFeature(bot);
