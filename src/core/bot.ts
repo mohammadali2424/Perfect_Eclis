@@ -5,6 +5,7 @@ import { MyContext, SessionData, Services } from "./types";
 import { registerWorldAdminCommands } from "../features/world/admin-commands";
 import { registerSecurityFeature } from "../features/security/guard";
 import { registerTravelFeature } from "../features/world/travel";
+import { registerPathBuilderFeature } from "../features/world/path-builder";
 import { registerVehicleTravelFeature } from "../features/world/travel-vehicles";
 import { registerWorldVehicleShop } from "../features/world/vehicle-shop";
 import { registerWorldAdminFeature } from "../features/world/admin-builder";
@@ -38,6 +39,7 @@ bot.use((ctx, next) => {
 registerSecurityFeature(bot);
 registerWorldAdminCommands(bot);
 registerVehicleTravelFeature(bot);
+registerPathBuilderFeature(bot);
 registerOnboardingFeature(bot);
 registerWorldAdminFeature(bot);
 registerWorldVehicleShop(bot);
