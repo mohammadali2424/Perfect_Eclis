@@ -183,15 +183,16 @@ async function createFluxSession(
   ctx: MyContext,
   spotId: number,
   vehicleId: number,
-  charId: number
+  _charId: number   // 👈 هنوز می‌گیریم ولی فعلاً استفاده‌اش نمی‌کنیم
 ): Promise<number | null> {
   const { supabase } = ctx.services;
 
+  // همه‌ی session های active این Spot را بگیر
   const { data: activeSessions, error: countErr } = await supabase
     .from("flux_sessions")
     .select("id")
     .eq("spot_id", spotId)
-    .eq("state", "active"); // 👈 اینجا state است نه status
+    .eq("state", "active");
 
   if (countErr) {
     console.error("createFluxSession count error:", countErr);
@@ -200,17 +201,18 @@ async function createFluxSession(
 
   const activeCount = activeSessions?.length ?? 0;
 
+  // حداکثر دو پمپ فعال در هر Spot
   if (activeCount >= 2) {
     return null;
   }
 
+  // ❗ اینجا دیگه character_id نمی‌فرستیم
   const { data, error } = await supabase
     .from("flux_sessions")
     .insert({
       spot_id: spotId,
       vehicle_id: vehicleId,
-      character_id: charId,
-      state: "active", // 👈 این‌جا هم state
+      state: "active",
     })
     .select("id")
     .single();
@@ -222,6 +224,7 @@ async function createFluxSession(
 
   return data.id as number;
 }
+
 
 /**
  * آپدیت وضعیت session سوخت‌گیری
