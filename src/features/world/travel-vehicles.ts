@@ -382,6 +382,22 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       });
       return;
     }
+     if (char.current_vehicle_id === vehicle.id) {
+      const kb = new InlineKeyboard()
+        .text("🛣 مسیرهای رانندگی", `veh:paths:${vehicle.id}`)
+        .row()
+        .text("⛽ سوخت‌گیری", `veh:fuel:${vehicle.id}`)
+        .row()
+        .text("🚶 پیاده شو", `veh:leave:${vehicle.id}`);
+
+      await ctx.answerCallbackQuery();
+      await sendVehicleScreen(
+        ctx,
+        `هنوز سوار ${vehicle.title} هستی.\nسوخت فعلی: ${vehicle.fuel_percent}%`,
+        kb
+      );
+      return;
+    }
 
     // باید در همان Region/Spot وسیله باشی
     if (
