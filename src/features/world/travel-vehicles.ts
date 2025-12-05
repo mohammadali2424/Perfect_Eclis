@@ -46,7 +46,7 @@ async function getCharacterByTg(ctx: MyContext) {
 }
 
 /**
- * منوی اصلی پی‌وی (اگر نسخه‌ی اصلی‌ات چیز دیگری است، می‌تونی این را عوض کنی)
+ * منوی اصلی پی‌وی
  */
 function mainMenuKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard()
@@ -187,12 +187,11 @@ async function createFluxSession(
 ): Promise<number | null> {
   const { supabase } = ctx.services;
 
-  // خیلی ساده: همه‌ی sessionهای active این Spot را بگیر، بعد length بشمار
   const { data: activeSessions, error: countErr } = await supabase
     .from("flux_sessions")
     .select("id")
     .eq("spot_id", spotId)
-    .eq("status", "active");
+    .eq("state", "active"); // 👈 اینجا state است نه status
 
   if (countErr) {
     console.error("createFluxSession count error:", countErr);
@@ -201,7 +200,6 @@ async function createFluxSession(
 
   const activeCount = activeSessions?.length ?? 0;
 
-  // حداکثر دو پمپ فعال در هر Spot
   if (activeCount >= 2) {
     return null;
   }
@@ -212,7 +210,7 @@ async function createFluxSession(
       spot_id: spotId,
       vehicle_id: vehicleId,
       character_id: charId,
-      status: "active",
+      state: "active", // 👈 این‌جا هم state
     })
     .select("id")
     .single();
@@ -225,19 +223,18 @@ async function createFluxSession(
   return data.id as number;
 }
 
-
 /**
  * آپدیت وضعیت session سوخت‌گیری
  */
 async function finishFluxSession(
   ctx: MyContext,
   sessionId: number,
-  status: "done" | "cancelled"
+  newState: "done" | "cancelled"
 ) {
   const { supabase } = ctx.services;
   const { error } = await supabase
     .from("flux_sessions")
-    .update({ status })
+    .update({ state: newState }) // 👈 این‌جا هم state
     .eq("id", sessionId);
 
   if (error) {
@@ -386,7 +383,9 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       });
       return;
     }
-     if (char.current_vehicle_id === vehicle.id) {
+
+    // اگر همین الان سوار همین وسیله هستی، فقط منویش را نشان بده
+    if (char.current_vehicle_id === vehicle.id) {
       const kb = new InlineKeyboard()
         .text("🛣 مسیرهای رانندگی", `veh:paths:${vehicle.id}`)
         .row()
@@ -842,7 +841,6 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
 
     const bankChatId = await getBankChatId(ctx);
     if (!bankChatId) {
-      // با این‌حال اجازه سوخت‌گیری می‌دهیم، ولی هشدار می‌دهیم
       await ctx.answerCallbackQuery({
         text: "هشدار: گروه بانک هنوز ثبت نشده (ثبت گروه بانک).",
         show_alert: true,
@@ -1083,7 +1081,9 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
           `کاربر: ${mention}\n` +
           `کاراکتر: ${char.char_name ?? "نامشخص"}\n` +
           `وسیله: ${vehicle.title} (ID: ${vehicle.id})\n` +
-          `جایگاه: ${spot?.title ?? "نامشخص"}${regionTitle ? " / " + regionTitle : ""}\n` +
+          `جایگاه: ${spot?.title ?? "نامشخص"}${
+            regionTitle ? " / " + regionTitle : ""
+          }\n` +
           `درصد سوخت‌گیری: ${actualPercent}%\n` +
           `مبلغ: ${totalCost} سولن\n` +
           "───────────────\n" +
