@@ -187,9 +187,10 @@ async function createFluxSession(
 ): Promise<number | null> {
   const { supabase } = ctx.services;
 
-  const { data: activeCountRes, error: countErr } = await supabase
+  // خیلی ساده: همه‌ی sessionهای active این Spot را بگیر، بعد length بشمار
+  const { data: activeSessions, error: countErr } = await supabase
     .from("flux_sessions")
-    .select("id", { count: "exact", head: true })
+    .select("id")
     .eq("spot_id", spotId)
     .eq("status", "active");
 
@@ -198,9 +199,11 @@ async function createFluxSession(
     return null;
   }
 
-  const activeCount = (activeCountRes as any)?.length ?? 0;
+  const activeCount = activeSessions?.length ?? 0;
+
+  // حداکثر دو پمپ فعال در هر Spot
   if (activeCount >= 2) {
-    return null; // هر دو پمپ مشغول
+    return null;
   }
 
   const { data, error } = await supabase
@@ -221,6 +224,7 @@ async function createFluxSession(
 
   return data.id as number;
 }
+
 
 /**
  * آپدیت وضعیت session سوخت‌گیری
