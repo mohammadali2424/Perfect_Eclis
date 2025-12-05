@@ -192,7 +192,7 @@ async function createFluxSession(
     .from("flux_sessions")
     .select("id")
     .eq("spot_id", spotId)
-    .eq("state", "active"); // حواسمون هست ستون stateـه
+    .eq("state", "active"); // ستون state
 
   if (countErr) {
     console.error("createFluxSession count error:", countErr);
@@ -201,10 +201,32 @@ async function createFluxSession(
 
   const activeCount = activeSessions?.length ?? 0;
 
-  // حداکثر ۲ پمپ در هر Spot
+  // حداکثر ۲ پمپ هم‌زمان
   if (activeCount >= 2) {
     return null;
   }
+
+  // اینجا همه ستون‌های not-null رو پر می‌کنیم: spot_id, vehicle_id, char_id, mode, state
+  const { data, error } = await supabase
+    .from("flux_sessions")
+    .insert({
+      spot_id: spotId,
+      vehicle_id: vehicleId,
+      char_id: charId,
+      mode: "fuel",   // 👈 این خط جدید مهمه
+      state: "active",
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error("createFluxSession insert error:", error);
+    return null;
+  }
+
+  return data.id as number;
+}
+
 
   // 👇 اینجا مهم‌ترین خطاست: باید char_id رو پر کنیم
   const { data, error } = await supabase
