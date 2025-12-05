@@ -75,9 +75,6 @@ function buildModesKeyboard(state: PathWizardState) {
 }
 
 export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
-  //
-  // ۱) دستور «ساخت مسیر» داخل گروه Region
-  //
   bot.hears("ساخت مسیر", async (ctx) => {
     if (!ctx.chat || (ctx.chat.type !== "group" && ctx.chat.type !== "supergroup")) {
       return;
@@ -90,11 +87,10 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
 
     const { supabase } = ctx.services;
 
-    // پیام در گروه رو پاک کن
     try {
       await ctx.deleteMessage();
     } catch (e) {
-      // مهم نیست
+      // ignore
     }
 
     const { data: region, error: regErr } = await supabase
@@ -106,7 +102,7 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
     if (regErr || !region) {
       await ctx.reply(
         "این گروه هنوز به عنوان Region ثبت نشده.\n" +
-          "اول /worldadmin یا «ساخت منطقه» رو بزن."
+          "اول /worldadmin یا «ساخت منطقه» را بزن."
       );
       return;
     }
@@ -126,7 +122,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
 
     setWizard(ctx, baseState);
 
-    // پیام اولیه در پی‌وی ارباب
     await ctx.api.sendMessage(
       ctx.from.id,
       `🧵 شروع ساخت مسیر جدید برای Region: «${region.title}»\n\n` +
@@ -142,9 +137,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
     );
   });
 
-  //
-  // فقط callbackهای pb:* در پی‌وی ارباب
-  //
   bot.callbackQuery(/^pb:/, async (ctx, next) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID) {
       await ctx.answerCallbackQuery();
@@ -157,9 +149,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
     return next();
   });
 
-  //
-  // لغو ویزارد
-  //
   bot.callbackQuery("pb:cancel", async (ctx) => {
     const wiz = getWizard(ctx);
     if (!wiz) {
@@ -171,9 +160,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
     await ctx.editMessageText("❌ فرایند ساخت مسیر لغو شد.");
   });
 
-  //
-  // انتخاب نوع مقصد: همان Region یا Region دیگر
-  //
   bot.callbackQuery(/^pb:kind:(same|other)$/, async (ctx) => {
     const wiz = getWizard(ctx);
     if (!wiz) {
@@ -183,11 +169,9 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
     await ctx.answerCallbackQuery();
 
     const kind = ctx.match![1];
-
     const { supabase } = ctx.services;
 
     if (kind === "same") {
-      // مقصد همان Region
       wiz.targetRegionId = wiz.fromRegionId;
       wiz.step = "chooseFromSpot";
       setWizard(ctx, wiz);
@@ -218,7 +202,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
         { reply_markup: kb }
       );
     } else {
-      // other: اتصال بین Region‌ها
       wiz.step = "chooseTargetRegion";
       setWizard(ctx, wiz);
 
@@ -234,8 +217,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
       }
 
       const kb = new InlineKeyboard();
-
-      // اول خود Region فعلی
       for (const r of regions as any[]) {
         const label =
           r.id === wiz.fromRegionId
@@ -245,16 +226,12 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
       }
       kb.text("❌ لغو", "pb:cancel");
 
-      await ctx.editMessageText(
-        "🎯 Region مقصد را انتخاب کن:",
-        { reply_markup: kb }
-      );
+      await ctx.editMessageText("🎯 Region مقصد را انتخاب کن:", {
+        reply_markup: kb,
+      });
     }
   });
 
-  //
-  // انتخاب Region مقصد (برای حالت other)
-  //
   bot.callbackQuery(/^pb:targetRegion:(\d+)$/, async (ctx) => {
     const wiz = getWizard(ctx);
     if (!wiz) {
@@ -278,8 +255,7 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
 
     if (error || !fromSpots || fromSpots.length === 0) {
       await ctx.editMessageText(
-        "در Region مبدأ هیچ Spotی ثبت نشده.\n" +
-          "اول Spot بساز."
+        "در Region مبدأ هیچ Spotی ثبت نشده.\n" + "اول Spot بساز."
       );
       setWizard(ctx, null);
       return;
@@ -297,9 +273,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
     );
   });
 
-  //
-  // انتخاب Spot مبدأ
-  //
   bot.callbackQuery(/^pb:fromSpot:(\d+)$/, async (ctx) => {
     const wiz = getWizard(ctx);
     if (!wiz || !wiz.targetRegionId) {
@@ -342,9 +315,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
     );
   });
 
-  //
-  // انتخاب Spot مقصد → بعد می‌رویم روی گرفتن زمان
-  //
   bot.callbackQuery(/^pb:toSpot:(\d+)$/, async (ctx) => {
     const wiz = getWizard(ctx);
     if (!wiz) {
@@ -365,9 +335,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
     );
   });
 
-  //
-  // پیام متنی در پی‌وی ارباب: گرفتن زمان در مرحله askTime
-  //
   bot.on("message:text", async (ctx, next) => {
     if (!ctx.from || ctx.from.id !== MASTER_ID || ctx.chat?.type !== "private") {
       return next();
@@ -411,9 +378,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
     );
   });
 
-  //
-  // انتخاب جهت مسیر
-  //
   bot.callbackQuery(/^pb:dir:(forward|backward|both)$/, async (ctx) => {
     const wiz = getWizard(ctx);
     if (!wiz) {
@@ -434,9 +398,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
     );
   });
 
-  //
-  // عوض کردن تیک‌ها
-  //
   bot.callbackQuery(
     /^pb:mode:(walk|drive|transport|blockmount)$/,
     async (ctx) => {
@@ -460,14 +421,11 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
           reply_markup: buildModesKeyboard(wiz),
         });
       } catch (e) {
-        // مهم نیست
+        // ignore
       }
     }
   );
 
-  //
-  // ثبت نهایی مسیر
-  //
   bot.callbackQuery(/^pb:save:(once|again)$/, async (ctx) => {
     const wiz = getWizard(ctx);
     if (!wiz || wiz.step !== "chooseModes") {
@@ -527,7 +485,7 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    const mode = ctx.match![1]; // once | again
+    const mode = ctx.match![1];
 
     if (mode === "once") {
       setWizard(ctx, null);
@@ -536,7 +494,6 @@ export function registerPathBuilderFeature(bot: Bot<MyContext>): void {
           "هر وقت خواستی، دوباره «ساخت مسیر» را بزن تا مسیر دیگری بسازی."
       );
     } else {
-      // again: همان fromRegion، targetRegion و fromSpot را نگه می‌داریم
       wiz.toSpotId = undefined;
       wiz.travelSeconds = undefined;
       wiz.driveSeconds = undefined;
