@@ -183,16 +183,16 @@ async function createFluxSession(
   ctx: MyContext,
   spotId: number,
   vehicleId: number,
-  _charId: number   // 👈 هنوز می‌گیریم ولی فعلاً استفاده‌اش نمی‌کنیم
+  charId: number
 ): Promise<number | null> {
   const { supabase } = ctx.services;
 
-  // همه‌ی session های active این Spot را بگیر
+  // همه‌ی sessionهای active این Spot
   const { data: activeSessions, error: countErr } = await supabase
     .from("flux_sessions")
     .select("id")
     .eq("spot_id", spotId)
-    .eq("state", "active");
+    .eq("state", "active"); // حواسمون هست ستون stateـه
 
   if (countErr) {
     console.error("createFluxSession count error:", countErr);
@@ -201,17 +201,18 @@ async function createFluxSession(
 
   const activeCount = activeSessions?.length ?? 0;
 
-  // حداکثر دو پمپ فعال در هر Spot
+  // حداکثر ۲ پمپ در هر Spot
   if (activeCount >= 2) {
     return null;
   }
 
-  // ❗ اینجا دیگه character_id نمی‌فرستیم
+  // 👇 اینجا مهم‌ترین خطاست: باید char_id رو پر کنیم
   const { data, error } = await supabase
     .from("flux_sessions")
     .insert({
       spot_id: spotId,
       vehicle_id: vehicleId,
+      char_id: charId,   // 👈 اسم ستون واقعی در دیتابیس تو
       state: "active",
     })
     .select("id")
