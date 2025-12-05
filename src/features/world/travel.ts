@@ -532,6 +532,22 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     })
     .eq("id", char.id);
 
+    // اگر سوار وسیله‌ای هستی، وسیله را هم به مکان جدید منتقل کن
+  if (char.current_vehicle_id) {
+    const { error: vehMoveErr } = await supabase
+      .from("vehicles")
+      .update({
+        current_region_id: char.pending_region_id,
+        current_spot_id: char.pending_spot_id,
+      })
+      .eq("id", char.current_vehicle_id);
+
+    if (vehMoveErr) {
+      console.error("move vehicle with character error:", vehMoveErr);
+    }
+  }
+
+
   if (upErr) {
     console.error("arrive update error:", upErr);
     const kb = new InlineKeyboard().text("🧭 مسیرها", "paths:open");
