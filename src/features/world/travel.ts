@@ -4,24 +4,27 @@ import { MASTER_ID } from "../../core/config";
 
 const INACTIVE_DAYS = 7;
 
-// کمک‌کننده برای حالت «صفحه» در پی‌وی
+// نمایش «صفحه» در پی‌وی، با پاک کردن پیام قبلی
 async function sendScreen(
   ctx: MyContext,
   text: string,
   keyboard?: InlineKeyboard
 ): Promise<void> {
-  const isCallback = !!ctx.callbackQuery?.message;
-  if (isCallback) {
-    try {
-      await ctx.editMessageText(text, {
-        reply_markup: keyboard,
-      });
-      return;
-    } catch (e) {
-      console.warn("editMessageText failed, falling back to reply:", e);
+  if (ctx.chat?.type === "private") {
+    const s = (ctx.session as any) || {};
+    const lastId: number | undefined = s.ui_last_message_id;
+    if (lastId) {
+      try {
+        await ctx.api.deleteMessage(ctx.chat.id, lastId);
+      } catch {
+        // اگر نتوانست حذف کند، مهم نیست
+      }
     }
+    const msg = await ctx.reply(text, { reply_markup: keyboard });
+    (ctx.session as any).ui_last_message_id = msg.message_id;
+  } else {
+    await ctx.reply(text, { reply_markup: keyboard });
   }
-  await ctx.reply(text, { reply_markup: keyboard });
 }
 
 function diffDays(fromIso: string): number {
@@ -303,7 +306,7 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
   const char = await ensureCharacterFor(ctx, ctx.from.id);
   if (!char) return;
 
-  // قانون: تا یک پیام در گروه فعلی نداده، اجازه‌ی تغییر مسیر ندارد
+  // اگر سیستم «اول یک پیام بنویس» فعال باشد
   if (char.must_speak_before_travel) {
     const kb = new InlineKeyboard().text("🔙 مسیرها", "paths:open");
 
@@ -316,7 +319,7 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
     return;
   }
 
-  // چک‌کردن قفل Region فعلی
+  // قفل بودن Region فعلی
   if (char.current_region_id) {
     const { data: curRegion } = await supabase
       .from("regions")
@@ -422,6 +425,7 @@ async function startTravelFromEdge(ctx: MyContext, edgeId: number): Promise<void
 
   const kb = new InlineKeyboard()
     .text("رسیدم؟", "travel:arrive")
+    .row()
     .text("لغو مسیر", "travel:cancel")
     .row()
     .text("🔙 مسیرها", "paths:open");
@@ -535,7 +539,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     return;
   }
 
-  // تلاش برای کیک‌کردن از Region قبلی و ساخت لینک دعوت Region جدید
+  // تلاش برای کیک از Region قبلی و ساخت لینک مقصد
   let inviteUrl: string | null = null;
 
   if (destRegion?.telegram_chat_id) {
@@ -797,12 +801,12 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await showQuickMap(ctx);
   });
 
-  // /path برای تست
+  // /path
   bot.command("path", async (ctx) => {
     await showPaths(ctx);
   });
 
-  // /mymap برای تست
+  // /mymap
   bot.command("mymap", async (ctx) => {
     await showQuickMap(ctx);
   });
@@ -811,7 +815,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   bot.command("arrive", handleArrive);
   bot.command("canceltravel", handleCancelTravel);
 
-  // کلیک روی مسیر
+  // کلیک روی مسیرها / سفر
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data;
 
