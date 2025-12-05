@@ -8,6 +8,7 @@ import { registerTravelFeature } from "../features/world/travel";
 import { registerPathBuilderFeature } from "../features/worldbuilder/path-builder";
 import { registerVehicleTravelFeature } from "../features/world/travel-vehicles";
 import { registerWorldVehicleShop } from "../features/economy/vehicle-shop";
+import { registerFluxBuilderFeature } from "../features/worldbuilder/flux-builder";
 import { registerWorldAdminFeature } from "../features/worldbuilder/admin-builder";
 import { registerOnboardingFeature } from "../features/world/onboarding";
 
@@ -39,6 +40,7 @@ bot.use((ctx, next) => {
 registerSecurityFeature(bot);
 registerWorldAdminCommands(bot);
 registerVehicleTravelFeature(bot);
+registerFluxBuilderFeature(bot);
 registerPathBuilderFeature(bot);
 registerOnboardingFeature(bot);
 registerWorldAdminFeature(bot);
