@@ -116,6 +116,67 @@ function computeFuelUsagePercent(driveSeconds: number): number {
 }
 
 /**
+ * تعداد راننده و مسافران یک وسیله
+ */
+async function getVehicleLoad(
+  ctx: MyContext,
+  vehicleId: number
+): Promise<{ driverId: number | null; passengerIds: number[] }> {
+  const { supabase } = ctx.services;
+
+  // راننده
+  const { data: drivers, error: dErr } = await supabase
+    .from("characters")
+    .select("id")
+    .eq("riding_vehicle_id", vehicleId);
+
+  if (dErr) {
+    console.error("getVehicleLoad driver error:", dErr);
+  }
+
+  const driverId =
+    drivers && drivers.length > 0 ? (drivers[0].id as number) : null;
+
+  // مسافران
+  const { data: passengers, error: pErr } = await supabase
+    .from("vehicle_passengers")
+    .select("character_id")
+    .eq("vehicle_id", vehicleId);
+
+  if (pErr) {
+    console.error("getVehicleLoad passenger error:", pErr);
+  }
+
+  const passengerIds = (passengers ?? []).map(
+    (p: any) => p.character_id as number
+  );
+
+  return { driverId, passengerIds };
+}
+
+/**
+ * آیا این کاراکتر الان مسافر وسیله‌ای هست یا نه
+ */
+async function isCharacterPassenger(
+  ctx: MyContext,
+  charId: number
+): Promise<boolean> {
+  const { supabase } = ctx.services;
+  const { data, error } = await supabase
+    .from("vehicle_passengers")
+    .select("id")
+    .eq("character_id", charId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("isCharacterPassenger error:", error);
+    return false;
+  }
+
+  return !!data;
+}
+
+/**
  * chat_id بانک از bank_settings
  */
 async function getBankChatId(ctx: MyContext): Promise<number | null> {
