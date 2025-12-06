@@ -46,7 +46,7 @@ async function getCharacterByTg(ctx: MyContext) {
 }
 
 /**
- * منوی اصلی پی‌وی
+ * منوی اصلی پی‌وی (برای برگشت به حالت عادی)
  */
 function mainMenuKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard()
@@ -57,7 +57,7 @@ function mainMenuKeyboard(): InlineKeyboard {
 }
 
 /**
- * «صفحه» مخصوص وسایل نقلیه در پی‌وی، با پاک کردن پیام قبلی
+ * ارسال «صفحه» در پی‌وی با حذف پیام قبلی
  */
 async function sendVehicleScreen(
   ctx: MyContext,
@@ -65,17 +65,17 @@ async function sendVehicleScreen(
   keyboard?: InlineKeyboard
 ): Promise<void> {
   if (ctx.chat?.type === "private") {
-    const s = (ctx.session as any) || {};
+    const s = ctx.session as any;
     const lastId: number | undefined = s.ui_last_message_id;
     if (lastId) {
       try {
         await ctx.api.deleteMessage(ctx.chat.id, lastId);
       } catch {
-        // مهم نیست
+        // مهم نیست اگر پاک نشد
       }
     }
     const msg = await ctx.reply(text, { reply_markup: keyboard });
-    (ctx.session as any).ui_last_message_id = msg.message_id;
+    s.ui_last_message_id = msg.message_id;
   } else {
     await ctx.reply(text, { reply_markup: keyboard });
   }
@@ -116,7 +116,7 @@ function computeFuelUsagePercent(driveSeconds: number): number {
 }
 
 /**
- * گرفتن chat_id بانک از bank_settings
+ * chat_id بانک از bank_settings
  */
 async function getBankChatId(ctx: MyContext): Promise<number | null> {
   const { supabase } = ctx.services;
@@ -134,7 +134,7 @@ async function getBankChatId(ctx: MyContext): Promise<number | null> {
 }
 
 /**
- * قیمت پایه فلوکس (به ازای هر درصد)
+ * قیمت پایه فلوکس (به ازای هر ۱٪)
  */
 async function getGlobalFluxPrice(ctx: MyContext): Promise<number> {
   const { supabase } = ctx.services;
@@ -152,7 +152,7 @@ async function getGlobalFluxPrice(ctx: MyContext): Promise<number> {
 }
 
 /**
- * تنظیمات فلوکس روی Spot
+ * تنظیمات Spot برای فلوکس
  */
 async function getSpotFluxConfig(
   ctx: MyContext,
@@ -177,7 +177,7 @@ async function getSpotFluxConfig(
 }
 
 /**
- * ساخت session سوخت‌گیری (تا نهایتاً ۲ پمپ فعال در هر Spot)
+ * ساخت session برای سوخت‌گیری در یک Spot (حداکثر ۲ پمپ فعال)
  */
 async function createFluxSession(
   ctx: MyContext,
@@ -187,12 +187,12 @@ async function createFluxSession(
 ): Promise<number | null> {
   const { supabase } = ctx.services;
 
-  // همه‌ی sessionهای active این Spot
+  // sessionهای active این Spot
   const { data: activeSessions, error: countErr } = await supabase
     .from("flux_sessions")
     .select("id")
     .eq("spot_id", spotId)
-    .eq("state", "active"); // ستون state
+    .eq("state", "active");
 
   if (countErr) {
     console.error("createFluxSession count error:", countErr);
@@ -201,19 +201,19 @@ async function createFluxSession(
 
   const activeCount = activeSessions?.length ?? 0;
 
-  // حداکثر ۲ پمپ هم‌زمان
+  // حداکثر ۲ پمپ در هر Spot
   if (activeCount >= 2) {
     return null;
   }
 
-  // اینجا همه ستون‌های not-null رو پر می‌کنیم: spot_id, vehicle_id, char_id, mode, state
+  // اینجا باید همه ستون‌های not-null را پر کنیم: spot_id, vehicle_id, char_id, mode, state
   const { data, error } = await supabase
     .from("flux_sessions")
     .insert({
       spot_id: spotId,
       vehicle_id: vehicleId,
       char_id: charId,
-      mode: "fuel",   // 👈 این خط جدید مهمه
+      mode: "fuel",
       state: "active",
     })
     .select("id")
@@ -226,28 +226,6 @@ async function createFluxSession(
 
   return data.id as number;
 }
-
-
-  // 👇 اینجا مهم‌ترین خطاست: باید char_id رو پر کنیم
-  const { data, error } = await supabase
-    .from("flux_sessions")
-    .insert({
-      spot_id: spotId,
-      vehicle_id: vehicleId,
-      char_id: charId,   // 👈 اسم ستون واقعی در دیتابیس تو
-      state: "active",
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    console.error("createFluxSession insert error:", error);
-    return null;
-  }
-
-  return data.id as number;
-}
-
 
 /**
  * آپدیت وضعیت session سوخت‌گیری
@@ -260,7 +238,7 @@ async function finishFluxSession(
   const { supabase } = ctx.services;
   const { error } = await supabase
     .from("flux_sessions")
-    .update({ state: newState }) // 👈 این‌جا هم state
+    .update({ state: newState })
     .eq("id", sessionId);
 
   if (error) {
@@ -311,7 +289,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
   // 🏁 «ماشین های من»
   //
   bot.hears(/ماشین.?های.?من/i, async (ctx) => {
-    if (ctx.chat.type !== "private") return;
+    if (ctx.chat?.type !== "private") return;
 
     const { supabase } = ctx.services;
     const { char, errorText } = await getCharacterByTg(ctx);
@@ -410,7 +388,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    // اگر همین الان سوار همین وسیله هستی، فقط منویش را نشان بده
+    // اگر همین الان سوار همین وسیله هستی
     if (char.current_vehicle_id === vehicle.id) {
       const kb = new InlineKeyboard()
         .text("🛣 مسیرهای رانندگی", `veh:paths:${vehicle.id}`)
@@ -541,7 +519,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
   });
 
   //
-  // 🛣 مسیرهای رانندگی در نقطه‌ی فعلی
+  // 🛣 مسیرهای رانندگی از Spot فعلی
   //
   bot.callbackQuery(/veh:paths:(\d+)/, async (ctx) => {
     if (ctx.chat?.type !== "private") {
