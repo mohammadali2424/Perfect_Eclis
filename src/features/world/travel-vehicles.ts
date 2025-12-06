@@ -184,7 +184,7 @@ async function createFluxSession(
   spotId: number,
   vehicleId: number,
   charId: number
-): Promise<number | null> {
+): Promise<number | null | "error"> {
   const { supabase } = ctx.services;
 
   // sessionهای active این Spot
@@ -196,14 +196,14 @@ async function createFluxSession(
 
   if (countErr) {
     console.error("createFluxSession count error:", countErr);
-    return null;
+    return "error"; // 👈 خطای فنی در شمارش
   }
 
   const activeCount = activeSessions?.length ?? 0;
 
   // حداکثر ۲ پمپ در هر Spot
   if (activeCount >= 2) {
-    return null;
+    return null; // 👈 این یکی یعنی واقعا پمپ‌ها پرن
   }
 
   // اینجا باید همه ستون‌های not-null را پر کنیم: spot_id, vehicle_id, char_id, mode, state
@@ -221,11 +221,12 @@ async function createFluxSession(
 
   if (error) {
     console.error("createFluxSession insert error:", error);
-    return null;
+    return "error"; // 👈 اینم خطای فنی (مثل همین constraint ها)
   }
 
   return data.id as number;
 }
+
 
 /**
  * آپدیت وضعیت session سوخت‌گیری
