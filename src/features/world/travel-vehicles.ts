@@ -884,15 +884,26 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    const sessionId = await createFluxSession(ctx, spotId, vehicle.id, char.id);
-    if (sessionId === null) {
-      await sendVehicleScreen(
-        ctx,
-        "⛽ هر دو پمپ این جایگاه در حال استفاده هستند.\n" +
-          "باید کمی صبر کنی تا یکی از پمپ‌ها خالی شود."
-      );
-      return;
-    }
+   const sessionId = await createFluxSession(ctx, spotId, vehicle.id, char.id);
+
+if (sessionId === "error") {
+  await sendVehicleScreen(
+    ctx,
+    "در ساخت نوبت سوخت‌گیری مشکلی فنی پیش آمد.\n" +
+      "اگر این خطا تکرار شد، به ارباب بگو نگاهی به لاگ‌ها و تنظیمات چاه فلوکس بیندازد."
+  );
+  return;
+}
+
+if (sessionId === null) {
+  await sendVehicleScreen(
+    ctx,
+    "⛽ هر دو پمپ این جایگاه در حال استفاده هستند.\n" +
+      "باید کمی صبر کنی تا یکی از پمپ‌ها خالی شود."
+  );
+  return;
+}
+
 
     (ctx.session as any).fuelWizard = {
       spotId,
