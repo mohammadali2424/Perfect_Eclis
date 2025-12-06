@@ -184,7 +184,7 @@ async function createFluxSession(
   spotId: number,
   vehicleId: number,
   charId: number
-): Promise<number | null | "error"> {
+): Promise<number | null> {
   const { supabase } = ctx.services;
 
   // sessionهای active این Spot
@@ -196,16 +196,17 @@ async function createFluxSession(
 
   if (countErr) {
     console.error("createFluxSession count error:", countErr);
-    return "error"; // 👈 خطای فنی
+    return null;
   }
 
   const activeCount = activeSessions?.length ?? 0;
 
   // حداکثر ۲ پمپ در هر Spot
   if (activeCount >= 2) {
-    return null; // 👈 معنیش: واقعا پمپ‌ها پرن
+    return null;
   }
 
+  // اینجا باید همه ستون‌های not-null را پر کنیم: spot_id, vehicle_id, char_id, mode, state
   const { data, error } = await supabase
     .from("flux_sessions")
     .insert({
@@ -220,32 +221,12 @@ async function createFluxSession(
 
   if (error) {
     console.error("createFluxSession insert error:", error);
-    return "error"; // 👈 این‌جا هم خطای فنی
+    return null;
   }
 
   return data.id as number;
 }
 
-
-  const { data, error } = await supabase
-    .from("flux_sessions")
-    .insert({
-      spot_id: spotId,
-      vehicle_id: vehicleId,
-      char_id: charId,
-      mode: "fuel",
-      state: "active",
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    console.error("createFluxSession insert error:", error);
-    return "error"; // 👈 این‌جا هم خطای فنی
-  }
-
-  return data.id as number;
-}
 /**
  * آپدیت وضعیت session سوخت‌گیری
  */
@@ -408,7 +389,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
     }
 
     // اگر همین الان سوار همین وسیله هستی
-    if (char.current_vehicle_id === vehicle.id) {
+    if (char.riding_vehicle_id === vehicle.id) {
       const kb = new InlineKeyboard()
         .text("🛣 مسیرهای رانندگی", `veh:paths:${vehicle.id}`)
         .row()
@@ -442,7 +423,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
     }
 
     // اگر سوار وسیله‌ی دیگری است
-    if (char.current_vehicle_id && char.current_vehicle_id !== vehicle.id) {
+    if (char.riding_vehicle_id && char.riding_vehicle_id !== vehicle.id) {
       await ctx.answerCallbackQuery({
         text: "الان سوار یک وسیله‌ی دیگر هستی. اول از آن پیاده شو.",
         show_alert: true,
@@ -452,11 +433,11 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
 
     const { error: updErr } = await supabase
       .from("characters")
-      .update({ current_vehicle_id: vehicle.id })
+      .update({ riding_vehicle_id: vehicle.id })
       .eq("id", char.id);
 
     if (updErr) {
-      console.error("set current_vehicle_id error:", updErr);
+      console.error("set riding_vehicle_id error:", updErr);
       await ctx.answerCallbackQuery({
         text: "در سوار شدن مشکلی پیش آمد.",
         show_alert: true,
@@ -503,7 +484,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    if (char.current_vehicle_id !== vehicleId) {
+    if (char.riding_vehicle_id !== vehicleId) {
       await ctx.answerCallbackQuery({
         text: "الان روی این وسیله سوار نیستی.",
         show_alert: true,
@@ -513,7 +494,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
 
     const { error: updErr } = await supabase
       .from("characters")
-      .update({ current_vehicle_id: null })
+      .update({ riding_vehicle_id: null })
       .eq("id", char.id);
 
     if (updErr) {
@@ -557,7 +538,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    if (char.current_vehicle_id !== vehicleId) {
+    if (char.riding_vehicle_id !== vehicleId) {
       await ctx.answerCallbackQuery({
         text: "برای دیدن مسیرهای رانندگی، باید روی این وسیله سوار باشی.",
         show_alert: true,
@@ -657,7 +638,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    if (char.current_vehicle_id !== vehicleId) {
+    if (char.riding_vehicle_id !== vehicleId) {
       await ctx.answerCallbackQuery({
         text: "برای حرکت با این مسیر، باید سوار همان وسیله باشی.",
         show_alert: true,
@@ -768,6 +749,8 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
           0,
           vehicle.fuel_percent - fuelNeededPercent
         ),
+        current_region_id: destRegionId,
+        current_spot_id: destSpot.id,
       })
       .eq("id", vehicle.id);
 
@@ -884,26 +867,15 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-   const sessionId = await createFluxSession(ctx, spotId, vehicle.id, char.id);
-
-if (sessionId === "error") {
-  await sendVehicleScreen(
-    ctx,
-    "در ساخت نوبت سوخت‌گیری مشکلی فنی پیش آمد.\n" +
-      "اگر این خطا تکرار شد، به ارباب بگو نگاهی به لاگ‌ها و تنظیمات چاه فلوکس بیندازد."
-  );
-  return;
-}
-
-if (sessionId === null) {
-  await sendVehicleScreen(
-    ctx,
-    "⛽ هر دو پمپ این جایگاه در حال استفاده هستند.\n" +
-      "باید کمی صبر کنی تا یکی از پمپ‌ها خالی شود."
-  );
-  return;
-}
-
+    const sessionId = await createFluxSession(ctx, spotId, vehicle.id, char.id);
+    if (sessionId === null) {
+      await sendVehicleScreen(
+        ctx,
+        "⛽ هر دو پمپ این جایگاه در حال استفاده هستند.\n" +
+          "باید کمی صبر کنی تا یکی از پمپ‌ها خالی شود."
+      );
+      return;
+    }
 
     (ctx.session as any).fuelWizard = {
       spotId,
