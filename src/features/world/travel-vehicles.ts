@@ -225,6 +225,27 @@ async function createFluxSession(
 
   return data.id as number;
 }
+
+
+  const { data, error } = await supabase
+    .from("flux_sessions")
+    .insert({
+      spot_id: spotId,
+      vehicle_id: vehicleId,
+      char_id: charId,
+      mode: "fuel",
+      state: "active",
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error("createFluxSession insert error:", error);
+    return "error"; // 👈 این‌جا هم خطای فنی
+  }
+
+  return data.id as number;
+}
 /**
  * آپدیت وضعیت session سوخت‌گیری
  */
