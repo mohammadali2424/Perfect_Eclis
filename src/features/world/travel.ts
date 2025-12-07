@@ -904,7 +904,7 @@ function buildMainMenu(): InlineKeyboard {
     .row()
     .text("🚗 ماشین های من", "veh:my")
     .row()
-    .text("🚕 مسافر شوم", "ui:ride_hint");
+    .text("🚕 مسافر شوم", "ride_hint");
 }
 
 export async function showMainMenu(ctx: MyContext) {
