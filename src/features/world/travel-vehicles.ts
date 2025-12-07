@@ -496,7 +496,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
     await showRideMenu(ctx);
   });
 
-    //
+   //
   // ✅ درخواست سوار شدن به یک وسیله به عنوان مسافر
   //
   bot.callbackQuery(/ride:req:(\d+)/, async (ctx) => {
@@ -566,7 +566,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    // باید در همان مکان باشی که ماشین هست
+    // 👇 حتماً باید کنار ماشین باشی
     if (
       vehicle.current_region_id == null ||
       vehicle.current_spot_id == null ||
@@ -574,7 +574,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       vehicle.current_spot_id !== char.current_spot_id
     ) {
       await ctx.answerCallbackQuery({
-        text: "برای سوار شدن باید کنار همان وسیله باشی.",
+        text: "برای سوار شدن باید در همان مکان (Region و Spot) که وسیله پارک شده است باشی.",
         show_alert: true,
       });
       return;
@@ -584,6 +584,22 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
     const usedSeats = (driverId ? 1 : 0) + passengerIds.length;
     const freeSeats = (vehicle.capacity ?? 1) - usedSeats;
 
+    if (!driverId) {
+      await ctx.answerCallbackQuery({
+        text: "برای این وسیله هنوز راننده‌ای سوار نشده.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (driverId === char.id) {
+      await ctx.answerCallbackQuery({
+        text: "خودت راننده‌ی این وسیله‌ای. از «ماشین های من» استفاده کن.",
+        show_alert: true,
+      });
+      return;
+    }
+
     if (freeSeats <= 0) {
       await ctx.answerCallbackQuery({
         text: "این وسیله دیگر جایی برای مسافر ندارد.",
@@ -592,73 +608,64 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    // ثبت به عنوان مسافر
-    const { error: insErr } = await supabase
-      .from("vehicle_passengers")
-      .insert({
-        vehicle_id: vehicle.id,
-        character_id: char.id,
-      });
+    // 👇 مرحله بعد: درخواست می‌فرستیم برای راننده، نه سوار شدن مستقیم
+    const { data: driverChar, error: dErr } = await supabase
+      .from("characters")
+      .select("id, tg_id, char_name")
+      .eq("id", driverId)
+      .maybeSingle();
 
-    if (insErr) {
-      console.error("ride:req insert passenger error:", insErr);
+    if (dErr || !driverChar || !driverChar.tg_id) {
+      console.error("ride:req load driverChar error:", dErr);
       await ctx.answerCallbackQuery({
-        text: "در سوار شدن به عنوان مسافر مشکلی پیش آمد.",
+        text: "راننده‌ی این وسیله پیدا نشد.",
         show_alert: true,
       });
       return;
     }
 
-    const { error: updErr } = await supabase
-      .from("characters")
-      .update({ riding_vehicle_id: vehicle.id })
-      .eq("id", char.id);
+    const passengerName =
+      char.char_name ?? ctx.from?.first_name ?? "یک مسافر ناشناس";
 
-    if (updErr) {
-      console.error("ride:req update character error:", updErr);
+    const kb = new InlineKeyboard()
+      .text("✅ قبول", `ride:approve:${vehicle.id}:${char.id}`)
+      .row()
+      .text("❌ رد", `ride:reject:${vehicle.id}:${char.id}`);
+
+    try {
+      await ctx.api.sendMessage(
+        driverChar.tg_id,
+        `🚕 درخواست مسافر\n\n` +
+          `مسافر: ${passengerName}\n` +
+          `وسیله: ${vehicle.title}\n` +
+          `مکان: ${vehicle.current_region_id}/${vehicle.current_spot_id}\n\n` +
+          `می‌خواهی سوارش کنی؟`,
+        { reply_markup: kb }
+      );
+    } catch (e) {
+      console.error("ride:req notify driver error:", e);
       await ctx.answerCallbackQuery({
-        text: "در ثبت وضعیت سوار شدن مشکلی پیش آمد.",
+        text: "در اطلاع دادن به راننده مشکلی پیش آمد.",
         show_alert: true,
       });
       return;
     }
 
     await ctx.answerCallbackQuery({
-      text: `به عنوان مسافر سوار ${vehicle.title} شدی.`,
+      text: "درخواستت برای راننده ارسال شد.",
       show_alert: false,
     });
 
     await sendVehicleScreen(
       ctx,
-      `به عنوان مسافر سوار ${vehicle.title} شدی.\n` +
-        "راننده با «🛣 مسیرهای رانندگی» حرکت می‌کند.\n" +
-        "وقتی به مقصد رسیدید، با «رسیدم؟» تو هم به مقصد می‌رسی.",
+      `درخواست سوار شدن به «${vehicle.title}» برای راننده ارسال شد.\n` +
+        "منتظر بمان تا راننده قبول یا رد کند.",
       mainMenuKeyboard()
     );
-
-    // اطلاع دادن به راننده (اگر بتوانیم)
-    if (driverId) {
-      const { data: driverChar, error: dErr } = await supabase
-        .from("characters")
-        .select("tg_id")
-        .eq("id", driverId)
-        .maybeSingle();
-
-      if (!dErr && driverChar?.tg_id) {
-        try {
-          await ctx.api.sendMessage(
-            driverChar.tg_id,
-            `🧍 یک مسافر جدید سوار ${vehicle.title} شد.\n` +
-              `نام: ${char.char_name ?? ctx.from?.first_name ?? "یک مسافر"}`
-          );
-        } catch (e) {
-          console.error("notify driver passenger boarded error:", e);
-        }
-      }
-    }
   });
 
 
+  
   
   bot.hears(/ماشین.?های.?من/i, async (ctx) => {
     if (ctx.chat?.type !== "private") return;
