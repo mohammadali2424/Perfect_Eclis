@@ -868,3 +868,35 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await next();
   });
 }
+
+async function sendPvScreen(
+  ctx: MyContext,
+  text: string,
+  keyboard?: InlineKeyboard
+) {
+  if (ctx.chat?.type === "private") {
+    const lastId = (ctx.session as any).ui_last_message_id as
+      | number
+      | undefined;
+
+    if (lastId) {
+      try {
+        await ctx.api.deleteMessage(ctx.chat.id, lastId);
+      } catch {
+        // اگر پیام قبلی پاک نشد، بی‌خیال
+      }
+    }
+
+    const msg = await ctx.reply(text, {
+      reply_markup: keyboard,
+      parse_mode: "HTML",
+    });
+
+    (ctx.session as any).ui_last_message_id = msg.message_id;
+  } else {
+    await ctx.reply(text, {
+      reply_markup: keyboard,
+      parse_mode: "HTML",
+    });
+  }
+}
