@@ -900,3 +900,24 @@ async function sendPvScreen(
     });
   }
 }
+
+function buildMainMenu(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🧭 مسیر های من", "paths:open")
+    .row()
+    .text("🗺 نقشه سریع من", "mymap:open")
+    .row()
+    .text("🚗 ماشین های من", "veh:my")
+    .row()
+    .text("🚕 مسافر شوم", "ui:ride_menu");
+}
+
+export async function showMainMenu(ctx: MyContext) {
+  await sendPvScreen(
+    ctx,
+    "<b>نقشه‌ی زنده‌ی اکلیس</b>\n\n" +
+      "از اینجا می‌توانی مسیرت را انتخاب کنی، موقعیتت را ببینی، " +
+      "یا سراغ ماشین‌ها و مسافربری بروی.",
+    buildMainMenu()
+  );
+}
