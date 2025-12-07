@@ -580,13 +580,14 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     }
   }
 
-  const kb = new InlineKeyboard();
+ const kb = new InlineKeyboard();
 
-  if (inviteUrl) {
-    kb.text("🚪 ورود به مکان جدید", inviteUrl);
-  } else {
-    kb.text("🧭 مسیرها", "paths:open");
-  }
+if (inviteUrl) {
+  kb.url("🚪 ورود به مکان جدید", inviteUrl); 
+} else {
+  kb.text("🧭 مسیرها", "paths:open");
+}
+
 
   const destRegionTitle = destRegion?.title || "Region نامشخص";
   const destSpotTitle = destSpot?.title || "Spot نامشخص";
