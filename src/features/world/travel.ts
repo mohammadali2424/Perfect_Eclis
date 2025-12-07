@@ -99,15 +99,17 @@ async function showPaths(ctx: MyContext): Promise<void> {
   const char = await ensureCharacterFor(ctx, ctx.from.id);
   if (!char) return;
 
-  // اگر سوار وسیله نقلیه‌ای، مسیرهای پیاده در دسترس نیست
-  if (char.current_vehicle_id) {
+
+  // اگر داخل یک وسیله (راننده یا مسافر) هستی، مسیرهای پیاده در دسترس نیست
+  if (char.riding_vehicle_id) {
     await sendScreen(
       ctx,
       "الان سوار یک وسیله‌ی نقلیه هستی.\n" +
-        "برای استفاده از مسیرهای پیاده، اول باید از وسیله‌ات پیاده شوی (یا در پی‌وی بنویس: «ماشین های من»)."
+        "برای استفاده از مسیرهای پیاده، اول باید از وسیله‌ات پیاده شوی (از منوی «🚗 ماشین های من» یا دکمه «🚶 پیاده شو»)."
     );
     return;
   }
+
 
   // اگر هنوز سفر قبلی به پایان نرسیده / ثبت نشده
   if (char.pending_region_id && char.travel_ready_at) {
