@@ -1105,6 +1105,28 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       })
       .eq("id", char.id);
 
+        // مسافرهای این وسیله را هم همراه راننده در سفر قرار بده
+    const { passengerIds } = await getVehicleLoad(ctx, vehicle.id);
+
+    if (passengerIds.length > 0) {
+      const { error: updPassengersErr } = await supabase
+        .from("characters")
+        .update({
+          pending_region_id: destRegionId,
+          pending_spot_id: destSpot.id,
+          travel_ready_at: arrival.toISOString(),
+          travel_total_seconds: driveSeconds,
+          travel_started_at: now.toISOString(),
+          last_move_at: now.toISOString(),
+        })
+        .in("id", passengerIds);
+
+      if (updPassengersErr) {
+        console.error("veh:go update passengers error:", updPassengersErr);
+      }
+    }
+
+
     if (updCharErr) {
       console.error("veh:go update character error:", updCharErr);
       await ctx.answerCallbackQuery({
