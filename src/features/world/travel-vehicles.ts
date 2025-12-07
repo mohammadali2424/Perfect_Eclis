@@ -988,6 +988,77 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
     );
   });
 
+    //
+  // 🚶 پیاده شدن مسافر با دستور متنی
+  //
+  bot.hears(/از.?ماشین.?پیاده.?بشم/i, async (ctx) => {
+    if (ctx.chat?.type !== "private") return;
+
+    const { supabase } = ctx.services;
+    const { char, errorText } = await getCharacterByTg(ctx);
+
+    if (!char) {
+      await sendVehicleScreen(ctx, errorText || "کاراکترت نامشخص است.");
+      return;
+    }
+
+    if (!char.riding_vehicle_id) {
+      await sendVehicleScreen(
+        ctx,
+        "الان روی هیچ وسیله‌ای سوار نیستی.",
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    // ببینیم این کاراکتر مسافر است یا راننده
+    const isPassenger = await isCharacterPassenger(ctx, char.id);
+    const vehicleId = char.riding_vehicle_id;
+
+    if (!isPassenger) {
+      // یعنی راننده است
+      await sendVehicleScreen(
+        ctx,
+        "به نظر می‌رسد راننده این وسیله هستی.\n" +
+          "برای پیاده شدن راننده، از منوی «ماشین های من» وسیله‌ات را انتخاب کن و روی «🚶 پیاده شو» بزن.",
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    const { error: updErr } = await supabase
+      .from("characters")
+      .update({ riding_vehicle_id: null })
+      .eq("id", char.id);
+
+    if (updErr) {
+      console.error("ride:leave passenger update error:", updErr);
+      await sendVehicleScreen(
+        ctx,
+        "در پیاده شدن از ماشین مشکلی پیش آمد.",
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    const { error: delErr } = await supabase
+      .from("vehicle_passengers")
+      .delete()
+      .eq("vehicle_id", vehicleId)
+      .eq("character_id", char.id);
+
+    if (delErr) {
+      console.error("ride:leave passenger delete error:", delErr);
+    }
+
+    await sendVehicleScreen(
+      ctx,
+      "🚶 به عنوان مسافر از ماشین پیاده شدی.",
+      mainMenuKeyboard()
+    );
+  });
+
+
   //
   // 🚗 شروع سفر رانندگی از روی Edge
   //
