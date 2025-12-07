@@ -733,6 +733,15 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
         "این گروه هنوز به عنوان Region ثبت نشده.\n" +
           "از /worldadmin یا دستورات ساخت Region استفاده کن."
       );
+
+        bot.callbackQuery("ui:home", async (ctx) => {
+    if (ctx.chat?.type !== "private") {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    await showMainMenu(ctx);
+  });
       return;
     }
 
