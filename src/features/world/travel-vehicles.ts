@@ -350,6 +350,136 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
   //
   // 🏁 «ماشین های من»
   //
+   async function showRideMenu(ctx: MyContext) {
+    if (ctx.chat?.type !== "private") return;
+
+    const { supabase } = ctx.services;
+    const { char, errorText } = await getCharacterByTg(ctx);
+
+    if (!char) {
+      await sendVehicleScreen(ctx, errorText || "کاراکترت نامشخص است.");
+      return;
+    }
+
+    if (!char.is_approved) {
+      await sendVehicleScreen(
+        ctx,
+        "درخواست ورودت به اکلیس هنوز توسط ارباب تایید نشده.\n" +
+          "بعد از تایید، می‌توانی از ماشین‌ها و مسیرها استفاده کنی.",
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    if (char.current_region_id == null || char.current_spot_id == null) {
+      await sendVehicleScreen(
+        ctx,
+        "هنوز در هیچ مکانی ثبت نشده‌ای.\n" +
+          "اول ارباب باید با «ثبت پلیر» تو را وارد یکی از Regionها کند.",
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    // اگر همین الان روی وسیله‌ای هستی
+    if (char.riding_vehicle_id) {
+      await sendVehicleScreen(
+        ctx,
+        "الان روی یک وسیله سوار هستی.\n" +
+          "اگر مسافر هستی و می‌خواهی پیاده شوی، در پی‌وی بنویس:\n\n" +
+          "<code>از ماشین پیاده بشم</code>",
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    // اگر قبلاً به عنوان مسافر ثبت شده‌ای (به هر دلیل)
+    if (await isCharacterPassenger(ctx, char.id)) {
+      await sendVehicleScreen(
+        ctx,
+        "در سیستم به عنوان مسافر ثبت شده‌ای.\n" +
+          "اگر فکر می‌کنی اشتباه است، به ارباب اطلاع بده.",
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    // ماشین‌هایی که همین‌جا پارک‌اند
+    const { data: vehicles, error } = await supabase
+      .from("vehicles")
+      .select(
+        "id, title, type, capacity, current_region_id, current_spot_id, owner_char_id"
+      )
+      .eq("current_region_id", char.current_region_id)
+      .eq("current_spot_id", char.current_spot_id);
+
+    if (error) {
+      console.error("ride:menu load vehicles error:", error);
+      await sendVehicleScreen(
+        ctx,
+        "در خواندن وسایل نقلیه‌ی این مکان مشکلی پیش آمد.",
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    if (!vehicles || vehicles.length === 0) {
+      await sendVehicleScreen(
+        ctx,
+        "در این مکان هیچ وسیله‌ای پارک نشده که بتوانی سوارش شوی.",
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    const available: { id: number; title: string; freeSeats: number }[] = [];
+
+    for (const v of vehicles) {
+      const { driverId, passengerIds } = await getVehicleLoad(ctx, v.id);
+
+      // راننده باید سوار باشد (نمی‌گذاریم مسافر بدون راننده ماشین را پر کند)
+      if (!driverId) continue;
+
+      // خودت راننده این ماشینی؟ برو از «ماشین های من» استفاده کن
+      if (driverId === char.id) continue;
+
+      const usedSeats = 1 + passengerIds.length; // ۱ راننده + مسافرها
+      const freeSeats = (v.capacity ?? 1) - usedSeats;
+
+      if (freeSeats <= 0) continue;
+
+      available.push({
+        id: v.id,
+        title: v.title,
+        freeSeats,
+      });
+    }
+
+    if (available.length === 0) {
+      await sendVehicleScreen(
+        ctx,
+        "در این مکان وسیله‌ای که جای خالی برای مسافر داشته باشد پیدا نشد.",
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    const kb = new InlineKeyboard();
+    for (const v of available) {
+      kb.text(
+        `سوار ${v.title} (جای خالی: ${v.freeSeats})`,
+        `ride:req:${v.id}`
+      ).row();
+    }
+    kb.text("🏠 منوی اصلی", "ui:home");
+
+    await sendVehicleScreen(
+      ctx,
+      "یکی از وسیله‌های زیر را برای سوار شدن به عنوان مسافر انتخاب کن:",
+      kb
+    );
+  }
+  
   bot.hears(/ماشین.?های.?من/i, async (ctx) => {
     if (ctx.chat?.type !== "private") return;
 
