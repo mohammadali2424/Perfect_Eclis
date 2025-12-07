@@ -723,6 +723,200 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
     );
   });
 
+
+    //
+  // ✅ راننده قبول می‌کند که مسافر سوار شود
+  //
+  bot.callbackQuery(/ride:approve:(\d+):(\d+)/, async (ctx) => {
+    if (!ctx.from) return;
+
+    const vehicleId = Number(ctx.match![1]);
+    const passengerCharId = Number(ctx.match![2]);
+    const { supabase } = ctx.services;
+
+    // خود caller را به عنوان راننده لود کن
+    const { data: driverChar, error: dErr } = await supabase
+      .from("characters")
+      .select("*")
+      .eq("tg_id", ctx.from.id)
+      .maybeSingle();
+
+    if (dErr || !driverChar) {
+      await ctx.answerCallbackQuery({
+        text: "شناسایی راننده ممکن نشد.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    const { data: vehicle, error: vErr } = await supabase
+      .from("vehicles")
+      .select(
+        "id, title, capacity, current_region_id, current_spot_id"
+      )
+      .eq("id", vehicleId)
+      .maybeSingle();
+
+    if (vErr || !vehicle) {
+      await ctx.answerCallbackQuery({
+        text: "وسیله پیدا نشد.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    // چک اینکه واقعاً این راننده، راننده‌ی فعلی این وسیله است
+    const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicle.id);
+    if (!driverId || driverId !== driverChar.id) {
+      await ctx.answerCallbackQuery({
+        text: "فقط راننده‌ی فعلی وسیله می‌تواند مسافر را سوار کند.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    const { data: passengerChar, error: pErr } = await supabase
+      .from("characters")
+      .select("*")
+      .eq("id", passengerCharId)
+      .maybeSingle();
+
+    if (pErr || !passengerChar) {
+      await ctx.answerCallbackQuery({
+        text: "مسافر دیگر در دسترس نیست.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    // مسافر نباید خودش روی وسیله‌ی دیگری سوار باشد
+    if (passengerChar.riding_vehicle_id) {
+      await ctx.answerCallbackQuery({
+        text: "این مسافر الان روی وسیله‌ی دیگری سوار است.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    // باید در همان مکان باشد
+    if (
+      vehicle.current_region_id == null ||
+      vehicle.current_spot_id == null ||
+      passengerChar.current_region_id !== vehicle.current_region_id ||
+      passengerChar.current_spot_id !== vehicle.current_spot_id
+    ) {
+      await ctx.answerCallbackQuery({
+        text: "مسافر دیگر کنار وسیله نیست.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    // ظرفیت
+    const usedSeats = 1 + passengerIds.length; // ۱ راننده + بقیه مسافرها
+    const freeSeats = (vehicle.capacity ?? 1) - usedSeats;
+    if (freeSeats <= 0) {
+      await ctx.answerCallbackQuery({
+        text: "این وسیله دیگر جایی برای مسافر ندارد.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    // ثبت در vehicle_passengers
+    const { error: insErr } = await supabase
+      .from("vehicle_passengers")
+      .insert({
+        vehicle_id: vehicle.id,
+        character_id: passengerChar.id,
+      });
+
+    if (insErr) {
+      console.error("ride:approve insert passenger error:", insErr);
+      await ctx.answerCallbackQuery({
+        text: "در سوار کردن مسافر مشکلی پیش آمد.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    const { error: updErr } = await supabase
+      .from("characters")
+      .update({ riding_vehicle_id: vehicle.id })
+      .eq("id", passengerChar.id);
+
+    if (updErr) {
+      console.error("ride:approve update passenger error:", updErr);
+      await ctx.answerCallbackQuery({
+        text: "در ثبت وضعیت مسافر مشکلی پیش آمد.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({
+      text: "مسافر سوار شد.",
+      show_alert: false,
+    });
+
+    // پیام برای راننده
+    await ctx.editMessageText(
+      "✅ این درخواست مسافر را قبول کردی و سوارش کردی.",
+    );
+
+    // پیام برای مسافر
+    if (passengerChar.tg_id) {
+      try {
+        await ctx.api.sendMessage(
+          passengerChar.tg_id,
+          `✅ راننده درخواستت را قبول کرد و سوار ${vehicle.title} شدی.`,
+        );
+      } catch (e) {
+        console.error("notify passenger after approve error:", e);
+      }
+    }
+  });
+
+  //
+  // ❌ راننده درخواست را رد می‌کند
+  //
+  bot.callbackQuery(/ride:reject:(\d+):(\d+)/, async (ctx) => {
+    if (!ctx.from) return;
+
+    const passengerCharId = Number(ctx.match![2]);
+    const { supabase } = ctx.services;
+
+    const { data: passengerChar } = await supabase
+      .from("characters")
+      .select("tg_id")
+      .eq("id", passengerCharId)
+      .maybeSingle();
+
+    await ctx.answerCallbackQuery({
+      text: "درخواست مسافر را رد کردی.",
+      show_alert: false,
+    });
+
+    try {
+      await ctx.editMessageText("❌ این درخواست مسافر را رد کردی.");
+    } catch (e) {
+      console.error("ride:reject edit message error:", e);
+    }
+
+    if (passengerChar?.tg_id) {
+      try {
+        await ctx.api.sendMessage(
+          passengerChar.tg_id,
+          "❌ راننده این درخواست سوار شدن را رد کرد."
+        );
+      } catch (e) {
+        console.error("ride:reject notify passenger error:", e);
+      }
+    }
+  });
+
+  
+
   //
   // 🚗 سوار شدن روی وسیله
   //
