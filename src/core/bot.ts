@@ -5,27 +5,25 @@ import { BOT_TOKEN } from "./config";
 import { supabase } from "./supabase";
 import { MyContext, SessionData, Services } from "./types";
 
-import { registerWorldAdminCommands } from "../features/world/admin-commands";
 import { registerSecurityFeature } from "../features/security/guard";
-import { registerTravelFeature } from "../features/world/travel";
-import { registerUiFeature } from "../features/ui/ui";
-import { registerPathBuilderFeature } from "../features/world/path-builder";
-import { registerVehicleTravelFeature } from "../features/world/travel-vehicles";
-import { registerWorldVehicleShop } from "../features/world/vehicle-shop";
-import { registerWorldAdminFeature } from "../features/world/admin-builder";
 import { registerOnboardingFeature } from "../features/world/onboarding";
-
-// UI مرکزی که قبلاً با هم ساختیم
-import { registerUiFeature } from "../features/ui/ui";
+import { registerTravelFeature } from "../features/world/travel";
+import { registerVehicleTravelFeature } from "../features/world/travel-vehicles";
+import { registerWorldAdminFeature } from "../features/world/admin-builder";
+import { registerWorldAdminCommands } from "../features/world/admin-commands";
+import { registerPathBuilderFeature } from "../features/world/path-builder";
+import { registerWorldVehicleShop } from "../features/world/vehicle-shop";
+// 👇 اگر ui.ts درست کرده‌ای، بعداً اینو برمی‌گردونیم
+// import { registerUiFeature } from "../features/ui/ui";
 
 if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is required");
 }
 
-// یک بات سراسری که index.ts از آن استفاده می‌کند
+// این همونیه که src/index.ts ازش استفاده می‌کنه
 export const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// سشن – ساده: یک آبجکت خالی که به SessionData کست می‌شود
+// سشن – یک آبجکت خالی که به SessionData کست می‌شه
 bot.use(
   session({
     initial: () => ({} as SessionData),
@@ -38,31 +36,41 @@ bot.use((ctx, next) => {
   return next();
 });
 
-// رجیستر تمام فیچرها
+// ===== رجیستر تمام فیچرها =====
+
+// گارد امنیتی و لفت از گروه‌های ناخواسته
 registerSecurityFeature(bot);
+
+// دستورات جهان‌ساز ساده (مثل /worldadmin و …)
 registerWorldAdminCommands(bot);
+
+// ماژول سفر با وسیله نقلیه (ماشین، سوخت، …)
 registerVehicleTravelFeature(bot);
+
+// ماژول ساخت مسیرها (path-builder)
 registerPathBuilderFeature(bot);
+
+// ثبت‌نام و انتخاب خاندان در PV
 registerOnboardingFeature(bot);
+
+// پنل جهان‌ساز (Region / Spot / Edge و …)
 registerWorldAdminFeature(bot);
-registerUiFeature(bot);
+
+// ماژول فروشگاه وسیله (ثبت ماشین برای پلیرها)
 registerWorldVehicleShop(bot);
+
+// سفر پیاده / مسیر های من / نقشه سریع من
 registerTravelFeature(bot);
 
-// در پایان: UI منوی اصلی و پاک‌کردن پیام‌های پی‌وی
-registerUiFeature(bot);
+// UI مرکزی اگر داشتی، بعداً فعالش می‌کنیم
+// registerUiFeature(bot);
 
-// می‌تونی برای راحتی یک /start ساده هم بگذاری
+// /start ساده برای راهنمای اولیه
 bot.command("start", async (ctx) => {
   if (ctx.chat?.type !== "private") return;
 
   await ctx.reply(
     "به اکلیس خوش آمدی.\n" +
-      "برای دیدن منوی اصلی از /menu استفاده کن یا بنویس «نقشه اکلیس»."
+      "برای دیدن منوی اصلی بعداً می‌تونی از /menu استفاده کنی."
   );
 });
-// src/core/bot.ts
-
-import { Bot, session } from "grammy";
-import type { SessionFlavor } from "grammy";
-import { MyContext, SessionData, Services } from "./types";
