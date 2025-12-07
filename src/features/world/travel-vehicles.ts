@@ -479,6 +479,23 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
       kb
     );
   }
+
+    // دکمه «🚕 مسافر شوم» در منوی اصلی
+  bot.callbackQuery("ride:menu", async (ctx) => {
+    if (ctx.chat?.type !== "private") {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    await showRideMenu(ctx);
+  });
+
+  // دستور متنی: «سوار ماشین بشم»
+  bot.hears(/سوار.?ماشین.?بشم/i, async (ctx) => {
+    if (ctx.chat?.type !== "private") return;
+    await showRideMenu(ctx);
+  });
+
   
   bot.hears(/ماشین.?های.?من/i, async (ctx) => {
     if (ctx.chat?.type !== "private") return;
