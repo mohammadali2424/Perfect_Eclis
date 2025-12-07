@@ -496,6 +496,169 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
     await showRideMenu(ctx);
   });
 
+    //
+  // ✅ درخواست سوار شدن به یک وسیله به عنوان مسافر
+  //
+  bot.callbackQuery(/ride:req:(\d+)/, async (ctx) => {
+    if (ctx.chat?.type !== "private") {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+
+    const vehicleId = Number(ctx.match![1]);
+    const { supabase } = ctx.services;
+
+    const { char, errorText } = await getCharacterByTg(ctx);
+    if (!char) {
+      await ctx.answerCallbackQuery({
+        text: errorText || "کاراکترت نامشخص است.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (!char.is_approved) {
+      await ctx.answerCallbackQuery({
+        text: "هنوز ورودت به اکلیس تایید نشده.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (char.current_region_id == null || char.current_spot_id == null) {
+      await ctx.answerCallbackQuery({
+        text: "هنوز در هیچ مکانی ثبت نشده‌ای.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (char.riding_vehicle_id) {
+      await ctx.answerCallbackQuery({
+        text: "الان روی یک وسیله سوار هستی.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (await isCharacterPassenger(ctx, char.id)) {
+      await ctx.answerCallbackQuery({
+        text: "در سیستم به عنوان مسافر ثبت شده‌ای.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    const { data: vehicle, error } = await supabase
+      .from("vehicles")
+      .select(
+        "id, title, type, capacity, current_region_id, current_spot_id, owner_char_id"
+      )
+      .eq("id", vehicleId)
+      .maybeSingle();
+
+    if (error || !vehicle) {
+      console.error("ride:req load vehicle error:", error);
+      await ctx.answerCallbackQuery({
+        text: "این وسیله پیدا نشد.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    // باید در همان مکان باشی که ماشین هست
+    if (
+      vehicle.current_region_id == null ||
+      vehicle.current_spot_id == null ||
+      vehicle.current_region_id !== char.current_region_id ||
+      vehicle.current_spot_id !== char.current_spot_id
+    ) {
+      await ctx.answerCallbackQuery({
+        text: "برای سوار شدن باید کنار همان وسیله باشی.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicle.id);
+    const usedSeats = (driverId ? 1 : 0) + passengerIds.length;
+    const freeSeats = (vehicle.capacity ?? 1) - usedSeats;
+
+    if (freeSeats <= 0) {
+      await ctx.answerCallbackQuery({
+        text: "این وسیله دیگر جایی برای مسافر ندارد.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    // ثبت به عنوان مسافر
+    const { error: insErr } = await supabase
+      .from("vehicle_passengers")
+      .insert({
+        vehicle_id: vehicle.id,
+        character_id: char.id,
+      });
+
+    if (insErr) {
+      console.error("ride:req insert passenger error:", insErr);
+      await ctx.answerCallbackQuery({
+        text: "در سوار شدن به عنوان مسافر مشکلی پیش آمد.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    const { error: updErr } = await supabase
+      .from("characters")
+      .update({ riding_vehicle_id: vehicle.id })
+      .eq("id", char.id);
+
+    if (updErr) {
+      console.error("ride:req update character error:", updErr);
+      await ctx.answerCallbackQuery({
+        text: "در ثبت وضعیت سوار شدن مشکلی پیش آمد.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({
+      text: `به عنوان مسافر سوار ${vehicle.title} شدی.`,
+      show_alert: false,
+    });
+
+    await sendVehicleScreen(
+      ctx,
+      `به عنوان مسافر سوار ${vehicle.title} شدی.\n` +
+        "راننده با «🛣 مسیرهای رانندگی» حرکت می‌کند.\n" +
+        "وقتی به مقصد رسیدید، با «رسیدم؟» تو هم به مقصد می‌رسی.",
+      mainMenuKeyboard()
+    );
+
+    // اطلاع دادن به راننده (اگر بتوانیم)
+    if (driverId) {
+      const { data: driverChar, error: dErr } = await supabase
+        .from("characters")
+        .select("tg_id")
+        .eq("id", driverId)
+        .maybeSingle();
+
+      if (!dErr && driverChar?.tg_id) {
+        try {
+          await ctx.api.sendMessage(
+            driverChar.tg_id,
+            `🧍 یک مسافر جدید سوار ${vehicle.title} شد.\n` +
+              `نام: ${char.char_name ?? ctx.from?.first_name ?? "یک مسافر"}`
+          );
+        } catch (e) {
+          console.error("notify driver passenger boarded error:", e);
+        }
+      }
+    }
+  });
+
+
   
   bot.hears(/ماشین.?های.?من/i, async (ctx) => {
     if (ctx.chat?.type !== "private") return;
