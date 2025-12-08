@@ -1,6 +1,7 @@
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
 import { MASTER_ID } from "../../core/config";
+import { hasBoardableVehicleHere, getVehicleLoad } from "./vehicle-helpers";
 
 const INACTIVE_DAYS = 7;
 
