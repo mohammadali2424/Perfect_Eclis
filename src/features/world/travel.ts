@@ -580,7 +580,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     }
   }
 
- const kb = new InlineKeyboard();
+const kb = new InlineKeyboard();
 
 if (inviteUrl) {
   kb.url("🚪 ورود به مکان جدید", inviteUrl); 
