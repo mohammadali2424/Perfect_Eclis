@@ -1,5 +1,6 @@
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
+import { hasBoardableVehicleHere, getVehicleLoad } from "./vehicle-helpers";
 
 /**
  * خواندن کاراکتر بر اساس tg_id
