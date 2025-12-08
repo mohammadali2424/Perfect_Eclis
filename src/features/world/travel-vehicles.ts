@@ -346,6 +346,35 @@ interface FuelWizardState {
   sessionId?: number;
 }
 
+  // برمی‌گردونه آیا در Region/Spot فعلی حداقل یک وسیله‌ی آماده‌ی سوار شدن هست یا نه
+  async function hasBoardableVehicleHere(
+    ctx: MyContext,
+    regionId: number,
+    spotId: number
+  ): Promise<boolean> {
+    const { supabase } = ctx.services;
+
+    const { data: vehicles, error } = await supabase
+      .from("vehicles")
+      .select("id, capacity, current_region_id, current_spot_id")
+      .eq("current_region_id", regionId)
+      .eq("current_spot_id", spotId);
+
+    if (error || !vehicles || vehicles.length === 0) return false;
+
+    for (const v of vehicles) {
+      const { driverId, passengerIds } = await getVehicleLoad(ctx, v.id);
+
+      if (!driverId) continue;
+      const usedSeats = 1 + passengerIds.length;
+      const freeSeats = (v.capacity ?? 1) - usedSeats;
+      if (freeSeats > 0) return true;
+    }
+
+    return false;
+  }
+
+
 export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
   //
   // 🏁 «ماشین های من»
