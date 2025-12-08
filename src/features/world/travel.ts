@@ -580,6 +580,114 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     }
   }
 
+    // اگر راننده‌ی یک وسیله باشی، مسافرهای آن وسیله را هم همراه خودت جابه‌جا کن
+  if (char.current_vehicle_id && destRegion && destSpot) {
+    try {
+      // همه‌ی مسافرهای این وسیله
+      const { data: passengerRows, error: passErr } = await supabase
+        .from("vehicle_passengers")
+        .select("character_id")
+        .eq("vehicle_id", char.current_vehicle_id);
+
+      if (!passErr && passengerRows && passengerRows.length > 0) {
+        const passengerIds = passengerRows.map((r) => r.character_id);
+
+        // اطلاعات تلگرامی مسافرها
+        const { data: passengerChars, error: pcErr } = await supabase
+          .from("characters")
+          .select("id, tg_id")
+          .in("id", passengerIds);
+
+        if (pcErr) {
+          console.error("group arrive: load passengers error:", pcErr);
+        } else if (passengerChars && passengerChars.length > 0) {
+          // آپدیت لوکیشن و پایان سفر برای همه‌ی مسافرها
+          const { error: updPassengersErr } = await supabase
+            .from("characters")
+            .update({
+              current_region_id: destRegion.id,
+              current_spot_id: destSpot.id,
+              pending_region_id: null,
+              pending_spot_id: null,
+              travel_ready_at: null,
+              travel_total_seconds: null,
+              travel_started_at: null,
+              last_move_at: now.toISOString(),
+            })
+            .in("id", passengerIds);
+
+          if (updPassengersErr) {
+            console.error(
+              "group arrive: update passengers error:",
+              updPassengersErr
+            );
+          } else {
+            // اگر Region قبلی را می‌دانیم، مسافرها را هم از آن گروه کیک کن
+            if (prevRegionId) {
+              const { data: prevRegionForPassengers } = await supabase
+                .from("regions")
+                .select("*")
+                .eq("id", prevRegionId)
+                .maybeSingle();
+
+              if (prevRegionForPassengers?.telegram_chat_id) {
+                for (const p of passengerChars) {
+                  if (!p.tg_id) continue;
+                  try {
+                    await ctx.api.banChatMember(
+                      prevRegionForPassengers.telegram_chat_id as number,
+                      p.tg_id as number
+                    );
+                    await ctx.api.unbanChatMember(
+                      prevRegionForPassengers.telegram_chat_id as number,
+                      p.tg_id as number,
+                      { only_if_banned: true }
+                    );
+                  } catch (e) {
+                    console.warn(
+                      "group arrive: kick passenger from prev region failed:",
+                      e
+                    );
+                  }
+                }
+              }
+            }
+
+            // اگر لینک مقصد داریم، همان لینک را برای مسافرها هم بفرست
+            if (inviteUrl) {
+              const passengerKb = new InlineKeyboard().url(
+                "🚪 ورود به مکان جدید",
+                inviteUrl
+              );
+
+              for (const p of passengerChars) {
+                if (!p.tg_id) continue;
+                try {
+                  await ctx.api.sendMessage(
+                    p.tg_id as number,
+                    `با ${
+                      char.char_name || "راننده"
+                    } به «${destRegion.title}» رسیدی.\n` +
+                      "برای ورود به مکان جدید، روی دکمه بزن:",
+                    { reply_markup: passengerKb }
+                  );
+                } catch (e) {
+                  console.error(
+                    "group arrive: notify passenger error:",
+                    e
+                  );
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("group arrive logic failed:", e);
+    }
+  }
+
+
 const kb = new InlineKeyboard();
 
 if (inviteUrl) {
