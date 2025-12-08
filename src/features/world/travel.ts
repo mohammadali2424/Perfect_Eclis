@@ -249,6 +249,21 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
   const char = await ensureCharacterFor(ctx, ctx.from.id);
   if (!char) return;
 
+    let vehicleTitle: string | null = null;
+
+  if (char.riding_vehicle_id) {
+    const { data: vehicle, error: vehErr } = await supabase
+      .from("vehicles")
+      .select("id, title")
+      .eq("id", char.riding_vehicle_id)
+      .maybeSingle();
+
+    if (!vehErr && vehicle) {
+      vehicleTitle = vehicle.title;
+    }
+  }
+
+
   if (!char.current_region_id || !char.current_spot_id) {
     await sendScreen(
       ctx,
@@ -285,15 +300,23 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
 
   const kb = new InlineKeyboard().text("🧭 مسیر های من", "paths:open");
 
-  const text =
-    "🗺 نقشه سریع تو\n" +
-    "───────────────\n" +
-    `شخصیت: ${name}\n` +
-    `خاندان: ${clan}\n` +
+  let text =
+    `📍 موقعیت فعلی‌ات در اکلیس:\n` +
     `Region: ${region.title}\n` +
-    `جایگاه: ${spot.title}\n` +
-    "───────────────\n" +
-    "برای دیدن راه‌های قابل حرکت، از «🧭 مسیر های من» استفاده کن.";
+    `Spot: ${spot.title}\n`;
+
+  if (char.clan_name) {
+    text += `خاندان: ${char.clan_name}\n`;
+  }
+
+  if (vehicleTitle) {
+    text += `\n🚗 وضعیت: سوار بر «${vehicleTitle}» هستی.`;
+  } else {
+    text += `\n🚶 وضعیت: پیاده‌ای.`;
+  }
+
+  text += `\n\nبرای دیدن مسیرها از «🧭 مسیر های من» استفاده کن.`;
+
 
   await sendScreen(ctx, text, kb);
 }
