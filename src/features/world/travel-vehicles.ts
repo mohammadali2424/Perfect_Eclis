@@ -257,7 +257,7 @@ async function sendVehicleScreen(
   keyboard: InlineKeyboard
 ) {
   // پاک کردن پیام قبلی منو اگر داریم
-  const lastId = ctx.session.ui_last_message_id;
+  const lastId = ctx.session.ui_last_menu_id;
   if (lastId && ctx.chat?.type === "private") {
     try {
       await ctx.api.deleteMessage(ctx.chat.id, lastId);
@@ -271,7 +271,7 @@ async function sendVehicleScreen(
   });
 
   if (ctx.chat?.type === "private") {
-    ctx.session.ui_last_message_id = msg.message_id;
+    ctx.session.ui_last_menu_id = msg.message_id;
   }
 }
 
