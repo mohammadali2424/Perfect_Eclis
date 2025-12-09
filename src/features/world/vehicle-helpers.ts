@@ -3,11 +3,14 @@
 // Helper های مشترک برای سیستم وسایل نقلیه
 // =============================
 
-import { MyContext } from "../../core/bot";
+import { MyContext } from "../../core/types";
 
 /**
  * لود کردن اطلاعات ظرفیت ماشین:
  * راننده + مسافران
+ *
+ * راننده = کسی که riding_vehicle_id او روی این vehicle تنظیم شده
+ * مسافران = سطرهای جدول vehicle_passengers
  */
 export async function getVehicleLoad(
   ctx: MyContext,
@@ -15,28 +18,39 @@ export async function getVehicleLoad(
 ): Promise<{ driverId: number | null; passengerIds: number[] }> {
   const { supabase } = ctx.services;
 
-  const { data: loadRows, error } = await supabase
-    .from("vehicle_passengers")
-    .select("character_id, is_driver")
-    .eq("vehicle_id", vehicleId);
+  // راننده
+  const { data: drivers, error: dErr } = await supabase
+    .from("characters")
+    .select("id")
+    .eq("riding_vehicle_id", vehicleId);
 
-  if (error || !loadRows) {
-    return { driverId: null, passengerIds: [] };
+  if (dErr) {
+    console.error("getVehicleLoad driver error:", dErr);
   }
 
-  const driverRow = loadRows.find((x) => x.is_driver);
-  const driverId = driverRow?.character_id ?? null;
+  const driverId =
+    drivers && drivers.length > 0 ? (drivers[0].id as number) : null;
 
-  const passengerIds = loadRows
-    .filter((x) => !x.is_driver)
-    .map((x) => x.character_id);
+  // مسافران
+  const { data: passengers, error: pErr } = await supabase
+    .from("vehicle_passengers")
+    .select("character_id")
+    .eq("vehicle_id", vehicleId);
+
+  if (pErr) {
+    console.error("getVehicleLoad passenger error:", pErr);
+  }
+
+  const passengerIds = (passengers ?? []).map(
+    (p: any) => p.character_id as number
+  );
 
   return { driverId, passengerIds };
 }
 
 /**
  * آیا در این region/spot وسیله‌ای هست که "قابل سوار شدن" باشد؟
- * یعنی driver دارد و ظرفیت خالی دارد.
+ * یعنی راننده دارد و ظرفیت خالی دارد.
  */
 export async function hasBoardableVehicleHere(
   ctx: MyContext,
@@ -57,9 +71,9 @@ export async function hasBoardableVehicleHere(
 
   for (const v of vehicles) {
     const { driverId, passengerIds } = await getVehicleLoad(ctx, v.id);
-    if (!driverId) continue; // بدون راننده → سوار شدن مجاز نیست
+    if (!driverId) continue; // بدون راننده → اجازه‌ی سوار شدن نداریم
 
-    const used = 1 + passengerIds.length;
+    const used = 1 + passengerIds.length; // ۱ راننده + مسافرها
     const free = (v.capacity ?? 1) - used;
 
     if (free > 0) return true;
