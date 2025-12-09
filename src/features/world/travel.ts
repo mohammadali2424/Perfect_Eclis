@@ -728,6 +728,11 @@ async function handleRegPlayer(ctx: MyContext): Promise<void> {
     return;
   }
 
+  if (!ctx.chat) {
+    // برای ساکت کردن TypeScript و همچنین ایمنی بیشتر
+    return;
+  }
+
   if (ctx.from.id !== MASTER_ID) {
     await ctx.reply("🥷🏻 فقط ارباب من می‌تواند از این دستور استفاده کند، حدت را بدان.");
     return;
@@ -748,6 +753,11 @@ async function handleRegPlayer(ctx: MyContext): Promise<void> {
     .select("*")
     .eq("telegram_chat_id", chat.id)
     .maybeSingle();
+
+    if (!ctx.chat) {
+    return;
+  }
+
 
   if (regErr || !region) {
     await ctx.reply("این گروه هنوز به عنوان Region ثبت نشده. اول /worldadmin را استفاده کن.");
