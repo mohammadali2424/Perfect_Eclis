@@ -43,7 +43,7 @@ function buildMainMenu(): InlineKeyboard {
     .row()
     .text("🗺 نقشه سریع من", "mymap:open")
     .row()
-    .text("🚗 ماشین های من", "veh:my")
+    .text("🚗 سواری ها", "veh:my")
     .row()
     .text("🚕 مسافر شوم", "ui:ride_hint");
 }
