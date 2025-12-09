@@ -341,14 +341,27 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>): void {
   //
   // دکمه‌ی "🚕 مسافر شوم"
   //
-  bot.callbackQuery("ride:menu", async (ctx) => {
-    if (ctx.chat?.type !== "private") {
+ bot.callbackQuery("ride:menu", async (ctx) => {
+  if (ctx.chat?.type !== "private") {
+    // جواب دادن به callback برای ساکت کردن Telegram،
+    // ولی اگر قدیمی بود، نذار بات بترکه
+    try {
       await ctx.answerCallbackQuery();
-      return;
+    } catch (e) {
+      console.warn("answerCallbackQuery ride:menu (group) failed:", e);
     }
+    return;
+  }
+
+  try {
     await ctx.answerCallbackQuery();
-    await showRideMenu(ctx);
-  });
+  } catch (e) {
+    console.warn("answerCallbackQuery ride:menu (pv) failed:", e);
+  }
+
+  await showRideMenu(ctx);
+});
+
 
   //
   // درخواست مسافر شدن روی یک وسیله
