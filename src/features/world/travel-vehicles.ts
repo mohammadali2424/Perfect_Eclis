@@ -2,9 +2,7 @@ import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
 import { hasBoardableVehicleHere, getVehicleLoad } from "./vehicle-helpers";
 
-/**
- * خواندن کاراکتر بر اساس tg_id
- */
+/** گرفتن کاراکتر از روی tg_id */
 async function getCharacterByTg(ctx: MyContext) {
   const { supabase } = ctx.services;
   if (!ctx.from) {
@@ -36,9 +34,7 @@ async function getCharacterByTg(ctx: MyContext) {
   return { char: data, errorText: null };
 }
 
-/**
- * خواندن وسیلهٔ نقلیه‌ی فعلی کاراکتر (اگر سوار باشد)
- */
+/** گرفتن وسیله‌ای که این کاراکتر راننده‌اش است (اگر باشد) */
 async function getRidingVehicle(ctx: MyContext, charId: number) {
   const { supabase } = ctx.services;
 
@@ -56,9 +52,7 @@ async function getRidingVehicle(ctx: MyContext, charId: number) {
   return { vehicle: data, errorText: null };
 }
 
-/**
- * خواندن وسیله بر اساس id
- */
+/** گرفتن وسیله از روی id */
 async function getVehicleById(ctx: MyContext, vehicleId: number) {
   const { supabase } = ctx.services;
   const { data, error } = await supabase
@@ -75,9 +69,7 @@ async function getVehicleById(ctx: MyContext, vehicleId: number) {
   return { vehicle: data, errorText: null };
 }
 
-/**
- * آپدیت لوکیشن وسیله
- */
+/** آپدیت لوکیشن وسیله */
 async function updateVehicleLocation(
   ctx: MyContext,
   vehicleId: number,
@@ -98,10 +90,7 @@ async function updateVehicleLocation(
   }
 }
 
-/**
- * ثبت حرکت وسیله در vehicle_moves
- * (فعلاً بدون actor_* تا با دیتابیس درگیر نشیم)
- */
+/** ثبت حرکت وسیله در vehicle_moves (ساده، بدون actor_*) */
 async function logVehicleMove(
   ctx: MyContext,
   vehicleId: number,
@@ -123,17 +112,13 @@ async function logVehicleMove(
   }
 }
 
-/**
- * هر ۱٪ سوخت ≈ ۲ دقیقه رانندگی
- */
+/** برای بعد، اگر خواستی از روی زمان سوخت کم کنی */
 function computeFuelUsagePercent(driveSeconds: number): number {
   if (driveSeconds <= 0) return 0;
   return driveSeconds / 120;
 }
 
-/**
- * تعداد راننده و مسافرهای یک وسیله
- */
+/** تعداد راننده و مسافرهای یک وسیله */
 async function getVehiclePassengerCount(ctx: MyContext, vehicleId: number) {
   const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicleId);
   const driverCount = driverId ? 1 : 0;
@@ -141,9 +126,7 @@ async function getVehiclePassengerCount(ctx: MyContext, vehicleId: number) {
   return { driverCount, passengerCount, total: driverCount + passengerCount };
 }
 
-/**
- * آیا این کاراکتر الان مسافر وسیله‌ای هست یا نه
- */
+/** آیا این کاراکتر الان مسافر جایی هست؟ */
 async function isCharacterPassenger(
   ctx: MyContext,
   charId: number
@@ -163,9 +146,7 @@ async function isCharacterPassenger(
   return !!data;
 }
 
-/**
- * خارج کردن کاراکتر از لیست مسافران هر وسیله
- */
+/** حذف مسافر از همهٔ وسیله‌ها (برای ری‌ست شدن تمیز) */
 async function removePassengerFromAllVehicles(
   ctx: MyContext,
   charId: number
@@ -182,9 +163,7 @@ async function removePassengerFromAllVehicles(
   }
 }
 
-/**
- * افزودن یک مسافر به وسیله
- */
+/** افزودن یک مسافر به وسیله */
 async function addPassengerToVehicle(
   ctx: MyContext,
   vehicleId: number,
@@ -211,7 +190,6 @@ async function addPassengerToVehicle(
     return { ok: false, errorText: "این وسیله دیگر جایی برای مسافر ندارد." };
   }
 
-  // اول مطمئن شو این کاراکتر در هیچ وسیله دیگری مسافر نیست
   await removePassengerFromAllVehicles(ctx, charId);
 
   const { error } = await supabase.from("vehicle_passengers").insert({
@@ -227,9 +205,7 @@ async function addPassengerToVehicle(
   return { ok: true };
 }
 
-/**
- * خارج کردن یک مسافر از یک وسیله
- */
+/** حذف یک مسافر از یک وسیله خاص */
 async function removePassengerFromVehicle(
   ctx: MyContext,
   vehicleId: number,
@@ -248,37 +224,29 @@ async function removePassengerFromVehicle(
   }
 }
 
-/**
- * نمایش پیام منوی حمل‌ونقل / ماشین‌ها / مسافر شدن
- * با پاک کردن پیام قبلی منو
- */
+/** ارسال/آپدیت منوی حمل‌ونقل/ماشین‌/مسافر با پاک‌کردن منوی قبلی */
 async function sendVehicleScreen(
   ctx: MyContext,
   text: string,
   keyboard: InlineKeyboard
 ) {
-  // پاک کردن پیام قبلی منو اگر داریم
   const lastId = ctx.session.ui_last_menu_id;
   if (lastId && ctx.chat?.type === "private") {
     try {
       await ctx.api.deleteMessage(ctx.chat.id, lastId);
     } catch {
-      // اهمیتی ندارد
+      // مهم نیست
     }
   }
 
-  const msg = await ctx.reply(text, {
-    reply_markup: keyboard,
-  });
+  const msg = await ctx.reply(text, { reply_markup: keyboard });
 
   if (ctx.chat?.type === "private") {
     ctx.session.ui_last_menu_id = msg.message_id;
   }
 }
 
-/**
- * منوی کلی حمل‌ونقل: ماشین‌ها / مونت‌ها / سوار می‌شوم / سوخت‌گیری
- */
+/** منوی کلی حمل‌ونقل */
 export async function showTransportMenu(ctx: MyContext) {
   const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
@@ -292,75 +260,51 @@ export async function showTransportMenu(ctx: MyContext) {
   lines.push("🛰 پنل حمل‌ونقل اکلیس");
   lines.push("");
 
-  // آیا خودش ماشین دارد؟
   const { data: vehicles, error: vehErr } = await supabase
     .from("vehicles")
     .select("id")
     .eq("owner_char_id", char.id);
 
-  if (vehErr) {
-    console.error("showTransportMenu vehicles error:", vehErr);
-  }
+  if (vehErr) console.error("showTransportMenu vehicles error:", vehErr);
 
   const hasOwnedVehicles = !!vehicles && vehicles.length > 0;
 
   let canBoard = false;
   let hasFlux = false;
-  // (بعداً) let hasMounts = false;
-  // (بعداً) let hasTransit = false;
 
   if (char.current_region_id && char.current_spot_id) {
-    // آیا در این نقطه وسیله‌ای برای سوار شدن هست؟
     canBoard = await hasBoardableVehicleHere(
       ctx,
       char.current_region_id,
       char.current_spot_id
     );
 
-    // آیا این spot چاه فلوکس دارد؟
     const { data: wells, error: wellErr } = await supabase
       .from("flux_wells")
       .select("id")
       .eq("region_id", char.current_region_id)
       .eq("spot_id", char.current_spot_id);
 
-    if (wellErr) {
-      console.error("showTransportMenu wells error:", wellErr);
-    }
+    if (wellErr) console.error("showTransportMenu wells error:", wellErr);
     hasFlux = !!wells && wells.length > 0;
   }
 
   const kb = new InlineKeyboard();
 
-  // 🚗 ماشین‌های من
   if (hasOwnedVehicles) {
     kb.text("🚗 ماشین‌های من", "veh:my").row();
     lines.push("• ماشین‌هایت را از اینجا مدیریت می‌کنی.");
   }
 
-  // 🐎 مونت‌های من (بعداً)
-  // if (hasMounts) {
-  //   kb.text("🐎 مونت‌های من", "mount:my").row();
-  //   lines.push("• مونت‌هایت را از اینجا صدا می‌زنی.");
-  // }
-
-  // 🚕 سوار می‌شوم (مسافر شدن)
   if (canBoard) {
     kb.text("🚕 سوار می‌شوم", "ride:menu").row();
-    lines.push("• می‌توانی سوار یکی از وسیله‌های حاضر در این نقطه شوی.");
+    lines.push("• می‌توانی مسافر یکی از وسیله‌های حاضر در این نقطه شوی.");
   }
 
-  // ⛽ سوخت‌گیری
   if (hasFlux) {
     kb.text("⛽ سوخت‌گیری", "flux:fuel").row();
     lines.push("• در این نقطه چاه فلوکس فعال است.");
   }
-
-  // 🚝 حمل‌ونقل سریع (بعداً)
-  // if (hasTransit) {
-  //   kb.text("🚝 حمل‌ونقل سریع", "transit:menu").row();
-  //   lines.push("• اینجا ایستگاه حمل‌ونقل سریع است.");
-  // }
 
   kb.text("⬅️ بازگشت به منوی اصلی", "ui:home");
 
@@ -374,9 +318,7 @@ export async function showTransportMenu(ctx: MyContext) {
   await sendVehicleScreen(ctx, lines.join("\n"), kb);
 }
 
-/**
- * منوی «ماشین های من»
- */
+/** منوی «ماشین‌های من» */
 async function showMyVehiclesMenu(ctx: MyContext) {
   const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
@@ -414,9 +356,7 @@ async function showMyVehiclesMenu(ctx: MyContext) {
   await sendVehicleScreen(ctx, "🚗 ماشین‌ها و وسیله‌های تو:", kb);
 }
 
-/**
- * نمایش صفحه‌ی یک وسیلهٔ خاص (برای صاحبش)
- */
+/** نمایش صفحهٔ یک وسیلهٔ خاص برای صاحبش */
 async function showVehicleDetail(ctx: MyContext, vehicleId: number) {
   const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
@@ -449,11 +389,8 @@ async function showVehicleDetail(ctx: MyContext, vehicleId: number) {
   lines.push(`صندلی‌های پر: ${used}`);
   lines.push(`صندلی‌های خالی: ${free < 0 ? 0 : free}`);
   lines.push("");
-  if (driverId) {
-    lines.push("وضعیت: در حال رانندگی");
-  } else {
-    lines.push("وضعیت: پارک شده");
-  }
+  if (driverId) lines.push("وضعیت: در حال رانندگی");
+  else lines.push("وضعیت: پارک شده");
 
   const kb = new InlineKeyboard();
 
@@ -469,9 +406,7 @@ async function showVehicleDetail(ctx: MyContext, vehicleId: number) {
   await sendVehicleScreen(ctx, lines.join("\n"), kb);
 }
 
-/**
- * نمایش لیست مسافران یک وسیله (برای صاحب)
- */
+/** نمایش لیست مسافران یک وسیله */
 async function showVehiclePassengers(ctx: MyContext, vehicleId: number) {
   const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
@@ -500,9 +435,7 @@ async function showVehiclePassengers(ctx: MyContext, vehicleId: number) {
         .select("char_name")
         .eq("id", driverId)
         .maybeSingle();
-      if (!err1 && driver) {
-        lines.push(`🕹 راننده: ${driver.char_name}`);
-      }
+      if (!err1 && driver) lines.push(`🕹 راننده: ${driver.char_name}`);
     }
 
     if (passengerIds.length > 0) {
@@ -513,9 +446,7 @@ async function showVehiclePassengers(ctx: MyContext, vehicleId: number) {
         .select("id, char_name")
         .in("id", passengerIds);
       if (!err2 && chars) {
-        for (const c of chars) {
-          lines.push(`• ${c.char_name}`);
-        }
+        for (const c of chars) lines.push(`• ${c.char_name}`);
       }
     }
   }
@@ -528,9 +459,7 @@ async function showVehiclePassengers(ctx: MyContext, vehicleId: number) {
   await sendVehicleScreen(ctx, lines.join("\n"), kb);
 }
 
-/**
- * رانندگی با وسیله (ست کردن current_driver_char_id و ...)
- */
+/** راننده شدن روی یک وسیله */
 async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
   const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
@@ -550,13 +479,14 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  // اگر هم‌اکنون راننده دارد و آن راننده تو نیستی
-  if (vehicle.current_driver_char_id && vehicle.current_driver_char_id !== char.id) {
+  if (
+    vehicle.current_driver_char_id &&
+    vehicle.current_driver_char_id !== char.id
+  ) {
     await ctx.reply("الان فرد دیگری پشت فرمون این وسیله است.");
     return;
   }
 
-  // اگر خود کاراکتر در حال حاضر رانندهٔ وسیلهٔ دیگری است، اول آن را آزاد کن
   const { data: otherVehicles, error: ovErr } = await supabase
     .from("vehicles")
     .select("id")
@@ -568,9 +498,8 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
       .from("vehicles")
       .update({ current_driver_char_id: null })
       .in("id", otherIds);
-    if (clearErr) {
+    if (clearErr)
       console.error("handleDriveVehicle clear other vehicles error:", clearErr);
-    }
   }
 
   const { error } = await supabase
@@ -584,12 +513,12 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  await ctx.reply(`🕹 تو حالا رانندهٔ ${vehicle.display_name ?? "وسیله"} شدی.`);
+  await ctx.reply(
+    `🕹 تو حالا رانندهٔ ${vehicle.display_name ?? "وسیله"} شدی.`
+  );
 }
 
-/**
- * پیاده شدن راننده از وسیله
- */
+/** پیاده شدن راننده از وسیله */
 async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
   const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
@@ -625,17 +554,15 @@ async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
   );
 }
 
-/**
- * منوی مسافر شدن
- */
+/** منوی مسافر شدن: لیست ماشین‌های حاضر در همین نقطه */
 async function showRideMenu(ctx: MyContext) {
+  const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
   if (!char) {
     await ctx.reply(errorText ?? "پرونده‌ات را پیدا نکردم.");
     return;
   }
 
-  // اگر خودش رانندهٔ وسیله‌ای است
   const { vehicle: drivingVehicle } = await getRidingVehicle(ctx, char.id);
   if (drivingVehicle) {
     await ctx.reply(
@@ -644,7 +571,6 @@ async function showRideMenu(ctx: MyContext) {
     return;
   }
 
-  // اگر خودش مسافر وسیله‌ای است
   const alreadyPassenger = await isCharacterPassenger(ctx, char.id);
   if (alreadyPassenger) {
     await ctx.reply(
@@ -660,77 +586,66 @@ async function showRideMenu(ctx: MyContext) {
     return;
   }
 
-  const canBoard = await hasBoardableVehicleHere(
-    ctx,
-    char.current_region_id,
-    char.current_spot_id
-  );
+  const { data: vehicles, error } = await supabase
+    .from("vehicles")
+    .select("id, display_name, capacity, current_region_id, current_spot_id")
+    .eq("current_region_id", char.current_region_id)
+    .eq("current_spot_id", char.current_spot_id);
 
-  if (!canBoard) {
+  if (error) {
+    console.error("showRideMenu vehicles error:", error);
+    await ctx.reply("در خواندن وسیله‌های این نقطه مشکلی پیش آمد.");
+    return;
+  }
+
+  if (!vehicles || vehicles.length === 0) {
     const kb = new InlineKeyboard().text(
       "⬅️ بازگشت به حمل‌ونقل",
       "trans:menu"
     );
     await sendVehicleScreen(
       ctx,
-      "در این نقطه وسیله‌ای برای سوار شدن به عنوان مسافر پیدا نکردم.",
+      "در این نقطه وسیله‌ای برای سوار شدن پیدا نکردم.",
       kb
     );
     return;
   }
 
-  const kb = new InlineKeyboard()
-    .text("درخواست سوار شدن بفرست", "ride:req")
-    .row()
-    .text("⬅️ بازگشت به حمل‌ونقل", "trans:menu");
+  const kb = new InlineKeyboard();
+  const lines: string[] = [];
+  lines.push("🚕 کدام وسیله را می‌خواهی سوار شوی؟");
+  lines.push("");
 
-  await sendVehicleScreen(
-    ctx,
-    "🚕 می‌توانی در این نقطه سوار یکی از وسیله‌ها شوی.\nدرخواست سوار شدن را بفرست تا به راننده برسد.",
-    kb
-  );
-}
-
-/**
- * پیدا کردن یک وسیلهٔ مناسب برای سوار شدن مسافر
- * (فعلاً: اولین وسیله با ظرفیت خالی)
- */
-async function findBoardableVehicleForPassenger(ctx: MyContext, charId: number) {
-  const { supabase } = ctx.services;
-  const { char } = await getCharacterByTg(ctx);
-  if (!char || !char.current_region_id || !char.current_spot_id) {
-    return null;
-  }
-
-  const { data: vehicles, error } = await supabase
-    .from("vehicles")
-    .select("id, capacity, current_region_id, current_spot_id")
-    .eq("current_region_id", char.current_region_id)
-    .eq("current_spot_id", char.current_spot_id);
-
-  if (error) {
-    console.error("findBoardableVehicleForPassenger vehicles error:", error);
-    return null;
-  }
-
-  if (!vehicles || vehicles.length === 0) return null;
+  let anyBoardable = false;
 
   for (const v of vehicles) {
     const { driverId, passengerIds } = await getVehicleLoad(ctx, v.id);
     if (!driverId) continue;
-    const usedSeats = 1 + passengerIds.length;
-    const cap = (v as any).capacity ?? 1;
-    if (usedSeats < cap) {
-      return v.id;
-    }
+    const cap = v.capacity ?? 1;
+    const used = 1 + passengerIds.length;
+    if (used >= cap) continue;
+
+    anyBoardable = true;
+    const free = cap - used;
+    const label = `🚕 ${v.display_name ?? "وسیله"} (جای خالی: ${free})`;
+    kb.text(label, `ride:req:${v.id}`).row();
   }
 
-  return null;
+  kb.text("⬅️ بازگشت به حمل‌ونقل", "trans:menu");
+
+  if (!anyBoardable) {
+    await sendVehicleScreen(
+      ctx,
+      "وسیله‌هایی در این نقطه وجود دارند، اما هیچ‌کدام جای خالی برای مسافر ندارند.",
+      kb
+    );
+    return;
+  }
+
+  await sendVehicleScreen(ctx, lines.join("\n"), kb);
 }
 
-/**
- * متنی برای راننده وقتی یک مسافر درخواست می‌دهد
- */
+/** فرستادن درخواست به رانندهٔ یک وسیله */
 async function sendRideRequestToDriver(
   ctx: MyContext,
   vehicleId: number,
@@ -739,9 +654,7 @@ async function sendRideRequestToDriver(
   const { supabase } = ctx.services;
 
   const { vehicle } = await getVehicleById(ctx, vehicleId);
-  if (!vehicle || !vehicle.current_driver_char_id) {
-    return;
-  }
+  if (!vehicle || !vehicle.current_driver_char_id) return;
 
   const driverCharId = vehicle.current_driver_char_id;
 
@@ -768,36 +681,46 @@ async function sendRideRequestToDriver(
   }
 
   const driverTgId = driverChar.tg_id;
-  if (!driverTgId) {
-    return;
-  }
+  if (!driverTgId) return;
 
   const kb = new InlineKeyboard()
     .text("✅ قبول", `ride:approve:${vehicleId}:${passengerCharId}`)
     .row()
     .text("❌ رد", `ride:reject:${vehicleId}:${passengerCharId}`);
 
-  const text = `🚕 درخواست مسافر:\n\n` +
+  const text =
+    `🚕 درخواست مسافر:\n\n` +
     `مسافر: ${passengerChar.char_name}\n` +
     `وسیله: ${vehicle.display_name ?? "وسیله"} (#${vehicle.id})\n\n` +
     `می‌خواهی سوارش کنی؟`;
 
   try {
-    await ctx.api.sendMessage(driverTgId, text, {
-      reply_markup: kb,
-    });
+    await ctx.api.sendMessage(driverTgId, text, { reply_markup: kb });
   } catch (e) {
     console.error("sendRideRequestToDriver sendMessage error:", e);
   }
 }
 
-/**
- * وقتی مسافر می‌گوید «درخواست سوار شدن»
- */
-async function handleRideRequest(ctx: MyContext) {
+/** وقتی مسافر یک ماشین خاص را انتخاب می‌کند */
+async function handleRideRequest(ctx: MyContext, vehicleId: number) {
+  const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
   if (!char) {
     await ctx.reply(errorText ?? "پرونده‌ات را پیدا نکردم.");
+    return;
+  }
+
+  const { vehicle, errorText: err2 } = await getVehicleById(ctx, vehicleId);
+  if (!vehicle) {
+    await ctx.reply(err2 ?? "وسیله‌ای با این مشخصات پیدا نشد.");
+    return;
+  }
+
+  const { vehicle: drivingVehicle } = await getRidingVehicle(ctx, char.id);
+  if (drivingVehicle) {
+    await ctx.reply(
+      "الان خودت رانندهٔ یک وسیله هستی.\nبرای مسافر شدن باید اول از وسیله‌ات پیاده شوی."
+    );
     return;
   }
 
@@ -807,27 +730,37 @@ async function handleRideRequest(ctx: MyContext) {
     return;
   }
 
-  if (!char.current_region_id || !char.current_spot_id) {
-    await ctx.reply("مکان فعلی‌ات مشخص نیست.");
+  if (
+    !char.current_region_id ||
+    !char.current_spot_id ||
+    char.current_region_id !== vehicle.current_region_id ||
+    char.current_spot_id !== vehicle.current_spot_id
+  ) {
+    await ctx.reply("برای سوار شدن باید کنار همان وسیله باشی.");
     return;
   }
 
-  const vehicleId = await findBoardableVehicleForPassenger(ctx, char.id);
-  if (!vehicleId) {
-    await ctx.reply("الان وسیله‌ای با ظرفیت خالی در این نقطه پیدا نکردم.");
+  const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicleId);
+  if (!driverId) {
+    await ctx.reply("این وسیله الان راننده ندارد.");
+    return;
+  }
+
+  const cap = vehicle.capacity ?? 1;
+  const used = 1 + passengerIds.length;
+  if (used >= cap) {
+    await ctx.reply("این وسیله دیگر جایی برای مسافر ندارد.");
     return;
   }
 
   await sendRideRequestToDriver(ctx, vehicleId, char.id);
 
   await ctx.reply(
-    "درخواست سوار شدن به راننده فرستاده شد.\nببینیم که آیا قبول می‌کند یا نه…"
+    "درخواست سوار شدن برای رانندهٔ همین وسیله ارسال شد.\nباید ببینیم قبول می‌کند یا نه…"
   );
 }
 
-/**
- * ثبت پاسخ راننده (قبول/رد)
- */
+/** راننده قبول/رد می‌کند */
 async function handleRideDecision(
   ctx: MyContext,
   vehicleId: number,
@@ -911,11 +844,7 @@ async function handleRideDecision(
   }
 }
 
-/**
- * وقتی راننده با وسیله بین Spotها حرکت می‌کند،
- * باید مسافران هم همراهش جابه‌جا شوند.
- * این تابع را در travel.ts صدا می‌زنیم.
- */
+/** حرکت وسیله + مسافران بین Spotها (travel.ts از این استفاده می‌کند) */
 export async function moveVehicleWithPassengers(
   ctx: MyContext,
   vehicleId: number,
@@ -965,10 +894,7 @@ export async function moveVehicleWithPassengers(
   }
 }
 
-/**
- * هندل کردن لینک ورود برای راننده و مسافران
- * این را travel.ts وقتی بین Regionها حرکت می‌کنیم صدا می‌زند.
- */
+/** لینک ورود به Region جدید برای راننده و مسافران */
 export async function sendVehicleArrivalLinks(
   ctx: MyContext,
   vehicleId: number,
@@ -1016,9 +942,7 @@ export async function sendVehicleArrivalLinks(
   }
 }
 
-/**
- * ثبت فیچرهای مرتبط با وسیله و مسافر در بات
- */
+/** رجیسترکردن همهٔ این فیچرها روی بات */
 export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
   // دکمه متنی «حمل و نقل» در پی‌وی
   bot.hears(/حمل.?و.?نقل/, async (ctx) => {
@@ -1026,7 +950,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     await showTransportMenu(ctx);
   });
 
-  // باز کردن پنل حمل‌ونقل از دکمه‌ی برگشت
+  // برگشت به پنل حمل‌ونقل
   bot.callbackQuery("trans:menu", async (ctx) => {
     try {
       await ctx.answerCallbackQuery();
@@ -1048,8 +972,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
 
   // باز کردن جزئیات یک وسیله
   bot.callbackQuery(/^veh:open:(\d+)$/, async (ctx) => {
-    const match = ctx.match;
-    const id = Number(match[1]);
+    const id = Number(ctx.match[1]);
     try {
       await ctx.answerCallbackQuery();
     } catch (e) {
@@ -1080,7 +1003,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     await handleLeaveVehicle(ctx, id);
   });
 
-  // مسافران یک وسیله
+  // لیست مسافران
   bot.callbackQuery(/^veh:passengers:(\d+)$/, async (ctx) => {
     const id = Number(ctx.match[1]);
     try {
@@ -1091,7 +1014,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     await showVehiclePassengers(ctx, id);
   });
 
-  // دکمه «🚕 سوار می‌شوم» در منوی حمل‌ونقل
+  // دکمه «🚕 سوار می‌شوم» در پنل حمل‌ونقل
   bot.callbackQuery("ride:menu", async (ctx) => {
     if (ctx.chat?.type !== "private") {
       try {
@@ -1111,23 +1034,18 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     await showRideMenu(ctx);
   });
 
-  // دستور متنی: «سوار ماشین بشم» برای راحتی
-  bot.hears(/سوار.?ماشین.?بشم/i, async (ctx) => {
-    if (ctx.chat?.type !== "private") return;
-    await showRideMenu(ctx);
-  });
-
-  // وقتی مسافر می‌گوید «درخواست سوار شدن بفرست»
-  bot.callbackQuery("ride:req", async (ctx) => {
+  // انتخاب یک ماشین خاص برای سوار شدن
+  bot.callbackQuery(/^ride:req:(\d+)$/, async (ctx) => {
+    const vehicleId = Number(ctx.match[1]);
     try {
       await ctx.answerCallbackQuery();
     } catch (e) {
       console.warn("answerCallbackQuery ride:req failed:", e);
     }
-    await handleRideRequest(ctx);
+    await handleRideRequest(ctx, vehicleId);
   });
 
-  // راننده قبول/رد می‌کند
+  // تصمیم راننده (قبول/رد)
   bot.callbackQuery(/^ride:(approve|reject):(\d+):(\d+)$/, async (ctx) => {
     const decision = ctx.match[1];
     const vehicleId = Number(ctx.match[2]);
