@@ -32,7 +32,7 @@ async function logVehicleMove(
   fromSpotId: number | null,
   toRegionId: number | null,
   toSpotId: number | null,
-  actorId: number
+  actorId: number // فعلاً استفاده نمی‌کنیم، فقط امضای تابع رو نگه داشتیم
 ) {
   const { supabase } = ctx.services;
 
@@ -42,13 +42,14 @@ async function logVehicleMove(
     from_spot_id: fromSpotId,
     to_region_id: toRegionId,
     to_spot_id: toSpotId,
-    actor_char_id: actorId,
+    // ✅ دیگه actor_char_id اینجا نیست
   });
 
   if (error) {
     console.error("logVehicleMove error:", error);
   }
 }
+
 
 // --- helper: هر ۱٪ سوخت ≈ ۲ دقیقه رانندگی ---
 
