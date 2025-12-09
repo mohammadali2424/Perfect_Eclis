@@ -249,7 +249,8 @@ async function removePassengerFromVehicle(
 }
 
 /**
- * نمایش صفحهٔ اختصاصی وسیله در پیوی
+ * نمایش پیام منوی حمل‌ونقل / ماشین‌ها / مسافر شدن
+ * با پاک کردن پیام قبلی منو
  */
 async function sendVehicleScreen(
   ctx: MyContext,
@@ -273,6 +274,104 @@ async function sendVehicleScreen(
   if (ctx.chat?.type === "private") {
     ctx.session.ui_last_menu_id = msg.message_id;
   }
+}
+
+/**
+ * منوی کلی حمل‌ونقل: ماشین‌ها / مونت‌ها / سوار می‌شوم / سوخت‌گیری
+ */
+export async function showTransportMenu(ctx: MyContext) {
+  const { supabase } = ctx.services;
+  const { char, errorText } = await getCharacterByTg(ctx);
+
+  if (!char) {
+    await ctx.reply(errorText ?? "پرونده‌ات را پیدا نکردم.");
+    return;
+  }
+
+  const lines: string[] = [];
+  lines.push("🛰 پنل حمل‌ونقل اکلیس");
+  lines.push("");
+
+  // آیا خودش ماشین دارد؟
+  const { data: vehicles, error: vehErr } = await supabase
+    .from("vehicles")
+    .select("id")
+    .eq("owner_char_id", char.id);
+
+  if (vehErr) {
+    console.error("showTransportMenu vehicles error:", vehErr);
+  }
+
+  const hasOwnedVehicles = !!vehicles && vehicles.length > 0;
+
+  let canBoard = false;
+  let hasFlux = false;
+  // (بعداً) let hasMounts = false;
+  // (بعداً) let hasTransit = false;
+
+  if (char.current_region_id && char.current_spot_id) {
+    // آیا در این نقطه وسیله‌ای برای سوار شدن هست؟
+    canBoard = await hasBoardableVehicleHere(
+      ctx,
+      char.current_region_id,
+      char.current_spot_id
+    );
+
+    // آیا این spot چاه فلوکس دارد؟
+    const { data: wells, error: wellErr } = await supabase
+      .from("flux_wells")
+      .select("id")
+      .eq("region_id", char.current_region_id)
+      .eq("spot_id", char.current_spot_id);
+
+    if (wellErr) {
+      console.error("showTransportMenu wells error:", wellErr);
+    }
+    hasFlux = !!wells && wells.length > 0;
+  }
+
+  const kb = new InlineKeyboard();
+
+  // 🚗 ماشین‌های من
+  if (hasOwnedVehicles) {
+    kb.text("🚗 ماشین‌های من", "veh:my").row();
+    lines.push("• ماشین‌هایت را از اینجا مدیریت می‌کنی.");
+  }
+
+  // 🐎 مونت‌های من (بعداً)
+  // if (hasMounts) {
+  //   kb.text("🐎 مونت‌های من", "mount:my").row();
+  //   lines.push("• مونت‌هایت را از اینجا صدا می‌زنی.");
+  // }
+
+  // 🚕 سوار می‌شوم (مسافر شدن)
+  if (canBoard) {
+    kb.text("🚕 سوار می‌شوم", "ride:menu").row();
+    lines.push("• می‌توانی سوار یکی از وسیله‌های حاضر در این نقطه شوی.");
+  }
+
+  // ⛽ سوخت‌گیری
+  if (hasFlux) {
+    kb.text("⛽ سوخت‌گیری", "flux:fuel").row();
+    lines.push("• در این نقطه چاه فلوکس فعال است.");
+  }
+
+  // 🚝 حمل‌ونقل سریع (بعداً)
+  // if (hasTransit) {
+  //   kb.text("🚝 حمل‌ونقل سریع", "transit:menu").row();
+  //   lines.push("• اینجا ایستگاه حمل‌ونقل سریع است.");
+  // }
+
+  kb.text("⬅️ بازگشت به منوی اصلی", "ui:home");
+
+  if (!hasOwnedVehicles && !canBoard && !hasFlux) {
+    lines.push(
+      "فعلاً نه وسیله‌ای برای خودت داری، نه چیزی این اطراف برای سوار شدن، نه چاه فلوکس."
+    );
+    lines.push("وقتی شاپ برایت وسیله ثبت کند یا به نقطهٔ مناسب برسی، این‌جا زنده می‌شود.");
+  }
+
+  await sendVehicleScreen(ctx, lines.join("\n"), kb);
 }
 
 /**
@@ -310,7 +409,7 @@ async function showMyVehiclesMenu(ctx: MyContext) {
     const label = `${v.display_name ?? "وسیله"} (#${v.id})`;
     kb.text(label, `veh:open:${v.id}`).row();
   }
-  kb.text("⬅️ بازگشت به منوی اصلی", "ui:home");
+  kb.text("⬅️ بازگشت به حمل‌ونقل", "trans:menu");
 
   await sendVehicleScreen(ctx, "🚗 ماشین‌ها و وسیله‌های تو:", kb);
 }
@@ -365,7 +464,7 @@ async function showVehicleDetail(ctx: MyContext, vehicleId: number) {
   }
 
   kb.text("🚕 مسافران", `veh:passengers:${vehicle.id}`).row();
-  kb.text("⬅️ بازگشت", "veh:back");
+  kb.text("⬅️ بازگشت به ماشین‌هایم", "veh:my");
 
   await sendVehicleScreen(ctx, lines.join("\n"), kb);
 }
@@ -424,7 +523,7 @@ async function showVehiclePassengers(ctx: MyContext, vehicleId: number) {
   const kb = new InlineKeyboard()
     .text("⬅️ بازگشت به وسیله", `veh:open:${vehicle.id}`)
     .row()
-    .text("⬅️ بازگشت به ماشین‌های من", "veh:back");
+    .text("⬅️ بازگشت به ماشین‌هایم", "veh:my");
 
   await sendVehicleScreen(ctx, lines.join("\n"), kb);
 }
@@ -569,8 +668,8 @@ async function showRideMenu(ctx: MyContext) {
 
   if (!canBoard) {
     const kb = new InlineKeyboard().text(
-      "⬅️ بازگشت به منوی اصلی",
-      "ui:home"
+      "⬅️ بازگشت به حمل‌ونقل",
+      "trans:menu"
     );
     await sendVehicleScreen(
       ctx,
@@ -580,11 +679,10 @@ async function showRideMenu(ctx: MyContext) {
     return;
   }
 
-  // اینجا ساده شده: فقط پیام راهنما
   const kb = new InlineKeyboard()
     .text("درخواست سوار شدن بفرست", "ride:req")
     .row()
-    .text("⬅️ بازگشت به منوی اصلی", "ui:home");
+    .text("⬅️ بازگشت به حمل‌ونقل", "trans:menu");
 
   await sendVehicleScreen(
     ctx,
@@ -922,9 +1020,29 @@ export async function sendVehicleArrivalLinks(
  * ثبت فیچرهای مرتبط با وسیله و مسافر در بات
  */
 export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
-  // منوی «ماشین‌های من»
-  bot.hears(["ماشین های من", "ماشین‌های من"], async (ctx) => {
+  // دکمه متنی «حمل و نقل» در پی‌وی
+  bot.hears(/حمل.?و.?نقل/, async (ctx) => {
     if (ctx.chat?.type !== "private") return;
+    await showTransportMenu(ctx);
+  });
+
+  // باز کردن پنل حمل‌ونقل از دکمه‌ی برگشت
+  bot.callbackQuery("trans:menu", async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+    } catch (e) {
+      console.warn("answerCallbackQuery trans:menu failed:", e);
+    }
+    await showTransportMenu(ctx);
+  });
+
+  // «ماشین‌های من» از داخل حمل‌ونقل
+  bot.callbackQuery("veh:my", async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+    } catch (e) {
+      console.warn("answerCallbackQuery veh:my failed:", e);
+    }
     await showMyVehiclesMenu(ctx);
   });
 
@@ -938,16 +1056,6 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
       console.warn("answerCallbackQuery veh:open failed:", e);
     }
     await showVehicleDetail(ctx, id);
-  });
-
-  // بازگشت از منوی وسیله به لیست ماشین‌ها
-  bot.callbackQuery("veh:back", async (ctx) => {
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery veh:back failed:", e);
-    }
-    await showMyVehiclesMenu(ctx);
   });
 
   // سوار شدن راننده
@@ -983,7 +1091,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     await showVehiclePassengers(ctx, id);
   });
 
-  // دکمه «🚕 مسافر شوم» در منوی اصلی
+  // دکمه «🚕 سوار می‌شوم» در منوی حمل‌ونقل
   bot.callbackQuery("ride:menu", async (ctx) => {
     if (ctx.chat?.type !== "private") {
       try {
@@ -1003,7 +1111,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     await showRideMenu(ctx);
   });
 
-  // دستور متنی: «سوار ماشین بشم»
+  // دستور متنی: «سوار ماشین بشم» برای راحتی
   bot.hears(/سوار.?ماشین.?بشم/i, async (ctx) => {
     if (ctx.chat?.type !== "private") return;
     await showRideMenu(ctx);
