@@ -85,6 +85,39 @@ async function ensureCharacterFor(
   return ins;
 }
 
+function isTraveling(char: any): boolean {
+  return !!(char.pending_region_id && char.pending_spot_id);
+}
+
+async function showTravelInProgress(ctx: MyContext, char: any) {
+  const now = new Date();
+  let remainText = "";
+
+  if (char.travel_ready_at) {
+    const readyAt = new Date(char.travel_ready_at);
+    const diff = Math.ceil((readyAt.getTime() - now.getTime()) / 1000);
+    if (diff > 0) {
+      remainText = `حدود ${diff} ثانیه تا رسیدن باقی مانده.\n`;
+    } else {
+      remainText = "زمان تقریبی سفر گذشته است، اما هنوز مقصد را نهایی نکرده‌ای.\n";
+    }
+  }
+
+  const text =
+    "🚶 در حال سفر هستی.\n" +
+    remainText +
+    "\n" +
+    "می‌توانی با «رسیدم؟» سفر را تمام کنی، یا با «لغو مسیر» سفر را لغو کرده و به وضعیت قبلی برگردی.";
+
+  const kb = new InlineKeyboard()
+    .text("🚶 رسیدم؟", "travel:arrive")
+    .row()
+    .text("❌ لغو مسیر", "travel:cancel");
+
+  await sendScreen(ctx, text, kb);
+}
+
+
 // --- منوی fallback (فقط یک دکمه برگشت) ---
 
 function buildMainMenu(): InlineKeyboard {
