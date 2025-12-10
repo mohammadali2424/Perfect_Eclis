@@ -1294,53 +1294,66 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   });
 
     // صفحه پشت فرمون: سوخت + سرنشین‌ها
-  bot.callbackQuery("veh:dash", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    if (ctx.chat?.type !== "private" || !ctx.from) return;
+ // بالای فایل:
+import { getVehiclePassengerCount } from "./travel-vehicles";
 
-    const { supabase } = ctx.services;
-    const char = await ensureCharacterFor(ctx, ctx.from.id);
-    if (!char || !char.riding_vehicle_id) {
-      await sendScreen(ctx, "الان سوار هیچ وسیله‌ای نیستی.", buildMainMenu());
-      return;
-    }
+// ...
 
-    const { data: vehicle, error: vehErr } = await supabase
-      .from("vehicles")
-      .select("id, title, capacity, fuel_percent")
-      .eq("id", char.riding_vehicle_id)
-      .maybeSingle();
+// داخل registerTravelFeature:
+bot.callbackQuery("veh:dash", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (ctx.chat?.type !== "private" || !ctx.from) return;
 
-    if (vehErr || !vehicle) {
-      console.error("veh:dash vehicle error:", vehErr);
-      await sendScreen(ctx, "وسیله‌ات پیدا نشد.", buildMainMenu());
-      return;
-    }
+  const { supabase } = ctx.services;
+  const char = await ensureCharacterFor(ctx, ctx.from.id);
+  if (!char || !char.riding_vehicle_id) {
+    await sendScreen(ctx, "الان سوار هیچ وسیله‌ای نیستی.", buildMainMenu());
+    return;
+  }
 
-    const { driverCount, passengerCount, total } =
-      await getVehiclePassengerCount(ctx, vehicle.id);
+  const { data: vehicle, error: vehErr } = await supabase
+    .from("vehicles")
+    .select("id, title, capacity, fuel_percent, passenger_locked")
+    .eq("id", char.riding_vehicle_id)
+    .maybeSingle();
 
-    const cap = vehicle.capacity ?? 1;
-    const fuel =
-      typeof vehicle.fuel_percent === "number"
-        ? `${vehicle.fuel_percent.toFixed(1)}٪`
-        : "نامشخص";
+  if (vehErr || !vehicle) {
+    console.error("veh:dash vehicle error:", vehErr);
+    await sendScreen(ctx, "وسیله‌ات پیدا نشد.", buildMainMenu());
+    return;
+  }
 
-    let text = "";
-    text += `🎛 صفحه پشت فرمون\n\n`;
-    text += `وسیله: ${vehicle.title ?? "وسیله"} (#${vehicle.id})\n`;
-    text += `سوخت: ${fuel}\n`;
-    text += `سرنشین‌ها: ${total}/${cap}\n`;
-    text += `- راننده: ${driverCount}\n`;
-    text += `- مسافر: ${passengerCount}\n`;
+  const { driverCount, passengerCount, total } =
+    await getVehiclePassengerCount(ctx, vehicle.id);
 
-    const kb = new InlineKeyboard()
-      // بعداً می‌توانیم این‌ها را فعال کنیم
-      // .text("⛽ سوخت‌گیری", "flux:fuel").row()
-      .text("🔙 بازگشت", "travel:home");
+  const cap = vehicle.capacity ?? 1;
+  const fuel =
+    typeof vehicle.fuel_percent === "number"
+      ? `${vehicle.fuel_percent.toFixed(1)}٪`
+      : "نامشخص";
 
-    await sendScreen(ctx, text, kb);
-  });
+  const locked = !!vehicle.passenger_locked;
+
+  let text = "";
+  text += `🎛 صفحه پشت فرمون\n\n`;
+  text += `وسیله: ${vehicle.title ?? "وسیله"} (#${vehicle.id})\n`;
+  text += `سوخت: ${fuel}\n`;
+  text += `سرنشین‌ها: ${total}/${cap}\n`;
+  text += `- راننده: ${driverCount}\n`;
+  text += `- مسافر: ${passengerCount}\n`;
+  text += `وضعیت مسافران: ${locked ? "🔒 قفل" : "🔓 باز"}\n`;
+
+  const kb = new InlineKeyboard()
+    .text(
+      locked ? "🔓 باز کردن درِ مسافران" : "🔒 قفل کردن مسافران",
+      `veh:lock:${vehicle.id}`
+    )
+    .row()
+    .text("🔙 بازگشت", "travel:home");
+
+  await sendScreen(ctx, text, kb);
+});
+
 
 
   // ثبت پلیر در Region
