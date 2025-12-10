@@ -1235,8 +1235,23 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   // لیست مسیرها
   bot.callbackQuery("paths:list", async (ctx) => {
     await ctx.answerCallbackQuery();
+    if (!ctx.from || ctx.chat?.type !== "private") return;
+
+    const { supabase } = ctx.services;
+    const { data: char } = await supabase
+      .from("characters")
+      .select("*")
+      .eq("tg_id", ctx.from.id)
+      .maybeSingle();
+
+    if (char && isTraveling(char)) {
+      await showTravelInProgress(ctx, char);
+      return;
+    }
+
     await openPaths(ctx);
   });
+
 
   // کلیک روی مسیر پیاده
   bot.callbackQuery(/go:(\d+)/, async (ctx) => {
