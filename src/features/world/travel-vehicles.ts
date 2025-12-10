@@ -34,12 +34,61 @@ async function getCharacterByTg(ctx: MyContext) {
   return { char: data, errorText: null };
 }
 
+/** گرفتن وسیله‌ای که این کاراکتر سوارش است (راننده یا مسافر) */
+async function getRidingVehicle(ctx: MyContext, charId: number) {
+  const { supabase } = ctx.services;
+
+  const { data: char, error: charErr } = await supabase
+    .from("characters")
+    .select("riding_vehicle_id")
+    .eq("id", charId)
+    .maybeSingle();
+
+  if (charErr || !char || !char.riding_vehicle_id) {
+    if (charErr) console.error("getRidingVehicle char error:", charErr);
+    return { vehicle: null, errorText: null };
+  }
+
+  const { vehicle, errorText } = await getVehicleById(
+    ctx,
+    char.riding_vehicle_id
+  );
+  return { vehicle, errorText };
+}
+
+/** آیا این کاراکتر راننده‌ی یک وسیله است؟ */
+async function isCharacterDriver(
+  ctx: MyContext,
+  charId: number
+): Promise<{ isDriver: boolean; vehicleId: number | null }> {
+  const { supabase } = ctx.services;
+
+  const { data: char, error } = await supabase
+    .from("characters")
+    .select("id, riding_vehicle_id")
+    .eq("id", charId)
+    .maybeSingle();
+
+  if (error || !char || !char.riding_vehicle_id) {
+    if (error) console.error("isCharacterDriver char error:", error);
+    return { isDriver: false, vehicleId: null };
+  }
+
+  const vehicleId = char.riding_vehicle_id as number;
+  const { driverId } = await getVehicleLoad(ctx, vehicleId);
+  if (driverId === charId) {
+    return { isDriver: true, vehicleId };
+  }
+
+  return { isDriver: false, vehicleId: null };
+}
+
 /** گرفتن وسیله از روی id */
 async function getVehicleById(ctx: MyContext, vehicleId: number) {
   const { supabase } = ctx.services;
   const { data, error } = await supabase
     .from("vehicles")
-    .select("id, title, owner_char_id, capacity, current_region_id, current_spot_id")
+    .select("*")
     .eq("id", vehicleId)
     .maybeSingle();
 
@@ -72,7 +121,7 @@ async function updateVehicleLocation(
   }
 }
 
-/** ثبت حرکت وسیله در vehicle_moves */
+/** ثبت حرکت وسیله در vehicle_moves (ساده، بدون actor_*) */
 async function logVehicleMove(
   ctx: MyContext,
   vehicleId: number,
@@ -97,7 +146,7 @@ async function logVehicleMove(
 /** برای بعد، اگر خواستی از روی زمان سوخت کم کنی */
 function computeFuelUsagePercent(driveSeconds: number): number {
   if (driveSeconds <= 0) return 0;
-  return driveSeconds / 120; // هر ۱٪ = ۲ دقیقه
+  return driveSeconds / 120;
 }
 
 /** تعداد راننده و مسافرهای یک وسیله */
@@ -128,7 +177,7 @@ async function isCharacterPassenger(
   return !!data;
 }
 
-/** حذف مسافر از همهٔ وسیله‌ها (فقط از جدول passenger) */
+/** حذف مسافر از همهٔ وسیله‌ها (برای ری‌ست شدن تمیز) */
 async function removePassengerFromAllVehicles(
   ctx: MyContext,
   charId: number
@@ -143,9 +192,19 @@ async function removePassengerFromAllVehicles(
   if (error) {
     console.error("removePassengerFromAllVehicles error:", error);
   }
+
+  // اگر جایی سوار بود، riding_vehicle_id را هم خالی کن
+  const { error: updErr } = await supabase
+    .from("characters")
+    .update({ riding_vehicle_id: null })
+    .eq("id", charId);
+
+  if (updErr) {
+    console.error("removePassengerFromAllVehicles char update error:", updErr);
+  }
 }
 
-/** افزودن یک مسافر به وسیله + ست کردن riding_vehicle_id */
+/** افزودن یک مسافر به وسیله */
 async function addPassengerToVehicle(
   ctx: MyContext,
   vehicleId: number,
@@ -166,13 +225,13 @@ async function addPassengerToVehicle(
     return { ok: false, errorText: "نتوانستم وسیله را پیدا کنم." };
   }
 
-  const cap = (veh as any).capacity ?? 1;
+  const cap = veh.capacity ?? 1;
   const usedSeats = (driverId ? 1 : 0) + passengerIds.length;
   if (usedSeats >= cap) {
     return { ok: false, errorText: "این وسیله دیگر جایی برای مسافر ندارد." };
   }
 
-  // از همه‌ی وسیله‌ها به عنوان مسافر حذفش می‌کنیم
+  // اول هر جا مسافر بوده پاک کن
   await removePassengerFromAllVehicles(ctx, charId);
 
   const { error } = await supabase.from("vehicle_passengers").insert({
@@ -185,33 +244,54 @@ async function addPassengerToVehicle(
     return { ok: false, errorText: "در ثبت مسافر جدید مشکلی پیش آمد." };
   }
 
-  // حالا riding_vehicle_id را هم ست می‌کنیم
+  // riding_vehicle_id را هم تنظیم کن
   const { error: updErr } = await supabase
     .from("characters")
     .update({ riding_vehicle_id: vehicleId })
     .eq("id", charId);
 
   if (updErr) {
-    console.error("addPassengerToVehicle set riding_vehicle_id error:", updErr);
-    return {
-      ok: false,
-      errorText: "مسافر ثبت شد اما در به‌روزرسانی وضعیتش مشکل پیش آمد.",
-    };
+    console.error("addPassengerToVehicle char update error:", updErr);
   }
 
   return { ok: true };
 }
 
-/** ارسال/آپدیت منوی حمل‌ونقل/ماشین/مسافر با پاک‌کردن منوی قبلی */
+/** حذف یک مسافر از یک وسیله خاص */
+async function removePassengerFromVehicle(
+  ctx: MyContext,
+  vehicleId: number,
+  charId: number
+): Promise<void> {
+  const { supabase } = ctx.services;
+
+  const { error } = await supabase
+    .from("vehicle_passengers")
+    .delete()
+    .eq("vehicle_id", vehicleId)
+    .eq("character_id", charId);
+
+  if (error) {
+    console.error("removePassengerFromVehicle error:", error);
+  }
+
+  const { error: updErr } = await supabase
+    .from("characters")
+    .update({ riding_vehicle_id: null })
+    .eq("id", charId);
+
+  if (updErr) {
+    console.error("removePassengerFromVehicle char update error:", updErr);
+  }
+}
+
+/** ارسال/آپدیت منوی حمل‌ونقل/ماشین‌/مسافر با پاک‌کردن منوی قبلی */
 async function sendVehicleScreen(
   ctx: MyContext,
   text: string,
   keyboard: InlineKeyboard
 ) {
-  const lastId = (ctx.session as any).ui_last_menu_id as
-    | number
-    | undefined;
-
+  const lastId = (ctx.session as any).ui_last_menu_id as number | undefined;
   if (lastId && ctx.chat?.type === "private") {
     try {
       await ctx.api.deleteMessage(ctx.chat.id, lastId);
@@ -268,7 +348,7 @@ export async function showTransportMenu(ctx: MyContext) {
         .eq("spot_id", char.current_spot_id);
 
       if (wellErr) {
-        // اگر جدول flux_wells نباشد، فقط نادیده می‌گیریم
+        // اگر جدول وجود نداشت، فقط لاگ کن و ادامه بده
         if ((wellErr as any).code !== "PGRST205") {
           console.error("showTransportMenu wells error:", wellErr);
         }
@@ -276,7 +356,7 @@ export async function showTransportMenu(ctx: MyContext) {
         hasFlux = !!wells && wells.length > 0;
       }
     } catch (e) {
-      console.error("showTransportMenu wells unexpected error:", e);
+      console.warn("flux_wells check failed (maybe table not exists):", e);
     }
   }
 
@@ -323,7 +403,7 @@ async function showMyVehiclesMenu(ctx: MyContext) {
 
   const { data: vehicles, error } = await supabase
     .from("vehicles")
-    .select("id, title, capacity")
+    .select("*")
     .eq("owner_char_id", char.id);
 
   if (error) {
@@ -341,7 +421,7 @@ async function showMyVehiclesMenu(ctx: MyContext) {
 
   const kb = new InlineKeyboard();
   for (const v of vehicles) {
-    const label = `${(v as any).title ?? "وسیله"} (#${v.id})`;
+    const label = `${(v as any).display_name ?? v.title ?? "وسیله"} (#${v.id})`;
     kb.text(label, `veh:open:${v.id}`).row();
   }
   kb.text("⬅️ بازگشت به حمل‌ونقل", "trans:menu");
@@ -365,18 +445,22 @@ async function showVehicleDetail(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  if ((vehicle as any).owner_char_id !== char.id) {
+  if (vehicle.owner_char_id !== char.id) {
     await ctx.reply("این وسیله متعلق به تو نیست.");
     return;
   }
 
   const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicleId);
-  const cap = (vehicle as any).capacity ?? 1;
+  const cap = vehicle.capacity ?? 1;
   const used = (driverId ? 1 : 0) + passengerIds.length;
   const free = cap - used;
 
   const lines: string[] = [];
-  lines.push(`🚗 ${(vehicle as any).title ?? "وسیلهٔ ناشناس"} (#${vehicle.id})`);
+  lines.push(
+    `🚗 ${(vehicle as any).display_name ?? vehicle.title ?? "وسیلهٔ ناشناس"} (#${
+      vehicle.id
+    })`
+  );
   lines.push("");
   lines.push(`ظرفیت کلی: ${cap}`);
   lines.push(`صندلی‌های پر: ${used}`);
@@ -409,7 +493,7 @@ async function showVehiclePassengers(ctx: MyContext, vehicleId: number) {
   }
 
   const { vehicle } = await getVehicleById(ctx, vehicleId);
-  if (!vehicle || (vehicle as any).owner_char_id !== char.id) {
+  if (!vehicle || vehicle.owner_char_id !== char.id) {
     await ctx.reply("به این وسیله دسترسی نداری.");
     return;
   }
@@ -417,7 +501,9 @@ async function showVehiclePassengers(ctx: MyContext, vehicleId: number) {
   const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicleId);
   const lines: string[] = [];
   lines.push(
-    `🚕 مسافران ${(vehicle as any).title ?? "وسیله"} (#${vehicle.id})`
+    `🚕 مسافران ${(vehicle as any).display_name ?? vehicle.title ?? "وسیله"} (#${
+      vehicle.id
+    })`
   );
   lines.push("");
 
@@ -469,33 +555,21 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  if ((vehicle as any).owner_char_id !== char.id) {
+  if (vehicle.owner_char_id !== char.id) {
     await ctx.reply("این وسیله متعلق به تو نیست.");
     return;
   }
 
-  // باید در همان نقطه‌ای باشی که وسیله پارک شده
-  if (
-    !char.current_region_id ||
-    !char.current_spot_id ||
-    char.current_region_id !== (vehicle as any).current_region_id ||
-    char.current_spot_id !== (vehicle as any).current_spot_id
-  ) {
-    await ctx.reply("برای راننده شدن باید کنار همان وسیله باشی.");
-    return;
+  // این کاراکتر اگر جایی سوار است، پیاده‌اش کن
+  const { error: clearSelfErr } = await supabase
+    .from("characters")
+    .update({ riding_vehicle_id: null })
+    .eq("id", char.id);
+  if (clearSelfErr) {
+    console.error("handleDriveVehicle clear self error:", clearSelfErr);
   }
 
-  // اگر قبلاً سوار وسیله‌ی دیگری بودی، اول پیاده‌ات می‌کنیم
-  if (char.riding_vehicle_id && char.riding_vehicle_id !== vehicleId) {
-    const { error: clearErr } = await supabase
-      .from("characters")
-      .update({ riding_vehicle_id: null })
-      .eq("id", char.id);
-    if (clearErr) {
-      console.error("handleDriveVehicle clear previous mount error:", clearErr);
-    }
-  }
-
+  // حالا خودت راننده همین وسیله می‌شوی
   const { error } = await supabase
     .from("characters")
     .update({ riding_vehicle_id: vehicleId })
@@ -507,7 +581,11 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  await ctx.reply(`🕹 تو حالا رانندهٔ ${(vehicle as any).title ?? "وسیله"} شدی.`);
+  await ctx.reply(
+    `🕹 تو حالا رانندهٔ ${
+      (vehicle as any).display_name ?? vehicle.title ?? "وسیله"
+    } شدی.`
+  );
 }
 
 /** پیاده شدن راننده از وسیله */
@@ -525,8 +603,9 @@ async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  if (char.riding_vehicle_id !== vehicleId) {
-    await ctx.reply("الان روی این وسیله سوار نیستی.");
+  const { driverId } = await getVehicleLoad(ctx, vehicleId);
+  if (driverId !== char.id) {
+    await ctx.reply("الان رانندهٔ این وسیله نیستی.");
     return;
   }
 
@@ -542,7 +621,9 @@ async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
   }
 
   await ctx.reply(
-    `🕹 از ${(vehicle as any).title ?? "وسیله"} پیاده شدی. وسیله در همین نقطه می‌ماند.`
+    `🕹 از ${
+      (vehicle as any).display_name ?? vehicle.title ?? "وسیله"
+    } پیاده شدی. وسیله در همین نقطه می‌ماند.`
   );
 }
 
@@ -555,27 +636,12 @@ async function showRideMenu(ctx: MyContext) {
     return;
   }
 
-  // اگر خودش راننده است، اجازه مسافر شدن نمی‌دهیم
-  if (char.riding_vehicle_id) {
-    const { data: veh, error: vehErr } = await supabase
-      .from("vehicles")
-      .select("id, title, owner_char_id")
-      .eq("id", char.riding_vehicle_id)
-      .maybeSingle();
-
-    if (!vehErr && veh) {
-      if ((veh as any).owner_char_id === char.id) {
-        await ctx.reply(
-          "الان خودت رانندهٔ یک وسیله هستی.\nبرای مسافر شدن باید اول از وسیله‌ات پیاده شوی."
-        );
-        return;
-      } else {
-        await ctx.reply(
-          "الان خودت به عنوان مسافر داخل یک وسیله‌ای.\nاگر بخواهی پیاده شوی باید به ناظرها اطلاع بدهی (فعلاً)."
-        );
-        return;
-      }
-    }
+  const { isDriver } = await isCharacterDriver(ctx, char.id);
+  if (isDriver) {
+    await ctx.reply(
+      "الان خودت رانندهٔ یک وسیله هستی.\nبرای مسافر شدن باید اول از وسیله‌ات پیاده شوی."
+    );
+    return;
   }
 
   const alreadyPassenger = await isCharacterPassenger(ctx, char.id);
@@ -595,7 +661,7 @@ async function showRideMenu(ctx: MyContext) {
 
   const { data: vehicles, error } = await supabase
     .from("vehicles")
-    .select("id, title, capacity, current_region_id, current_spot_id")
+    .select("*")
     .eq("current_region_id", char.current_region_id)
     .eq("current_spot_id", char.current_spot_id);
 
@@ -627,14 +693,16 @@ async function showRideMenu(ctx: MyContext) {
 
   for (const v of vehicles) {
     const { driverId, passengerIds } = await getVehicleLoad(ctx, v.id);
-    if (!driverId) continue;
-    const cap = (v as any).capacity ?? 1;
+    if (!driverId) continue; // بدون راننده نمی‌شود سوار شد
+    const cap = v.capacity ?? 1;
     const used = 1 + passengerIds.length;
     if (used >= cap) continue;
 
     anyBoardable = true;
     const free = cap - used;
-    const label = `🚕 ${(v as any).title ?? "وسیله"} (جای خالی: ${free})`;
+    const label = `🚕 ${
+      (v as any).display_name ?? v.title ?? "وسیله"
+    } (جای خالی: ${free})`;
     kb.text(label, `ride:req:${v.id}`).row();
   }
 
@@ -663,12 +731,13 @@ async function sendRideRequestToDriver(
   const { vehicle } = await getVehicleById(ctx, vehicleId);
   if (!vehicle) return;
 
-  const driverCharId = (vehicle as any).owner_char_id;
+  const { driverId } = await getVehicleLoad(ctx, vehicleId);
+  if (!driverId) return;
 
   const { data: driverChar, error: dErr } = await supabase
     .from("characters")
     .select("tg_id, char_name")
-    .eq("id", driverCharId)
+    .eq("id", driverId)
     .maybeSingle();
 
   if (dErr || !driverChar) {
@@ -698,7 +767,9 @@ async function sendRideRequestToDriver(
   const text =
     `🚕 درخواست مسافر:\n\n` +
     `مسافر: ${passengerChar.char_name}\n` +
-    `وسیله: ${(vehicle as any).title ?? "وسیله"} (#${vehicle.id})\n\n` +
+    `وسیله: ${
+      (vehicle as any).display_name ?? vehicle.title ?? "وسیله"
+    } (#${vehicle.id})\n\n` +
     `می‌خواهی سوارش کنی؟`;
 
   try {
@@ -723,20 +794,12 @@ async function handleRideRequest(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  // اگر خودش راننده‌ی وسیله‌ای است
-  if (char.riding_vehicle_id) {
-    const { data: veh, error: vehErr } = await supabase
-      .from("vehicles")
-      .select("id, owner_char_id, title")
-      .eq("id", char.riding_vehicle_id)
-      .maybeSingle();
-
-    if (!vehErr && veh && (veh as any).owner_char_id === char.id) {
-      await ctx.reply(
-        "الان خودت رانندهٔ یک وسیله هستی.\nبرای مسافر شدن باید اول از وسیله‌ات پیاده شوی."
-      );
-      return;
-    }
+  const { isDriver } = await isCharacterDriver(ctx, char.id);
+  if (isDriver) {
+    await ctx.reply(
+      "الان خودت رانندهٔ یک وسیله هستی.\nبرای مسافر شدن باید اول از وسیله‌ات پیاده شوی."
+    );
+    return;
   }
 
   const alreadyPassenger = await isCharacterPassenger(ctx, char.id);
@@ -748,8 +811,8 @@ async function handleRideRequest(ctx: MyContext, vehicleId: number) {
   if (
     !char.current_region_id ||
     !char.current_spot_id ||
-    char.current_region_id !== (vehicle as any).current_region_id ||
-    char.current_spot_id !== (vehicle as any).current_spot_id
+    char.current_region_id !== vehicle.current_region_id ||
+    char.current_spot_id !== vehicle.current_spot_id
   ) {
     await ctx.reply("برای سوار شدن باید کنار همان وسیله باشی.");
     return;
@@ -761,7 +824,7 @@ async function handleRideRequest(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  const cap = (vehicle as any).capacity ?? 1;
+  const cap = vehicle.capacity ?? 1;
   const used = 1 + passengerIds.length;
   if (used >= cap) {
     await ctx.reply("این وسیله دیگر جایی برای مسافر ندارد.");
@@ -796,11 +859,8 @@ async function handleRideDecision(
     return;
   }
 
-  // تو باید مالک و راننده همین وسیله باشی
-  if (
-    (vehicle as any).owner_char_id !== char.id ||
-    char.riding_vehicle_id !== vehicleId
-  ) {
+  const { driverId } = await getVehicleLoad(ctx, vehicleId);
+  if (driverId !== char.id) {
     await ctx.reply("تو رانندهٔ این وسیله نیستی.");
     return;
   }
@@ -848,14 +908,18 @@ async function handleRideDecision(
   }
 
   await ctx.reply(
-    `مسافر ${passenger.char_name} را سوار ${(vehicle as any).title ?? "وسیله"} کردی.`
+    `مسافر ${passenger.char_name} را سوار ${
+      (vehicle as any).display_name ?? vehicle.title ?? "وسیله"
+    } کردی.`
   );
 
   if (passenger.tg_id) {
     try {
       await ctx.api.sendMessage(
         passenger.tg_id,
-        `🚕 راننده تو را سوار ${(vehicle as any).title ?? "وسیله"} کرد.`
+        `🚕 راننده تو را سوار ${
+          (vehicle as any).display_name ?? vehicle.title ?? "وسیله"
+        } کرد.`
       );
     } catch (e) {
       console.error("notify passenger success error:", e);
@@ -863,37 +927,166 @@ async function handleRideDecision(
   }
 }
 
-/** حرکت وسیله + مسافران بین Spotها (الان فقط برای لاگ‌کردن مکان وسیله استفاده می‌شود) */
-export async function moveVehicleWithPassengers(
+/** شروع سفر با وسیله (راننده + مسافران) از روی Edge */
+async function startVehicleTravel(
   ctx: MyContext,
-  vehicleId: number,
-  fromSpotId: number | null,
-  toSpotId: number | null
+  edgeId: number,
+  vehicleId: number
 ) {
-  const { supabase } = ctx.services;
-
-  const { data: vehicle, error: vehErr } = await supabase
-    .from("vehicles")
-    .select("*")
-    .eq("id", vehicleId)
-    .maybeSingle();
-
-  if (vehErr || !vehicle) {
-    console.error("moveVehicleWithPassengers vehicle error:", vehErr);
+  if (!ctx.from) return;
+  if (ctx.chat?.type !== "private") {
+    await ctx.answerCallbackQuery();
     return;
   }
 
-  await updateVehicleLocation(
-    ctx,
-    vehicleId,
-    (vehicle as any).current_region_id,
-    toSpotId
-  );
+  const { supabase } = ctx.services;
 
-  await logVehicleMove(ctx, vehicleId, fromSpotId, toSpotId, "drive");
+  const { char, errorText } = await getCharacterByTg(ctx);
+  if (!char) {
+    await ctx.reply(errorText ?? "پرونده‌ات را پیدا نکردم.");
+    return;
+  }
+
+  const { vehicle, errorText: vErrText } = await getVehicleById(ctx, vehicleId);
+  if (!vehicle) {
+    await ctx.answerCallbackQuery({
+      text: vErrText ?? "وسیله پیدا نشد.",
+      show_alert: true,
+    });
+    return;
+  }
+
+  const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicleId);
+  if (driverId !== char.id) {
+    await ctx.answerCallbackQuery({
+      text: "فقط رانندهٔ این وسیله می‌تواند مسیر را انتخاب کند.",
+      show_alert: true,
+    });
+    return;
+  }
+
+  if (!char.current_spot_id || !char.current_region_id) {
+    await ctx.answerCallbackQuery({
+      text: "موقعیت فعلی‌ات مشخص نیست.",
+      show_alert: true,
+    });
+    return;
+  }
+
+  const { data: edge, error: edgeErr } = await supabase
+    .from("edges")
+    .select("id, from_spot_id, to_spot_id, travel_seconds, drive_seconds")
+    .eq("id", edgeId)
+    .maybeSingle();
+
+  if (edgeErr || !edge) {
+    await ctx.answerCallbackQuery({
+      text: "این مسیر دیگر در دسترس نیست.",
+      show_alert: true,
+    });
+    return;
+  }
+
+  if (edge.from_spot_id !== char.current_spot_id) {
+    await ctx.answerCallbackQuery({
+      text: "از این نقطه نمی‌توانی با این وسیله وارد این مسیر شوی.",
+      show_alert: true,
+    });
+    return;
+  }
+
+  const { data: destSpot, error: dsErr } = await supabase
+    .from("spots")
+    .select("id, region_id, title")
+    .eq("id", edge.to_spot_id)
+    .maybeSingle();
+
+  if (dsErr || !destSpot) {
+    await ctx.answerCallbackQuery({
+      text: "نقطه‌ی مقصد پیدا نشد.",
+      show_alert: true,
+    });
+    return;
+  }
+
+  const { data: destRegion, error: drErr } = await supabase
+    .from("regions")
+    .select("*")
+    .eq("id", destSpot.region_id)
+    .maybeSingle();
+
+  if (drErr || !destRegion) {
+    await ctx.answerCallbackQuery({
+      text: "منطقه‌ی مقصد پیدا نشد.",
+      show_alert: true,
+    });
+    return;
+  }
+
+  const driveSeconds =
+    edge.drive_seconds ?? edge.travel_seconds ?? edge.travel_seconds ?? 0;
+  if (driveSeconds <= 0) {
+    await ctx.answerCallbackQuery({
+      text: "زمان حرکت با این مسیر درست تنظیم نشده.",
+      show_alert: true,
+    });
+    return;
+  }
+
+  const now = new Date();
+  const readyAt = new Date(now.getTime() + driveSeconds * 1000);
+
+  const involvedIds = [char.id, ...passengerIds];
+
+  const { error: updErr } = await supabase
+    .from("characters")
+    .update({
+      pending_region_id: destRegion.id,
+      pending_spot_id: destSpot.id,
+      travel_started_at: now.toISOString(),
+      travel_ready_at: readyAt.toISOString(),
+      travel_total_seconds: driveSeconds,
+      last_move_at: now.toISOString(),
+    })
+    .in("id", involvedIds);
+
+  if (updErr) {
+    console.error("startVehicleTravel update error:", updErr);
+    await ctx.answerCallbackQuery({
+      text: "در شروع سفر با وسیله مشکلی پیش آمد.",
+      show_alert: true,
+    });
+    return;
+  }
+
+  // خود وسیله را هنوز جابه‌جا نمی‌کنیم، در لحظه‌ی arrive انجام می‌شود.
+
+  await ctx.answerCallbackQuery({
+    text: "حرکت با وسیله آغاز شد.",
+    show_alert: false,
+  });
+
+  const kb = new InlineKeyboard()
+    .text("🚗 رسیدیم؟", "travel:arrive")
+    .row()
+    .text("❌ لغو سفر", "travel:cancel")
+    .row()
+    .text("🏠 منوی اصلی", "ui:home");
+
+  await sendVehicleScreen(
+    ctx,
+    `🚗 با ${
+      (vehicle as any).display_name ?? vehicle.title ?? "وسیله"
+    } در حال حرکت به سمت «${destRegion.title} / ${
+      destSpot.title
+    }» هستی.\n` +
+      `زمان تقریبی سفر: ${driveSeconds} ثانیه.\n\n` +
+      "هر وقت فکر کردی زمانش گذشته، روی «رسیدیم؟» بزن.",
+    kb
+  );
 }
 
-/** لینک ورود به Region جدید برای راننده و مسافران (در حال حاضر group-arrive در travel.ts این کار را می‌کند) */
+/** لینک ورود به Region جدید برای راننده و مسافران */
 export async function sendVehicleArrivalLinks(
   ctx: MyContext,
   vehicleId: number,
@@ -925,8 +1118,9 @@ export async function sendVehicleArrivalLinks(
   for (const c of chars) {
     if (!c.tg_id) continue;
     const text =
-      `🚗 ${(vehicle as any).title ?? "وسیله"} به مقصد جدید رسید.\n` +
-      `مسیر برایت باز است تا وارد شوی.`;
+      `🚗 ${
+        (vehicle as any).display_name ?? vehicle.title ?? "وسیله"
+      } به مقصد جدید رسید.\n` + `مسیر برایت باز است تا وارد شوی.`;
     try {
       await ctx.api.sendMessage(c.tg_id, text, {
         reply_markup: {
@@ -943,7 +1137,7 @@ export async function sendVehicleArrivalLinks(
 
 /** رجیسترکردن همهٔ این فیچرها روی بات */
 export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
-  // دکمه متنی «حمل و نقل» در پی‌وی (اگر کسی خودش بنویسد)
+  // دکمه متنی «حمل و نقل» در پی‌وی
   bot.hears(/حمل.?و.?نقل/, async (ctx) => {
     if (ctx.chat?.type !== "private") return;
     await showTransportMenu(ctx);
@@ -1058,5 +1252,12 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     }
 
     await handleRideDecision(ctx, vehicleId, passengerCharId, accepted);
+  });
+
+  // حرکت با ماشین روی یک Edge
+  bot.callbackQuery(/^veh:go:(\d+):(\d+)$/, async (ctx) => {
+    const edgeId = Number(ctx.match[1]);
+    const vehicleId = Number(ctx.match[2]);
+    await startVehicleTravel(ctx, edgeId, vehicleId);
   });
 }
