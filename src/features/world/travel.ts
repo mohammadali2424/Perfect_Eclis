@@ -1299,19 +1299,19 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   bot.command("regplayer", handleRegPlayer);
 
   // صفحه «روش‌های سوار شدن» از منوی پیاده
-  bot.callbackQuery("ride:home", async (ctx) => {
+   bot.callbackQuery("ride:home", async (ctx) => {
     await ctx.answerCallbackQuery();
-    if (ctx.chat?.type !== "private") return;
+    if (ctx.chat?.type !== "private" || !ctx.from) return;
 
     const { supabase } = ctx.services;
-    if (!ctx.from) return;
     const char = await ensureCharacterFor(ctx, ctx.from.id);
     if (!char) return;
 
-    let text = "راه‌های سوار شدن شما:\n\n";
-    const kb = new InlineKeyboard();
+    if (isTraveling(char)) {
+      await showTravelInProgress(ctx, char);
+      return;
+    }
 
-    // اگر وسیله‌ای داری
     const { data: vehicles, error: vehErr } = await supabase
       .from("vehicles")
       .select("id, title")
@@ -1321,16 +1321,20 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
       console.error("ride:home vehicles error:", vehErr);
     }
 
-    kb.text("🚕 سوار شدن (وسایل حاضر در صحنه)", "ride:menu").row();
+    let text = "راه‌های سوار شدنتون:\n\n";
+    const kb = new InlineKeyboard();
+
+    kb.text("🚕 سوار شدن", "ride:menu").row();
 
     if (vehicles && vehicles.length > 0) {
       kb.text("🚗 سواری‌های من", "veh:my").row();
-      text += "• از «سوار شدن» می‌توانی روی وسیله‌های حاضر در این نقطه سوار شوی.\n";
       text +=
-        "• از «سواری‌های من» می‌توانی وسیله‌های خودت را ببینی و اگر در همان نقطه باشند، سوارشان شوی.\n";
+        "• «سوار شدن» → روی وسیله‌های حاضر در این نقطه می‌توانی مسافر شوی.\n";
+      text +=
+        "• «سواری‌های من» → وسیله‌های خودت را می‌بینی و اگر در همین نقطه باشند می‌توانی راننده‌ی آن‌ها شوی.\n";
     } else {
       text +=
-        "فعلاً وسیله‌‌ای به نامت ثبت نشده، اما اگر این‌جا وسیله‌ای حضور داشته باشد می‌توانی مسافر شوی.\n";
+        "فعلاً وسیله‌ای به نامت ثبت نشده، اما اگر این‌جا وسیله‌ای حضور داشته باشد می‌توانی مسافر شوی.\n";
     }
 
     kb.text("🔙 بازگشت", "travel:home");
