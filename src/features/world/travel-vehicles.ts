@@ -567,6 +567,16 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
+    const { error: updCharErr } = await supabase
+    .from("characters")
+    .update({ riding_vehicle_id: vehicleId })
+    .eq("id", char.id);
+
+  if (updCharErr) {
+    console.error("handleDriveVehicle char update error:", updCharErr);
+  }
+
+
   // riding_vehicle_id را روی شخصیت ست کنیم
   const { error: updErr } = await supabase
     .from("characters")
