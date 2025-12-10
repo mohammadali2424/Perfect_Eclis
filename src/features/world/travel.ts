@@ -1285,6 +1285,13 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await handleCancelTravel(ctx);
   });
 
+    // برگشت به صفحه وضعیت (پیاده / سوار)
+  bot.callbackQuery("travel:home", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await showTravelHome(ctx);
+  });
+
+
   // نقشه سریع من
   bot.command("mymap", showQuickMap);
   bot.hears("🗺 نقشه سریع من", showQuickMap);
