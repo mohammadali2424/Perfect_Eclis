@@ -421,7 +421,7 @@ async function showVehicleDetail(ctx: MyContext, vehicleId: number) {
   const free = cap - used;
 
   const lines: string[] = [];
-  lines.push(`🚗 ${vehicle.title ?? "وسیلهٔ ناشناس"} (#${vehicle.id})`);
+  lines.push(`🚗 ${vehicle.display_name ?? vehicle.title ?? "وسیلهٔ ناشناس"} (#${vehicle.id})`);
   lines.push("");
   lines.push(`ظرفیت کلی: ${cap}`);
   lines.push(`صندلی‌های پر: ${used}`);
@@ -430,7 +430,23 @@ async function showVehicleDetail(ctx: MyContext, vehicleId: number) {
   if (driverId) lines.push("وضعیت: در حال رانندگی");
   else lines.push("وضعیت: پارک شده");
 
+  // وضعیت قفل بودن برای مسافرها
+  const locked = !!vehicle.locked_for_passengers;
+  lines.push(
+    locked
+      ? "درها: 🔒 بسته روی مسافرها (هیچ‌کس نمی‌تواند درخواست بدهد)"
+      : "درها: 🔓 باز برای مسافرها"
+  );
+
   const kb = new InlineKeyboard();
+
+  // فقط صاحب وسیله می‌تواند قفل را عوض کند
+  if (vehicle.owner_char_id === char.id) {
+    const lockLabel = locked
+      ? "🔓 باز کردن برای مسافرها"
+      : "🔒 بستن برای مسافرها";
+    kb.text(lockLabel, `veh:lock:${vehicle.id}`).row();
+  }
 
   if (!driverId) {
     kb.text("🕹 سوار شوم (راننده)", `veh:drive:${vehicle.id}`).row();
@@ -440,7 +456,7 @@ async function showVehicleDetail(ctx: MyContext, vehicleId: number) {
 
   kb.text("🚕 مسافران", `veh:passengers:${vehicle.id}`).row();
   kb.text("⬅️ بازگشت به ماشین‌هایم", "veh:my");
-
+  
   await sendVehicleScreen(ctx, lines.join("\n"), kb);
 }
 
