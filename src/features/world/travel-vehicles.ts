@@ -1232,4 +1232,15 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     await showVehicleDetail(ctx, vehicleId);
   });
 
+    // قفل/باز کردن مسافران
+  bot.callbackQuery(/^veh:lock:(\d+)$/, async (ctx) => {
+    const id = Number(ctx.match[1]);
+    try {
+      await ctx.answerCallbackQuery();
+    } catch (e) {
+      console.warn("answerCallbackQuery veh:lock failed:", e);
+    }
+    await toggleVehiclePassengerLock(ctx, id);
+  });
+
 }
