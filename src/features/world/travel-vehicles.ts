@@ -565,6 +565,7 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
 }
 
 /** پیاده شدن راننده از وسیله */
+/** پیاده شدن از وسیله (راننده یا مسافر) */
 async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
   const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
@@ -579,35 +580,47 @@ async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  if (vehicle.current_driver_char_id !== char.id) {
-    await ctx.reply("الان رانندهٔ این وسیله نیستی.");
+  const isDriver = vehicle.current_driver_char_id === char.id;
+
+  // اگر راننده است
+  if (isDriver) {
+    const { error } = await supabase
+      .from("vehicles")
+      .update({ current_driver_char_id: null })
+      .eq("id", vehicleId);
+
+    if (error) {
+      console.error("handleLeaveVehicle (driver) update error:", error);
+      await ctx.reply("در پیاده شدن راننده مشکلی پیش آمد.");
+      return;
+    }
+
+    const { error: updErr } = await supabase
+      .from("characters")
+      .update({ riding_vehicle_id: null })
+      .eq("id", char.id);
+
+    if (updErr) {
+      console.error(
+        "handleLeaveVehicle (driver) char update error:",
+        updErr
+      );
+    }
+
+    await ctx.reply(
+      `🕹 از ${vehicle.title ?? "وسیله"} پیاده شدی. وسیله در همین نقطه می‌ماند.`
+    );
     return;
   }
 
-  const { error } = await supabase
-    .from("vehicles")
-    .update({ current_driver_char_id: null })
-    .eq("id", vehicleId);
-
-  if (error) {
-    console.error("handleLeaveVehicle update error:", error);
-    await ctx.reply("در پیاده شدن مشکلی پیش آمد.");
-    return;
-  }
-
-  const { error: updErr } = await supabase
-    .from("characters")
-    .update({ riding_vehicle_id: null })
-    .eq("id", char.id);
-
-  if (updErr) {
-    console.error("handleLeaveVehicle char update error:", updErr);
-  }
+  // اگر راننده نیست → یعنی مسافر است
+  await removePassengerFromVehicle(ctx, vehicleId, char.id);
 
   await ctx.reply(
-    `🕹 از ${vehicle.title ?? "وسیله"} پیاده شدی. وسیله در همین نقطه می‌ماند.`
+    `🚶 به‌عنوان مسافر از ${vehicle.title ?? "وسیله"} پیاده شدی.`
   );
 }
+
 
 /** منوی مسافر شدن: لیست ماشین‌های حاضر در همین نقطه */
 async function showRideMenu(ctx: MyContext) {
