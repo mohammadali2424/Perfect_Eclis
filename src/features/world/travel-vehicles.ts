@@ -716,10 +716,11 @@ async function showRideMenu(ctx: MyContext) {
   const { data: vehicles, error } = await supabase
     .from("vehicles")
     .select(
-      "id, title, capacity, current_region_id, current_spot_id, current_driver_char_id"
+      "id, display_name, capacity, current_region_id, current_spot_id, passenger_locked"
     )
     .eq("current_region_id", char.current_region_id)
     .eq("current_spot_id", char.current_spot_id);
+
 
   if (error) {
     console.error("showRideMenu vehicles error:", error);
@@ -748,6 +749,8 @@ async function showRideMenu(ctx: MyContext) {
   let anyBoardable = false;
 
   for (const v of vehicles) {
+        // اگر برای مسافرها قفل است، در این لیست نشان نده
+    if (v.passenger_locked) continue;
     const { driverId, passengerIds } = await getVehicleLoad(ctx, v.id);
     if (!driverId) continue;
     const cap = v.capacity ?? 1;
