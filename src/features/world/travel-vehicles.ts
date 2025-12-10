@@ -217,6 +217,16 @@ async function addPassengerToVehicle(
     return { ok: false, errorText: "در ثبت مسافر جدید مشکلی پیش آمد." };
   }
 
+    const { error: updCharErr } = await supabase
+    .from("characters")
+    .update({ riding_vehicle_id: vehicleId })
+    .eq("id", charId);
+
+  if (updCharErr) {
+    console.error("addPassengerToVehicle char update error:", updCharErr);
+  }
+
+
   // riding_vehicle_id را روی وسیله ست کنیم
   const { error: updErr } = await supabase
     .from("characters")
