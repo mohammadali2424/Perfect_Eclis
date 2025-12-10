@@ -328,10 +328,6 @@ async function openPaths(ctx: MyContext): Promise<void> {
   let textHeader =
     `📍 موقعیت فعلی:\nRegion: ${region.title}\nSpot: ${spot.title}\n`;
 
-  if (char.clan_name) {
-    textHeader += `خاندان: ${char.clan_name}\n`;
-  }
-
   if (ridingVehicle && isDriver) {
     textHeader += `\n🚗 وضعیت: راننده‌ی «${ridingVehicle.title}» هستی.\n`;
   } else if (ridingVehicle && !isDriver) {
