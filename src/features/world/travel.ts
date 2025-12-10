@@ -661,6 +661,61 @@ async function startDriveTravel(
   );
 }
 
+async function handleCancelTravel(ctx: MyContext): Promise<void> {
+  if (!ctx.from) return;
+  if (ctx.chat?.type !== "private") return;
+
+  const { supabase } = ctx.services;
+
+  const { data: char, error: charErr } = await supabase
+    .from("characters")
+    .select("*")
+    .eq("tg_id", ctx.from.id)
+    .maybeSingle();
+
+  if (charErr || !char) {
+    await ctx.reply("شخصیتت پیدا نشد.");
+    return;
+  }
+
+  if (!isTraveling(char)) {
+    await sendScreen(
+      ctx,
+      "در حال حاضر در سفری نیستی که لغوش کنی.",
+      buildMainMenu()
+    );
+    return;
+  }
+
+  const { error: updErr } = await supabase
+    .from("characters")
+    .update({
+      pending_region_id: null,
+      pending_spot_id: null,
+      travel_started_at: null,
+      travel_ready_at: null,
+      travel_total_seconds: null,
+    })
+    .eq("id", char.id);
+
+  if (updErr) {
+    console.error("handleCancelTravel update error:", updErr);
+    await sendScreen(
+      ctx,
+      "در لغو سفر مشکلی پیش آمد.",
+      buildMainMenu()
+    );
+    return;
+  }
+
+  await sendScreen(
+    ctx,
+    "سفر لغو شد. در همان موقعیت قبلی‌ات باقی ماندی.",
+    buildMainMenu()
+  );
+}
+
+
 // --- رسیدن به مقصد (پیاده + راننده‌ی ماشین + مسافرها) ---
 
 async function handleArrive(ctx: MyContext): Promise<void> {
