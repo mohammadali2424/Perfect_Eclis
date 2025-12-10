@@ -1266,6 +1266,12 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await handleArrive(ctx);
   });
 
+   // لغو مسیر
+  bot.callbackQuery("travel:cancel", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await handleCancelTravel(ctx);
+  });
+
   // نقشه سریع من
   bot.command("mymap", showQuickMap);
   bot.hears("🗺 نقشه سریع من", showQuickMap);
