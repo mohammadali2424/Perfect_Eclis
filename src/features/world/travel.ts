@@ -785,6 +785,9 @@ async function handleArrive(ctx: MyContext): Promise<void> {
   }
 
   const prevRegionId: number | null = char.current_region_id ?? null;
+    const prevRegionId: number | null = char.current_region_id ?? null;
+  const newRegionId: number = destSpot.region_id;
+  const regionChanged = prevRegionId !== null && prevRegionId !== newRegionId;
 
   // آپدیت کاراکتر فعلی
   const { error: updErr } = await supabase
