@@ -715,13 +715,13 @@ async function handleCancelTravel(ctx: MyContext): Promise<void> {
 
 
 // --- رسیدن به مقصد (پیاده + راننده‌ی ماشین + مسافرها) ---
-
 async function handleArrive(ctx: MyContext): Promise<void> {
   if (!ctx.from) return;
   if (ctx.chat?.type !== "private") return;
 
   const { supabase } = ctx.services;
 
+  // پیدا کردن کاراکتر
   const { data: char, error: charErr } = await supabase
     .from("characters")
     .select("*")
@@ -733,6 +733,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     return;
   }
 
+  // اصلاً در حال سفر هست یا نه؟
   if (!char.pending_region_id || !char.pending_spot_id || !char.travel_ready_at) {
     await sendScreen(
       ctx,
@@ -746,6 +747,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
   const now = new Date();
   const readyAt = new Date(char.travel_ready_at);
 
+  // هنوز نرسیده
   if (now < readyAt) {
     const remainSec = Math.ceil((readyAt.getTime() - now.getTime()) / 1000);
     await sendScreen(
@@ -757,7 +759,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     return;
   }
 
-  // مقصد
+  // --- مقصد را بخوانیم ---
   const { data: destSpot, error: dsErr } = await supabase
     .from("spots")
     .select("id, region_id, title")
@@ -784,12 +786,13 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     console.error("arrive destRegion error:", drErr);
   }
 
+  // ریجن قبلی و جدید
   const prevRegionId: number | null = char.current_region_id ?? null;
-    const prevRegionId: number | null = char.current_region_id ?? null;
   const newRegionId: number = destSpot.region_id;
-  const regionChanged = prevRegionId !== null && prevRegionId !== newRegionId;
+  const regionChanged =
+    prevRegionId !== null && prevRegionId !== newRegionId;
 
-  // آپدیت کاراکتر فعلی
+  // --- آپدیت موقعیت خود کاراکتر ---
   const { error: updErr } = await supabase
     .from("characters")
     .update({
@@ -808,9 +811,9 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     console.error("arrive update char error:", updErr);
   }
 
-  // Region قبلی را لود کنیم برای کیک
+  // --- اگر ریجن عوض شده، برای کیک و لینک به گروه نیاز داریم ---
   let prevRegion: any | null = null;
-  if (prevRegionId && prevRegionId !== destSpot.region_id) {
+  if (regionChanged && prevRegionId) {
     const { data: pr } = await supabase
       .from("regions")
       .select("*")
@@ -819,8 +822,8 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     prevRegion = pr ?? null;
   }
 
-  // کیک از گروه قبلی برای خود کاراکتر فقط اگر region عوض شده
-  if (prevRegion && prevRegion.telegram_chat_id) {
+  // کیک از گروه قبلی فقط اگر ریجن عوض شده
+  if (regionChanged && prevRegion && prevRegion.telegram_chat_id) {
     try {
       await ctx.api.banChatMember(
         prevRegion.telegram_chat_id as number,
@@ -839,30 +842,37 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     }
   }
 
-  // اگر راننده‌ی یک وسیله هستی، لوکیشن وسیله و مسافرهایت را هم جابه‌جا کن
+  // دعوت‌نامه‌ی گروه مقصد فقط اگر ریجن عوض شده
+  let inviteUrl: string | null = null;
+  if (
+    regionChanged &&
+    destRegion &&
+    destRegion.telegram_chat_id
+  ) {
+    try {
+      const link = await ctx.api.createChatInviteLink(
+        destRegion.telegram_chat_id as number,
+        {
+          name: `Pathweaver-${Date.now()}`,
+        }
+      );
+      inviteUrl = link.invite_link;
+    } catch (e) {
+      console.error("createChatInviteLink error:", e);
+    }
+  }
+
+  // --- اگر راننده‌ی یک وسیله‌ای، مسافرهایت را هم جابه‌جا کن ---
   if (char.riding_vehicle_id) {
     try {
       const { data: vehicle, error: vehErr } = await supabase
         .from("vehicles")
-        .select("id, owner_char_id, title, current_region_id, current_spot_id")
+        .select("id, owner_char_id, title")
         .eq("id", char.riding_vehicle_id)
         .maybeSingle();
 
       if (!vehErr && vehicle && vehicle.owner_char_id === char.id) {
-        // لوکیشن خود وسیله را آپدیت کنیم
-        const { error: vUpdErr } = await supabase
-          .from("vehicles")
-          .update({
-            current_region_id: destSpot.region_id,
-            current_spot_id: destSpot.id,
-          })
-          .eq("id", vehicle.id);
-
-        if (vUpdErr) {
-          console.error("arrive: update vehicle location error:", vUpdErr);
-        }
-
-        // مسافرها
+        // راننده‌ای
         const { data: passengerRows, error: passErr } = await supabase
           .from("vehicle_passengers")
           .select("character_id")
@@ -879,7 +889,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
             .in("id", passengerIds);
 
           if (!pcErr && passengerChars && passengerChars.length > 0) {
-            // لوکیشن و سفرشان را پایان بده
+            // لوکیشن و وضعیت سفر مسافران را هم تمام کن
             const { error: updPassengersErr } = await supabase
               .from("characters")
               .update({
@@ -903,15 +913,22 @@ async function handleArrive(ctx: MyContext): Promise<void> {
                 updPassengersErr
               );
             } else {
-              // اگر region عوض شده، مسافران را هم از گروه قبلی کیک کن
-              if (prevRegion && prevRegion.telegram_chat_id) {
+              // اگر ریجن عوض شده، مسافران را هم از گروه قبلی کیک کن
+              if (
+                regionChanged &&
+                prevRegion &&
+                prevRegion.telegram_chat_id
+              ) {
                 for (const p of passengerChars) {
                   if (!p.tg_id) continue;
                   try {
                     await ctx.api.banChatMember(
                       prevRegion.telegram_chat_id as number,
                       p.tg_id as number,
-                      { until_date: Math.floor(Date.now() / 1000) + 30 }
+                      {
+                        until_date:
+                          Math.floor(Date.now() / 1000) + 30,
+                      }
                     );
                     await ctx.api.unbanChatMember(
                       prevRegion.telegram_chat_id as number,
@@ -927,8 +944,32 @@ async function handleArrive(ctx: MyContext): Promise<void> {
                 }
               }
 
-              // اگر لینک داریم، برای همه‌ی مسافرها هم بفرست
-              // لینک را پایین بعد از ساخت invite می‌فرستیم
+              // اگر لینک مقصد داریم، برای مسافران هم بفرست
+              if (regionChanged && inviteUrl) {
+                const groupKb = new InlineKeyboard().url(
+                  "🚪 ورود به مکان جدید",
+                  inviteUrl
+                );
+
+                for (const p of passengerChars) {
+                  if (!p.tg_id) continue;
+                  try {
+                    await ctx.api.sendMessage(
+                      p.tg_id as number,
+                      `با ${char.char_name ?? "راننده"} به «${
+                        destRegion?.title ?? "منطقه‌ی جدید"
+                      } / ${destSpot.title}» رسیدی.\n` +
+                        "برای ورود به مکان جدید، روی دکمه زیر بزن:",
+                      { reply_markup: groupKb }
+                    );
+                  } catch (e) {
+                    console.error(
+                      "group arrive: notify passenger error:",
+                      e
+                    );
+                  }
+                }
+              }
             }
           }
         }
@@ -938,92 +979,29 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     }
   }
 
-  // دعوت‌نامه‌ی گروه مقصد
-  let inviteUrl: string | null = null;
-  if (destRegion && destRegion.telegram_chat_id) {
-    try {
-      const link = await ctx.api.createChatInviteLink(
-        destRegion.telegram_chat_id as number,
-        {
-          name: `Pathweaver-${Date.now()}`,
-        }
-      );
-      inviteUrl = link.invite_link;
-    } catch (e) {
-      console.error("createChatInviteLink error:", e);
-    }
+  // --- اگر ریجن عوض نشده: مستقیم برگرد به «مسیرهای پیش‌رو» ---
+  if (!regionChanged) {
+    // الان loc جدید در دیتابیس ثبت شده → کافی است دوباره منوی مسیرها را نشان دهیم
+    await openPaths(ctx);
+    return;
   }
 
-  // اگر مسافرها داریم و لینک داریم، به آن‌ها هم لینک بده
-  if (char.riding_vehicle_id && inviteUrl) {
-    try {
-      const { data: vehicle, error: vehErr } = await supabase
-        .from("vehicles")
-        .select("id, owner_char_id, title")
-        .eq("id", char.riding_vehicle_id)
-        .maybeSingle();
-
-      if (!vehErr && vehicle && vehicle.owner_char_id === char.id) {
-        const { data: passengerRows, error: passErr } = await supabase
-          .from("vehicle_passengers")
-          .select("character_id")
-          .eq("vehicle_id", vehicle.id);
-
-        if (!passErr && passengerRows && passengerRows.length > 0) {
-          const passengerIds = passengerRows.map(
-            (r: any) => r.character_id as number
-          );
-
-          const { data: passengerChars, error: pcErr } = await supabase
-            .from("characters")
-            .select("id, tg_id, char_name")
-            .in("id", passengerIds);
-
-          if (!pcErr && passengerChars && passengerChars.length > 0) {
-            const groupKb = new InlineKeyboard().url(
-              "🚪 ورود به مکان جدید",
-              inviteUrl
-            );
-
-            for (const p of passengerChars) {
-              if (!p.tg_id) continue;
-              try {
-                await ctx.api.sendMessage(
-                  p.tg_id as number,
-                  `با ${char.char_name ?? "راننده"} به «${
-                    destRegion?.title ?? "منطقه‌ی جدید"
-                  } / ${destSpot.title}» رسیدی.\n` +
-                    "برای ورود به مکان جدید، روی دکمه زیر بزن:",
-                  { reply_markup: groupKb }
-                );
-              } catch (e) {
-                console.error(
-                  "group arrive: notify passenger error:",
-                  e
-                );
-              }
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.error("group arrive: invite for passengers failed:", e);
-    }
-  }
-
-  // پیام برای خود کاراکتر
+  // --- اگر ریجن عوض شده: پیام + لینک ورود به گروه جدید ---
   const kb = new InlineKeyboard();
   if (inviteUrl) {
     kb.url("🚪 ورود به مکان جدید", inviteUrl).row();
   }
-  kb.text("🧭 مسیر های من", "paths:open").row().text("🔙 بازگشت", "travel:home");
+  kb
+    .text("🧭 مسیر های من", "paths:open")
+    .row()
+    .text("🏠 منوی اصلی", "ui:home");
 
   await sendScreen(
     ctx,
     `به «${destRegion?.title ?? "منطقه‌ی جدید"} / ${
       destSpot.title
     }» رسیدی.\n` +
-      "هم‌اکنون مکان جدید در برابر تو باز شده است.",
+      "برای ورود به گروه این منطقه، از دکمه‌ی زیر استفاده کن.",
     kb
   );
 }
