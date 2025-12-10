@@ -66,7 +66,6 @@ async function ensureCharacterFor(
     travel_total_seconds: null,
     travel_started_at: null,
     last_move_at: null,
-    riding_vehicle_id: null,
   };
 
   const { data: ins, error: insErr } = await supabase
@@ -92,9 +91,7 @@ function buildMainMenu(): InlineKeyboard {
     .row()
     .text("🗺 نقشه سریع من", "mymap:open")
     .row()
-    .text("🚗 ماشین های من", "veh:my")
-    .row()
-    .text("🚕 مسافر شوم", "ride:menu");
+    .text("🚍 حمل و نقل", "trans:menu");
 }
 
 // --- نمایش مسیرهای قابل حرکت از Spot فعلی ---
@@ -182,21 +179,51 @@ async function openPaths(ctx: MyContext): Promise<void> {
     toSpotMap.set(s.id, s);
   });
 
-  // ببینیم آیا سوار ماشین هستی
-  let ridingVehicle: any | null = null;
-  let isDriver = false;
+  // وضعیت وسیله: آیا راننده‌ای یا مسافر؟
+  let ridingMode: "none" | "driver" | "passenger" = "none";
+  let drivingVehicle: any | null = null;
+  let passengerVehicle: any | null = null;
 
-  if (char.riding_vehicle_id) {
-    const { data: vehicle, error: vehErr } = await supabase
-      .from("vehicles")
-      .select("id, title, owner_char_id")
-      .eq("id", char.riding_vehicle_id)
+  // ۱) ببین آیا وسیله‌ای هست که این کاراکتر راننده‌اش باشد؟
+  const { data: driveVeh, error: driveErr } = await supabase
+    .from("vehicles")
+    .select("id, display_name, owner_char_id, current_region_id, current_spot_id")
+    .eq("current_driver_char_id", char.id)
+    .maybeSingle();
+
+  if (!driveErr && driveVeh) {
+    if (
+      driveVeh.current_region_id === char.current_region_id &&
+      driveVeh.current_spot_id === char.current_spot_id
+    ) {
+      ridingMode = "driver";
+      drivingVehicle = driveVeh;
+    }
+  }
+
+  // ۲) اگر راننده نیست، ببین مسافر وسیله‌ای هست یا نه
+  if (ridingMode === "none") {
+    const { data: vpRow, error: vpErr } = await supabase
+      .from("vehicle_passengers")
+      .select("vehicle_id")
+      .eq("character_id", char.id)
       .maybeSingle();
 
-    if (!vehErr && vehicle) {
-      ridingVehicle = vehicle;
-      if (vehicle.owner_char_id === char.id) {
-        isDriver = true;
+    if (!vpErr && vpRow) {
+      const { data: pVeh, error: pVehErr } = await supabase
+        .from("vehicles")
+        .select("id, display_name, current_region_id, current_spot_id")
+        .eq("id", vpRow.vehicle_id)
+        .maybeSingle();
+
+      if (
+        !pVehErr &&
+        pVeh &&
+        pVeh.current_region_id === char.current_region_id &&
+        pVeh.current_spot_id === char.current_spot_id
+      ) {
+        ridingMode = "passenger";
+        passengerVehicle = pVeh;
       }
     }
   }
@@ -210,10 +237,14 @@ async function openPaths(ctx: MyContext): Promise<void> {
     textHeader += `خاندان: ${char.clan_name}\n`;
   }
 
-  if (ridingVehicle && isDriver) {
-    textHeader += `\n🚗 وضعیت: راننده‌ی «${ridingVehicle.title}» هستی.\n`;
-  } else if (ridingVehicle && !isDriver) {
-    textHeader += `\n🚕 وضعیت: مسافر روی «${ridingVehicle.title}» هستی.\n`;
+  if (ridingMode === "driver" && drivingVehicle) {
+    textHeader += `\n🚗 وضعیت: راننده‌ی «${
+      drivingVehicle.display_name ?? "وسیله"
+    }» هستی.\n`;
+  } else if (ridingMode === "passenger" && passengerVehicle) {
+    textHeader += `\n🚕 وضعیت: مسافر روی «${
+      passengerVehicle.display_name ?? "وسیله"
+    }» هستی.\n`;
   } else {
     textHeader += `\n🚶 وضعیت: پیاده‌ای.\n`;
   }
@@ -222,23 +253,22 @@ async function openPaths(ctx: MyContext): Promise<void> {
 
   let textBody = "";
 
-  if (ridingVehicle && !isDriver) {
+  if (ridingMode === "passenger") {
     // مسافر → راننده باید مسیر را انتخاب کند
     textBody +=
       "تو به عنوان مسافر سوار هستی؛ فقط راننده می‌تواند مسیر را انتخاب کند.\n";
-  } else if (ridingVehicle && isDriver) {
+  } else if (ridingMode === "driver" && drivingVehicle) {
     // رانندگی
     for (const e of edges) {
       const dest = toSpotMap.get(e.to_spot_id);
       const destTitle = dest?.title ?? `Spot #${e.to_spot_id}`;
-      const driveSec =
-        e.drive_seconds ?? e.travel_seconds ?? 0;
+      const driveSec = e.drive_seconds ?? e.travel_seconds ?? 0;
 
       textBody += `🚗 ➤ ${destTitle} ~ ${driveSec} ثانیه‌ی رانندگی\n`;
       kb
         .text(
           `🚗 ${destTitle} (${driveSec}s)`,
-          `veh:go:${e.id}:${ridingVehicle.id}`
+          `veh:go:${e.id}:${drivingVehicle.id}`
         )
         .row();
     }
@@ -397,7 +427,11 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     return;
   }
 
-  if (!char.pending_region_id || !char.pending_spot_id || !char.travel_ready_at) {
+  if (
+    !char.pending_region_id ||
+    !char.pending_spot_id ||
+    !char.travel_ready_at
+  ) {
     await sendScreen(
       ctx,
       "الان در حال سفر نیستی.\n" +
@@ -517,113 +551,108 @@ async function handleArrive(ctx: MyContext): Promise<void> {
   }
 
   // اگر راننده‌ی یک وسیله هستی، مسافرهایت را هم جابه‌جا کن
-  if (char.riding_vehicle_id) {
-    try {
-      const { data: vehicle, error: vehErr } = await supabase
-        .from("vehicles")
-        .select("id, owner_char_id, title")
-        .eq("id", char.riding_vehicle_id)
-        .maybeSingle();
+  try {
+    const { data: vehicle, error: vehErr } = await supabase
+      .from("vehicles")
+      .select("id, owner_char_id, display_name")
+      .eq("current_driver_char_id", char.id)
+      .maybeSingle();
 
-      if (!vehErr && vehicle && vehicle.owner_char_id === char.id) {
-        // راننده‌ای
-        const { data: passengerRows, error: passErr } = await supabase
-          .from("vehicle_passengers")
-          .select("character_id")
-          .eq("vehicle_id", vehicle.id);
+    if (!vehErr && vehicle && vehicle.owner_char_id === char.id) {
+      // راننده‌ای
+      const { data: passengerRows, error: passErr } = await supabase
+        .from("vehicle_passengers")
+        .select("character_id")
+        .eq("vehicle_id", vehicle.id);
 
-        if (!passErr && passengerRows && passengerRows.length > 0) {
-          const passengerIds = passengerRows.map(
-            (r: any) => r.character_id as number
-          );
+      if (!passErr && passengerRows && passengerRows.length > 0) {
+        const passengerIds = passengerRows.map(
+          (r: any) => r.character_id as number
+        );
 
-          const { data: passengerChars, error: pcErr } = await supabase
+        const { data: passengerChars, error: pcErr } = await supabase
+          .from("characters")
+          .select("id, tg_id, char_name")
+          .in("id", passengerIds);
+
+        if (!pcErr && passengerChars && passengerChars.length > 0) {
+          // لوکیشن و سفرشان را پایان بده
+          const { error: updPassengersErr } = await supabase
             .from("characters")
-            .select("id, tg_id, char_name")
-            .in("id", passengerIds);
+            .update({
+              current_region_id: destSpot.region_id,
+              current_spot_id: destSpot.id,
+              pending_region_id: null,
+              pending_spot_id: null,
+              travel_started_at: null,
+              travel_ready_at: null,
+              travel_total_seconds: null,
+              last_move_at: now.toISOString(),
+            })
+            .in(
+              "id",
+              passengerChars.map((p: any) => p.id as number)
+            );
 
-          if (!pcErr && passengerChars && passengerChars.length > 0) {
-            // لوکیشن و سفرشان را پایان بده
-            const { error: updPassengersErr } = await supabase
-              .from("characters")
-              .update({
-                current_region_id: destSpot.region_id,
-                current_spot_id: destSpot.id,
-                pending_region_id: null,
-                pending_spot_id: null,
-                travel_started_at: null,
-                travel_ready_at: null,
-                travel_total_seconds: null,
-                last_move_at: now.toISOString(),
-              })
-              .in(
-                "id",
-                passengerChars.map((p: any) => p.id as number)
-              );
-
-            if (updPassengersErr) {
-              console.error(
-                "group arrive: update passengers error:",
-                updPassengersErr
-              );
-            } else {
-              // از گروه قبلی کیک کن
-              if (prevRegion && prevRegion.telegram_chat_id) {
-                for (const p of passengerChars) {
-                  if (!p.tg_id) continue;
-                  try {
-                    await ctx.api.banChatMember(
-                      prevRegion.telegram_chat_id as number,
-                      p.tg_id as number,
-                      { until_date: Math.floor(Date.now() / 1000) + 30 }
-                    );
-                    await ctx.api.unbanChatMember(
-                      prevRegion.telegram_chat_id as number,
-                      p.tg_id as number,
-                      { only_if_banned: true }
-                    );
-                  } catch (e) {
-                    console.warn(
-                      "group arrive: kick passenger failed:",
-                      e
-                    );
-                  }
+          if (updPassengersErr) {
+            console.error(
+              "group arrive: update passengers error:",
+              updPassengersErr
+            );
+          } else {
+            // از گروه قبلی کیک کن
+            if (prevRegion && prevRegion.telegram_chat_id) {
+              for (const p of passengerChars) {
+                if (!p.tg_id) continue;
+                try {
+                  await ctx.api.banChatMember(
+                    prevRegion.telegram_chat_id as number,
+                    p.tg_id as number,
+                    { until_date: Math.floor(Date.now() / 1000) + 30 }
+                  );
+                  await ctx.api.unbanChatMember(
+                    prevRegion.telegram_chat_id as number,
+                    p.tg_id as number,
+                    { only_if_banned: true }
+                  );
+                } catch (e) {
+                  console.warn("group arrive: kick passenger failed:", e);
                 }
               }
+            }
 
-              // اگر لینک داریم، برای همه‌ی مسافرها هم بفرست
-              if (inviteUrl) {
-                const groupKb = new InlineKeyboard().url(
-                  "🚪 ورود به مکان جدید",
-                  inviteUrl
-                );
+            // اگر لینک داریم، برای همه‌ی مسافرها هم بفرست
+            if (inviteUrl) {
+              const groupKb = new InlineKeyboard().url(
+                "🚪 ورود به مکان جدید",
+                inviteUrl
+              );
 
-                for (const p of passengerChars) {
-                  if (!p.tg_id) continue;
-                  try {
-                    await ctx.api.sendMessage(
-                      p.tg_id as number,
-                      `با ${char.char_name ?? "راننده"} به «${
-                        destRegion?.title ?? "منطقه‌ی جدید"
-                      } / ${destSpot.title}» رسیدی.\n` +
-                        "برای ورود به مکان جدید، روی دکمه زیر بزن:",
-                      { reply_markup: groupKb }
-                    );
-                  } catch (e) {
-                    console.error(
-                      "group arrive: notify passenger error:",
-                      e
-                    );
-                  }
+              for (const p of passengerChars) {
+                if (!p.tg_id) continue;
+                try {
+                  await ctx.api.sendMessage(
+                    p.tg_id as number,
+                    `با ${char.char_name ?? "راننده"} به «${
+                      destRegion?.title ?? "منطقه‌ی جدید"
+                    } / ${destSpot.title}» رسیدی.\n` +
+                      "برای ورود به مکان جدید، روی دکمه زیر بزن:",
+                    { reply_markup: groupKb }
+                  );
+                } catch (e) {
+                  console.error(
+                    "group arrive: notify passenger error:",
+                    e
+                  );
                 }
               }
             }
           }
         }
       }
-    } catch (e) {
-      console.error("group arrive logic failed:", e);
     }
+  } catch (e) {
+    console.error("group arrive logic failed:", e);
   }
 
   // پیام برای خود کاراکتر
@@ -686,17 +715,50 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
     return;
   }
 
-  let vehicleTitle: string | null = null;
-  if (char.riding_vehicle_id) {
-    const { data: vehicle, error: vehErr } = await supabase
+  // وضعیت وسیله: راننده / مسافر / پیاده
+  let statusText = "🚶 وضعیت: پیاده‌ای.";
+  try {
+    const { data: driveVeh } = await supabase
       .from("vehicles")
-      .select("id, title")
-      .eq("id", char.riding_vehicle_id)
+      .select("id, display_name, current_region_id, current_spot_id")
+      .eq("current_driver_char_id", char.id)
       .maybeSingle();
 
-    if (!vehErr && vehicle) {
-      vehicleTitle = vehicle.title;
+    if (
+      driveVeh &&
+      driveVeh.current_region_id === char.current_region_id &&
+      driveVeh.current_spot_id === char.current_spot_id
+    ) {
+      statusText = `🚗 وضعیت: راننده‌ی «${
+        driveVeh.display_name ?? "وسیله"
+      }» هستی.`;
+    } else {
+      const { data: vpRow } = await supabase
+        .from("vehicle_passengers")
+        .select("vehicle_id")
+        .eq("character_id", char.id)
+        .maybeSingle();
+
+      if (vpRow) {
+        const { data: pVeh } = await supabase
+          .from("vehicles")
+          .select("id, display_name, current_region_id, current_spot_id")
+          .eq("id", vpRow.vehicle_id)
+          .maybeSingle();
+
+        if (
+          pVeh &&
+          pVeh.current_region_id === char.current_region_id &&
+          pVeh.current_spot_id === char.current_spot_id
+        ) {
+          statusText = `🚕 وضعیت: مسافر روی «${
+            pVeh.display_name ?? "وسیله"
+          }» هستی.`;
+        }
+      }
     }
+  } catch (e) {
+    console.error("showQuickMap vehicle status error:", e);
   }
 
   let text =
@@ -708,12 +770,7 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
     text += `خاندان: ${char.clan_name}\n`;
   }
 
-  if (vehicleTitle) {
-    text += `\n🚗 وضعیت: سوار بر «${vehicleTitle}» هستی.`;
-  } else {
-    text += `\n🚶 وضعیت: پیاده‌ای.`;
-  }
-
+  text += `\n${statusText}`;
   text += `\n\nبرای دیدن مسیرهای فعلی از «🧭 مسیر های من» استفاده کن.`;
 
   await sendScreen(ctx, text, buildMainMenu());
@@ -754,13 +811,10 @@ async function handleRegPlayer(ctx: MyContext): Promise<void> {
     .eq("telegram_chat_id", chat.id)
     .maybeSingle();
 
-    if (!ctx.chat) {
-    return;
-  }
-
-
   if (regErr || !region) {
-    await ctx.reply("این گروه هنوز به عنوان Region ثبت نشده. اول /worldadmin را استفاده کن.");
+    await ctx.reply(
+      "این گروه هنوز به عنوان Region ثبت نشده. اول /worldadmin را استفاده کن."
+    );
     return;
   }
 
