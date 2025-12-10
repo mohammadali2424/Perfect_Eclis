@@ -134,6 +134,12 @@ async function showTravelHome(ctx: MyContext): Promise<void> {
   const char = await ensureCharacterFor(ctx, ctx.from.id);
   if (!char) return;
 
+  // اگر در حال سفر است → فقط صفحه‌ی سفر
+  if (isTraveling(char)) {
+    await showTravelInProgress(ctx, char);
+    return;
+  }
+
   if (!char.current_region_id || !char.current_spot_id) {
     await sendScreen(
       ctx,
@@ -169,41 +175,33 @@ async function showTravelHome(ctx: MyContext): Promise<void> {
   let text = "";
   const kb = new InlineKeyboard();
 
-  // اگر سوار وسیله‌ای هست
+  // --- از اینجا به بعد مثل قبل، فقط clan رو حذف می‌کنیم و fuel رو هم اینجا نشان نمی‌دهیم ---
   if (char.riding_vehicle_id) {
     const { data: vehicle, error: vehErr } = await supabase
       .from("vehicles")
       .select(
-        "id, title, current_region_id, current_spot_id, current_driver_char_id, fuel_percent"
+        "id, title, current_region_id, current_spot_id, current_driver_char_id"
       )
       .eq("id", char.riding_vehicle_id)
       .maybeSingle();
 
     if (vehErr || !vehicle) {
       console.error("showTravelHome vehicle error:", vehErr);
-      // اگر وسیله پیدا نشد، انگار پیاده‌ای
       char.riding_vehicle_id = null;
     } else {
       const isDriver = vehicle.current_driver_char_id === char.id;
 
       text += `منطقه: ${region.title}\n`;
       text += `موقعیت: ${spot.title}\n`;
-      text += `وضعیت: سوار وسیله\n`;
+      text += `وضعیت: سوار ماشین\n`;
       text += `نام وسیله: ${vehicle.title ?? "وسیله‌ی ناشناس"}\n`;
-      if (typeof vehicle.fuel_percent === "number") {
-        text += `سوخت: ${vehicle.fuel_percent.toFixed(1)}٪\n`;
-      }
-      if (char.clan_name) {
-        text += `خاندان: ${char.clan_name}\n`;
-      }
       text += `\nمسیرهای شما:\n`;
 
-      // دکمه‌ها برای حالت وسیله
       kb.text("🧭 مسیرهای من", "paths:list").row();
 
       if (isDriver) {
         kb.text("🎛 صفحه پشت فرمون", "veh:dash").row();
-        kb.text("📦 صندوق عقب", "veh:trunk").row();
+        kb.text("📦 صندوق عقب ماشین", "veh:trunk").row();
       }
 
       kb.text("🚶 پیاده می‌شوم", `veh:leave:${vehicle.id}`).row();
@@ -213,13 +211,10 @@ async function showTravelHome(ctx: MyContext): Promise<void> {
     }
   }
 
-  // اگر اینجا رسیدیم یعنی پیاده‌ای
+  // پیاده
   text += `منطقه: ${region.title}\n`;
   text += `موقعیت: ${spot.title}\n`;
   text += `وضعیت: پیاده\n`;
-  if (char.clan_name) {
-    text += `خاندان: ${char.clan_name}\n`;
-  }
   text += `\nمسیرهای شما:\n`;
 
   kb.text("🧭 مسیرهای پیش‌رو", "paths:list").row();
@@ -227,6 +222,7 @@ async function showTravelHome(ctx: MyContext): Promise<void> {
 
   await sendScreen(ctx, text, kb);
 }
+
 
 // --- نمایش مسیرهای قابل حرکت از Spot فعلی ---
 
