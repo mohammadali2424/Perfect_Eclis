@@ -386,10 +386,10 @@ async function showMyVehiclesMenu(ctx: MyContext) {
 
   const kb = new InlineKeyboard();
   for (const v of vehicles) {
-    const label = `${v.title ?? "وسیله"} (#${v.id})`;
+    const label = `${v.display_name ?? "وسیله"} (#${v.id})`;
     kb.text(label, `veh:open:${v.id}`).row();
   }
-  kb.text("⬅️ بازگشت به حمل‌ونقل", "trans:menu");
+  kb.text("⬅️ بازگشت", "travel:home");
 
   await sendVehicleScreen(ctx, "🚗 ماشین‌ها و وسیله‌های تو:", kb);
 }
