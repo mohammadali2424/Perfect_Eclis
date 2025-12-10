@@ -637,6 +637,49 @@ async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
   );
 }
 
+/** قفل/باز کردن اجازه‌ی سوار شدن مسافران توسط صاحب وسیله */
+async function toggleVehiclePassengerLock(
+  ctx: MyContext,
+  vehicleId: number
+) {
+  const { supabase } = ctx.services;
+  const { char, errorText } = await getCharacterByTg(ctx);
+  if (!char) {
+    await ctx.reply(errorText ?? "پرونده‌ات را پیدا نکردم.");
+    return;
+  }
+
+  const { vehicle, errorText: err2 } = await getVehicleById(ctx, vehicleId);
+  if (!vehicle) {
+    await ctx.reply(err2 ?? "وسیله‌ای پیدا نشد.");
+    return;
+  }
+
+  if (vehicle.owner_char_id !== char.id) {
+    await ctx.reply("فقط صاحب وسیله می‌تواند قفل مسافران را عوض کند.");
+    return;
+  }
+
+  const current = !!vehicle.passenger_locked;
+
+  const { error } = await supabase
+    .from("vehicles")
+    .update({ passenger_locked: !current })
+    .eq("id", vehicleId);
+
+  if (error) {
+    console.error("toggleVehiclePassengerLock update error:", error);
+    await ctx.reply("در تغییر وضعیت قفل مسافران مشکلی پیش آمد.");
+    return;
+  }
+
+  await ctx.reply(
+    !current
+      ? "درِ این وسیله را برای مسافران قفل کردی. دیگر در لیست سواری‌ها نمایش داده نمی‌شود."
+      : "قفل مسافران را باز کردی. حالا مسافران می‌توانند درخواست سوار شدن بفرستند."
+  );
+}
+
 
 /** منوی مسافر شدن: لیست ماشین‌های حاضر در همین نقطه */
 async function showRideMenu(ctx: MyContext) {
