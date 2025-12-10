@@ -66,6 +66,7 @@ async function ensureCharacterFor(
     travel_total_seconds: null,
     travel_started_at: null,
     last_move_at: null,
+    riding_vehicle_id: null,
   };
 
   const { data: ins, error: insErr } = await supabase
@@ -91,7 +92,7 @@ function buildMainMenu(): InlineKeyboard {
     .row()
     .text("🗺 نقشه سریع من", "mymap:open")
     .row()
-    .text("🚍 حمل و نقل", "trans:menu");
+    .text("🚙 حمل و نقل", "trans:menu");
 }
 
 // --- نمایش مسیرهای قابل حرکت از Spot فعلی ---
@@ -179,51 +180,26 @@ async function openPaths(ctx: MyContext): Promise<void> {
     toSpotMap.set(s.id, s);
   });
 
-  // وضعیت وسیله: آیا راننده‌ای یا مسافر؟
-  let ridingMode: "none" | "driver" | "passenger" = "none";
-  let drivingVehicle: any | null = null;
-  let passengerVehicle: any | null = null;
+  // ببینیم آیا سوار وسیله هستی
+  let ridingVehicle: any | null = null;
+  let isDriver = false;
+  let isPassenger = false;
 
-  // ۱) ببین آیا وسیله‌ای هست که این کاراکتر راننده‌اش باشد؟
-  const { data: driveVeh, error: driveErr } = await supabase
-    .from("vehicles")
-    .select("id, display_name, owner_char_id, current_region_id, current_spot_id")
-    .eq("current_driver_char_id", char.id)
-    .maybeSingle();
-
-  if (!driveErr && driveVeh) {
-    if (
-      driveVeh.current_region_id === char.current_region_id &&
-      driveVeh.current_spot_id === char.current_spot_id
-    ) {
-      ridingMode = "driver";
-      drivingVehicle = driveVeh;
-    }
-  }
-
-  // ۲) اگر راننده نیست، ببین مسافر وسیله‌ای هست یا نه
-  if (ridingMode === "none") {
-    const { data: vpRow, error: vpErr } = await supabase
-      .from("vehicle_passengers")
-      .select("vehicle_id")
-      .eq("character_id", char.id)
+  if (char.riding_vehicle_id) {
+    const { data: vehicle, error: vehErr } = await supabase
+      .from("vehicles")
+      .select("id, title, owner_char_id")
+      .eq("id", char.riding_vehicle_id)
       .maybeSingle();
 
-    if (!vpErr && vpRow) {
-      const { data: pVeh, error: pVehErr } = await supabase
-        .from("vehicles")
-        .select("id, display_name, current_region_id, current_spot_id")
-        .eq("id", vpRow.vehicle_id)
-        .maybeSingle();
+    if (!vehErr && vehicle) {
+      ridingVehicle = vehicle;
 
-      if (
-        !pVehErr &&
-        pVeh &&
-        pVeh.current_region_id === char.current_region_id &&
-        pVeh.current_spot_id === char.current_spot_id
-      ) {
-        ridingMode = "passenger";
-        passengerVehicle = pVeh;
+      // راننده = صاحب وسیله (الان مدل ساده)
+      if (vehicle.owner_char_id === char.id) {
+        isDriver = true;
+      } else {
+        isPassenger = true;
       }
     }
   }
@@ -237,14 +213,10 @@ async function openPaths(ctx: MyContext): Promise<void> {
     textHeader += `خاندان: ${char.clan_name}\n`;
   }
 
-  if (ridingMode === "driver" && drivingVehicle) {
-    textHeader += `\n🚗 وضعیت: راننده‌ی «${
-      drivingVehicle.display_name ?? "وسیله"
-    }» هستی.\n`;
-  } else if (ridingMode === "passenger" && passengerVehicle) {
-    textHeader += `\n🚕 وضعیت: مسافر روی «${
-      passengerVehicle.display_name ?? "وسیله"
-    }» هستی.\n`;
+  if (ridingVehicle && isDriver) {
+    textHeader += `\n🚗 وضعیت: راننده‌ی «${ridingVehicle.title}» هستی.\n`;
+  } else if (ridingVehicle && isPassenger) {
+    textHeader += `\n🚕 وضعیت: مسافر روی «${ridingVehicle.title}» هستی.\n`;
   } else {
     textHeader += `\n🚶 وضعیت: پیاده‌ای.\n`;
   }
@@ -253,11 +225,11 @@ async function openPaths(ctx: MyContext): Promise<void> {
 
   let textBody = "";
 
-  if (ridingMode === "passenger") {
+  if (ridingVehicle && isPassenger) {
     // مسافر → راننده باید مسیر را انتخاب کند
     textBody +=
       "تو به عنوان مسافر سوار هستی؛ فقط راننده می‌تواند مسیر را انتخاب کند.\n";
-  } else if (ridingMode === "driver" && drivingVehicle) {
+  } else if (ridingVehicle && isDriver) {
     // رانندگی
     for (const e of edges) {
       const dest = toSpotMap.get(e.to_spot_id);
@@ -266,10 +238,7 @@ async function openPaths(ctx: MyContext): Promise<void> {
 
       textBody += `🚗 ➤ ${destTitle} ~ ${driveSec} ثانیه‌ی رانندگی\n`;
       kb
-        .text(
-          `🚗 ${destTitle} (${driveSec}s)`,
-          `veh:go:${e.id}:${drivingVehicle.id}`
-        )
+        .text(`🚗 ${destTitle} (${driveSec}s)`, `veh:go:${e.id}:${ridingVehicle.id}`)
         .row();
     }
   } else {
@@ -284,7 +253,10 @@ async function openPaths(ctx: MyContext): Promise<void> {
     }
   }
 
-  kb.text("🔄 تازه‌سازی", "paths:open").row().text("🏠 منوی اصلی", "ui:home");
+  kb
+    .text("🔄 تازه‌سازی", "paths:open")
+    .row()
+    .text("🏠 منوی اصلی", "ui:home");
 
   await sendScreen(ctx, textHeader + textBody, kb);
 }
@@ -397,14 +369,75 @@ async function startWalkTravel(ctx: MyContext, edgeId: number): Promise<void> {
   const kb = new InlineKeyboard()
     .text("🚶 رسیدم؟", "travel:arrive")
     .row()
+    .text("❌ لغو سفر", "travel:cancel")
+    .row()
     .text("🏠 منوی اصلی", "ui:home");
 
   await sendScreen(
     ctx,
     `🚶 در حال حرکت به سمت «${destRegion.title} / ${destSpot.title}» هستی.\n` +
       `زمان تقریبی سفر: ${travelSeconds} ثانیه.\n\n` +
-      "هر وقت فکر کردی زمانش گذشته، روی «رسیدم؟» بزن یا /arrive را بفرست.",
+      "هر وقت فکر کردی زمانش گذشته، روی «رسیدم؟» بزن.",
     kb
+  );
+}
+
+// --- لغو سفر ---
+
+async function handleCancelTravel(ctx: MyContext): Promise<void> {
+  if (!ctx.from) return;
+  if (ctx.chat?.type !== "private") return;
+
+  const { supabase } = ctx.services;
+
+  const { data: char, error: charErr } = await supabase
+    .from("characters")
+    .select("*")
+    .eq("tg_id", ctx.from.id)
+    .maybeSingle();
+
+  if (charErr || !char) {
+    await ctx.reply("شخصیتت پیدا نشد.");
+    return;
+  }
+
+  if (!char.pending_region_id || !char.pending_spot_id) {
+    await sendScreen(
+      ctx,
+      "در حال حاضر در سفری نیستی که بخواهد لغو شود.",
+      buildMainMenu()
+    );
+    return;
+  }
+
+  const now = new Date();
+
+  const { error: updErr } = await supabase
+    .from("characters")
+    .update({
+      pending_region_id: null,
+      pending_spot_id: null,
+      travel_started_at: null,
+      travel_ready_at: null,
+      travel_total_seconds: null,
+      last_move_at: now.toISOString(),
+    })
+    .eq("id", char.id);
+
+  if (updErr) {
+    console.error("handleCancelTravel update error:", updErr);
+    await sendScreen(
+      ctx,
+      "در لغو سفر مشکلی پیش آمد.",
+      buildMainMenu()
+    );
+    return;
+  }
+
+  await sendScreen(
+    ctx,
+    "سفرت را لغو کردم.\nهر وقت آماده بودی می‌توانی مسیر جدیدی انتخاب کنی.",
+    buildMainMenu()
   );
 }
 
@@ -427,11 +460,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     return;
   }
 
-  if (
-    !char.pending_region_id ||
-    !char.pending_spot_id ||
-    !char.travel_ready_at
-  ) {
+  if (!char.pending_region_id || !char.pending_spot_id || !char.travel_ready_at) {
     await sendScreen(
       ctx,
       "الان در حال سفر نیستی.\n" +
@@ -446,11 +475,19 @@ async function handleArrive(ctx: MyContext): Promise<void> {
 
   if (now < readyAt) {
     const remainSec = Math.ceil((readyAt.getTime() - now.getTime()) / 1000);
+
+    const kb = new InlineKeyboard()
+      .text("🚶 دوباره چک کنم", "travel:arrive")
+      .row()
+      .text("❌ لغو سفر", "travel:cancel")
+      .row()
+      .text("🏠 منوی اصلی", "ui:home");
+
     await sendScreen(
       ctx,
       `هنوز به مقصد نرسیده‌ای.\n` +
         `حدود ${remainSec} ثانیه‌ی دیگر باقی مانده.`,
-      buildMainMenu()
+      kb
     );
     return;
   }
@@ -505,7 +542,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
 
   // Region قبلی را لود کنیم برای کیک
   let prevRegion: any | null = null;
-  if (prevRegionId) {
+  if (prevRegionId && prevRegionId !== destSpot.region_id) {
     const { data: pr } = await supabase
       .from("regions")
       .select("*")
@@ -514,7 +551,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     prevRegion = pr ?? null;
   }
 
-  // کیک از گروه قبلی برای خود کاراکتر
+  // کیک از گروه قبلی برای خود کاراکتر (فقط اگر واقعاً منطقه عوض شده)
   if (prevRegion && prevRegion.telegram_chat_id) {
     try {
       await ctx.api.banChatMember(
@@ -550,33 +587,40 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     }
   }
 
-  // اگر راننده‌ی یک وسیله هستی، مسافرهایت را هم جابه‌جا کن
-  try {
-    const { data: vehicle, error: vehErr } = await supabase
-      .from("vehicles")
-      .select("id, owner_char_id, display_name")
-      .eq("current_driver_char_id", char.id)
-      .maybeSingle();
+  // اگر راننده‌ی یک وسیله هستی، مسافرهایت را هم جابه‌جا کن و ماشین را هم منتقل کن
+  if (char.riding_vehicle_id) {
+    try {
+      const { data: vehicle, error: vehErr } = await supabase
+        .from("vehicles")
+        .select("id, owner_char_id, title, current_region_id, current_spot_id")
+        .eq("id", char.riding_vehicle_id)
+        .maybeSingle();
 
-    if (!vehErr && vehicle && vehicle.owner_char_id === char.id) {
-      // راننده‌ای
-      const { data: passengerRows, error: passErr } = await supabase
-        .from("vehicle_passengers")
-        .select("character_id")
-        .eq("vehicle_id", vehicle.id);
+      if (!vehErr && vehicle && vehicle.owner_char_id === char.id) {
+        // راننده‌ای
+        const { data: passengerRows, error: passErr } = await supabase
+          .from("vehicle_passengers")
+          .select("character_id")
+          .eq("vehicle_id", vehicle.id);
 
-      if (!passErr && passengerRows && passengerRows.length > 0) {
-        const passengerIds = passengerRows.map(
-          (r: any) => r.character_id as number
-        );
+        let passengerChars: any[] = [];
+        if (!passErr && passengerRows && passengerRows.length > 0) {
+          const passengerIds = passengerRows.map(
+            (r: any) => r.character_id as number
+          );
 
-        const { data: passengerChars, error: pcErr } = await supabase
-          .from("characters")
-          .select("id, tg_id, char_name")
-          .in("id", passengerIds);
+          const { data: pChars, error: pcErr } = await supabase
+            .from("characters")
+            .select("id, tg_id, char_name")
+            .in("id", passengerIds);
 
-        if (!pcErr && passengerChars && passengerChars.length > 0) {
-          // لوکیشن و سفرشان را پایان بده
+          if (!pcErr && pChars) {
+            passengerChars = pChars;
+          }
+        }
+
+        // لوکیشن مسافرها را به مقصد منتقل کن
+        if (passengerChars.length > 0) {
           const { error: updPassengersErr } = await supabase
             .from("characters")
             .update({
@@ -600,7 +644,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
               updPassengersErr
             );
           } else {
-            // از گروه قبلی کیک کن
+            // اگر منطقه عوض شده، مسافرها را هم از گروه قبلی کیک کن
             if (prevRegion && prevRegion.telegram_chat_id) {
               for (const p of passengerChars) {
                 if (!p.tg_id) continue;
@@ -616,7 +660,10 @@ async function handleArrive(ctx: MyContext): Promise<void> {
                     { only_if_banned: true }
                   );
                 } catch (e) {
-                  console.warn("group arrive: kick passenger failed:", e);
+                  console.warn(
+                    "group arrive: kick passenger failed:",
+                    e
+                  );
                 }
               }
             }
@@ -649,10 +696,38 @@ async function handleArrive(ctx: MyContext): Promise<void> {
             }
           }
         }
+
+        // خود وسیله را هم به مقصد منتقل کن و حرکت را لاگ کن
+        const { error: vehicleUpdErr } = await supabase
+          .from("vehicles")
+          .update({
+            current_region_id: destSpot.region_id,
+            current_spot_id: destSpot.id,
+          })
+          .eq("id", vehicle.id);
+
+        if (vehicleUpdErr) {
+          console.error(
+            "group arrive: update vehicle location error:",
+            vehicleUpdErr
+          );
+        } else {
+          // تلاش برای لاگ حرکت وسیله (اگر جدول باشد)
+          try {
+            await supabase.from("vehicle_moves").insert({
+              vehicle_id: vehicle.id,
+              from_spot_id: vehicle.current_spot_id,
+              to_spot_id: destSpot.id,
+              mode: "drive",
+            });
+          } catch (e) {
+            console.warn("group arrive: log vehicle move failed:", e);
+          }
+        }
       }
+    } catch (e) {
+      console.error("group arrive logic failed:", e);
     }
-  } catch (e) {
-    console.error("group arrive logic failed:", e);
   }
 
   // پیام برای خود کاراکتر
@@ -715,50 +790,17 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
     return;
   }
 
-  // وضعیت وسیله: راننده / مسافر / پیاده
-  let statusText = "🚶 وضعیت: پیاده‌ای.";
-  try {
-    const { data: driveVeh } = await supabase
+  let vehicleTitle: string | null = null;
+  if (char.riding_vehicle_id) {
+    const { data: vehicle, error: vehErr } = await supabase
       .from("vehicles")
-      .select("id, display_name, current_region_id, current_spot_id")
-      .eq("current_driver_char_id", char.id)
+      .select("id, title")
+      .eq("id", char.riding_vehicle_id)
       .maybeSingle();
 
-    if (
-      driveVeh &&
-      driveVeh.current_region_id === char.current_region_id &&
-      driveVeh.current_spot_id === char.current_spot_id
-    ) {
-      statusText = `🚗 وضعیت: راننده‌ی «${
-        driveVeh.display_name ?? "وسیله"
-      }» هستی.`;
-    } else {
-      const { data: vpRow } = await supabase
-        .from("vehicle_passengers")
-        .select("vehicle_id")
-        .eq("character_id", char.id)
-        .maybeSingle();
-
-      if (vpRow) {
-        const { data: pVeh } = await supabase
-          .from("vehicles")
-          .select("id, display_name, current_region_id, current_spot_id")
-          .eq("id", vpRow.vehicle_id)
-          .maybeSingle();
-
-        if (
-          pVeh &&
-          pVeh.current_region_id === char.current_region_id &&
-          pVeh.current_spot_id === char.current_spot_id
-        ) {
-          statusText = `🚕 وضعیت: مسافر روی «${
-            pVeh.display_name ?? "وسیله"
-          }» هستی.`;
-        }
-      }
+    if (!vehErr && vehicle) {
+      vehicleTitle = vehicle.title;
     }
-  } catch (e) {
-    console.error("showQuickMap vehicle status error:", e);
   }
 
   let text =
@@ -770,7 +812,12 @@ async function showQuickMap(ctx: MyContext): Promise<void> {
     text += `خاندان: ${char.clan_name}\n`;
   }
 
-  text += `\n${statusText}`;
+  if (vehicleTitle) {
+    text += `\n🚗 وضعیت: سوار بر «${vehicleTitle}» هستی.`;
+  } else {
+    text += `\n🚶 وضعیت: پیاده‌ای.`;
+  }
+
   text += `\n\nبرای دیدن مسیرهای فعلی از «🧭 مسیر های من» استفاده کن.`;
 
   await sendScreen(ctx, text, buildMainMenu());
@@ -786,7 +833,6 @@ async function handleRegPlayer(ctx: MyContext): Promise<void> {
   }
 
   if (!ctx.chat) {
-    // برای ساکت کردن TypeScript و همچنین ایمنی بیشتر
     return;
   }
 
@@ -812,9 +858,7 @@ async function handleRegPlayer(ctx: MyContext): Promise<void> {
     .maybeSingle();
 
   if (regErr || !region) {
-    await ctx.reply(
-      "این گروه هنوز به عنوان Region ثبت نشده. اول /worldadmin را استفاده کن."
-    );
+    await ctx.reply("این گروه هنوز به عنوان Region ثبت نشده. اول /worldadmin را استفاده کن.");
     return;
   }
 
@@ -924,6 +968,12 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   bot.callbackQuery("travel:arrive", async (ctx) => {
     await ctx.answerCallbackQuery();
     await handleArrive(ctx);
+  });
+
+  // لغو سفر
+  bot.callbackQuery("travel:cancel", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await handleCancelTravel(ctx);
   });
 
   // نقشه سریع من
