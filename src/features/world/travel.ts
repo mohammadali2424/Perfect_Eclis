@@ -487,13 +487,14 @@ async function startWalkTravel(ctx: MyContext, edgeId: number): Promise<void> {
   const kb = new InlineKeyboard()
     .text("🚶 رسیدم؟", "travel:arrive")
     .row()
-    .text("🔙 بازگشت", "travel:home");
+    .text("❌ لغو مسیر", "travel:cancel");
 
   await sendScreen(
     ctx,
     `🚶 در حال حرکت به سمت «${destRegion.title} / ${destSpot.title}» هستی.\n` +
       `زمان تقریبی سفر: ${travelSeconds} ثانیه.\n\n` +
-      "هر وقت فکر کردی زمانش گذشته، روی «رسیدم؟» بزن یا /arrive را بفرست.",
+      "هر وقت فکر کردی زمانش گذشته، روی «رسیدم؟» بزن.\n" +
+      "اگر خواستی منصرف شوی روی «لغو مسیر» بزن.",
     kb
   );
 }
