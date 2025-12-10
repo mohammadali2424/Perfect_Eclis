@@ -647,7 +647,7 @@ async function startDriveTravel(
   const kb = new InlineKeyboard()
     .text("🚶 رسیدم؟", "travel:arrive")
     .row()
-    .text("🔙 بازگشت", "travel:home");
+    .text("❌ لغو مسیر", "travel:cancel");
 
   await sendScreen(
     ctx,
@@ -655,7 +655,8 @@ async function startDriveTravel(
       destRegion.title
     } / ${destSpot.title}» هستی.\n` +
       `زمان تقریبی سفر: ${driveSeconds} ثانیه.\n\n` +
-      "هر وقت فکر کردی زمانش گذشته، روی «رسیدم؟» بزن یا /arrive را بفرست.",
+      "هر وقت فکر کردی زمانش گذشته، روی «رسیدم؟» بزن.\n" +
+      "اگر خواستی منصرف شوی روی «لغو مسیر» بزن.",
     kb
   );
 }
