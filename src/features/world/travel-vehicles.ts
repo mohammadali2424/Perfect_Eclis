@@ -230,7 +230,10 @@ async function sendVehicleScreen(
   text: string,
   keyboard: InlineKeyboard
 ) {
-  const lastId = ctx.session.ui_last_menu_id;
+  const lastId = (ctx.session as any).ui_last_menu_id as
+    | number
+    | undefined;
+
   if (lastId && ctx.chat?.type === "private") {
     try {
       await ctx.api.deleteMessage(ctx.chat.id, lastId);
@@ -242,7 +245,7 @@ async function sendVehicleScreen(
   const msg = await ctx.reply(text, { reply_markup: keyboard });
 
   if (ctx.chat?.type === "private") {
-    ctx.session.ui_last_menu_id = msg.message_id;
+    (ctx.session as any).ui_last_menu_id = msg.message_id;
   }
 }
 
@@ -312,7 +315,9 @@ export async function showTransportMenu(ctx: MyContext) {
     lines.push(
       "فعلاً نه وسیله‌ای برای خودت داری، نه چیزی این اطراف برای سوار شدن، نه چاه فلوکس."
     );
-    lines.push("وقتی شاپ برایت وسیله ثبت کند یا به نقطهٔ مناسب برسی، این‌جا زنده می‌شود.");
+    lines.push(
+      "وقتی شاپ برایت وسیله ثبت کند یا به نقطهٔ مناسب برسی، این‌جا زنده می‌شود."
+    );
   }
 
   await sendVehicleScreen(ctx, lines.join("\n"), kb);
@@ -844,7 +849,7 @@ async function handleRideDecision(
   }
 }
 
-/** حرکت وسیله + مسافران بین Spotها (travel.ts از این استفاده می‌کند) */
+/** حرکت وسیله + مسافران بین Spotها (travel.ts می‌تواند از این استفاده کند) */
 export async function moveVehicleWithPassengers(
   ctx: MyContext,
   vehicleId: number,
