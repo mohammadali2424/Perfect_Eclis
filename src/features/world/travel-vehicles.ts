@@ -163,6 +163,19 @@ async function removePassengerFromAllVehicles(
     .delete()
     .eq("character_id", charId);
 
+    const { error: updCharErr } = await supabase
+    .from("characters")
+    .update({ riding_vehicle_id: null })
+    .eq("id", charId);
+
+  if (updCharErr) {
+    console.error(
+      "removePassengerFromAllVehicles char update error:",
+      updCharErr
+    );
+  }
+
+
   if (error) {
     console.error("removePassengerFromAllVehicles error:", error);
   }
