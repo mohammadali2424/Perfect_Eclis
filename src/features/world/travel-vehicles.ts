@@ -1034,6 +1034,22 @@ export async function moveVehicleWithPassengers(
     return;
   }
 
+  // پیدا کردن مدت رانندگی این مسیر
+  let driveSeconds = 0;
+  if (fromSpotId && toSpotId) {
+    const { data: edge, error: edgeErr } = await supabase
+      .from("edges")
+      .select("drive_seconds, travel_seconds")
+      .eq("from_spot_id", fromSpotId)
+      .eq("to_spot_id", toSpotId)
+      .maybeSingle();
+
+    if (!edgeErr && edge) {
+      driveSeconds = edge.drive_seconds ?? edge.travel_seconds ?? 0;
+    }
+  }
+
+  // آپدیت موقعیت وسیله
   await updateVehicleLocation(
     ctx,
     vehicleId,
@@ -1042,6 +1058,24 @@ export async function moveVehicleWithPassengers(
   );
 
   await logVehicleMove(ctx, vehicleId, fromSpotId, toSpotId, "drive");
+
+  // کم کردن سوخت بر اساس زمان رانندگی
+  if (driveSeconds > 0) {
+    const usagePercent = computeFuelUsagePercent(driveSeconds); // مثلاً هر ۱۲۰ ثانیه = ۱٪
+    const currentFuel = typeof vehicle.fuel_percent === "number"
+      ? vehicle.fuel_percent
+      : 100;
+    const newFuel = Math.max(0, currentFuel - usagePercent);
+
+    const { error: fuelErr } = await supabase
+      .from("vehicles")
+      .update({ fuel_percent: newFuel })
+      .eq("id", vehicleId);
+
+    if (fuelErr) {
+      console.error("moveVehicleWithPassengers fuel update error:", fuelErr);
+    }
+  }
 
   const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicleId);
   const involvedCharIds = [
@@ -1064,53 +1098,6 @@ export async function moveVehicleWithPassengers(
   }
 }
 
-/** لینک ورود به Region جدید برای راننده و مسافران */
-export async function sendVehicleArrivalLinks(
-  ctx: MyContext,
-  vehicleId: number,
-  inviteLink: string
-) {
-  const { supabase } = ctx.services;
-
-  const { vehicle } = await getVehicleById(ctx, vehicleId);
-  if (!vehicle) return;
-
-  const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicleId);
-  const allCharIds = [
-    ...(driverId ? [driverId] : []),
-    ...passengerIds,
-  ];
-
-  if (allCharIds.length === 0) return;
-
-  const { data: chars, error } = await supabase
-    .from("characters")
-    .select("id, tg_id, char_name")
-    .in("id", allCharIds);
-
-  if (error || !chars) {
-    console.error("sendVehicleArrivalLinks chars error:", error);
-    return;
-  }
-
-  for (const c of chars) {
-    if (!c.tg_id) continue;
-    const text =
-      `🚗 ${vehicle.title ?? "وسیله"} به مقصد جدید رسید.\n` +
-      `مسیر برایت باز است تا وارد شوی.`;
-    try {
-      await ctx.api.sendMessage(c.tg_id, text, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "ورود به مکان جدید", url: inviteLink }],
-          ],
-        },
-      });
-    } catch (e) {
-      console.error("sendVehicleArrivalLinks sendMessage error:", e);
-    }
-  }
-}
 
 /** رجیسترکردن همهٔ این فیچرها روی بات */
 export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
