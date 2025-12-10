@@ -847,6 +847,11 @@ async function handleRideRequest(ctx: MyContext, vehicleId: number) {
     await ctx.reply(err2 ?? "وسیله‌ای با این مشخصات پیدا نشد.");
     return;
   }
+    if (vehicle.passenger_locked) {
+    await ctx.reply("این وسیله فعلاً قفل است و مسافر جدید قبول نمی‌کند.");
+    return;
+  }
+
 
   const { vehicle: drivingVehicle } = await getRidingVehicle(ctx, char.id);
   if (drivingVehicle) {
