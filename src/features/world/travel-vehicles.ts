@@ -715,6 +715,7 @@ async function toggleVehiclePassengerLock(
 
 
 /** منوی مسافر شدن: لیست ماشین‌های حاضر در همین نقطه */
+/** منوی مسافر شدن: لیست ماشین‌های حاضر در همین نقطه */
 async function showRideMenu(ctx: MyContext) {
   const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
@@ -723,6 +724,7 @@ async function showRideMenu(ctx: MyContext) {
     return;
   }
 
+  // اگر خودش راننده است، اجازه‌ی مسافر شدن ندارد
   const { vehicle: drivingVehicle } = await getRidingVehicle(ctx, char.id);
   if (drivingVehicle) {
     await ctx.reply(
@@ -731,6 +733,7 @@ async function showRideMenu(ctx: MyContext) {
     return;
   }
 
+  // اگر همین الان توی vehicle_passengers ثبت شده، یعنی مسافرِ یک وسیله است
   const alreadyPassenger = await isCharacterPassenger(ctx, char.id);
   if (alreadyPassenger) {
     await ctx.reply(
@@ -746,6 +749,7 @@ async function showRideMenu(ctx: MyContext) {
     return;
   }
 
+  // همه‌ی وسیله‌هایی که دقیقاً در همین Region/Spot پارک شده‌اند
   const { data: vehicles, error } = await supabase
     .from("vehicles")
     .select(
@@ -754,13 +758,13 @@ async function showRideMenu(ctx: MyContext) {
     .eq("current_region_id", char.current_region_id)
     .eq("current_spot_id", char.current_spot_id);
 
-
   if (error) {
     console.error("showRideMenu vehicles error:", error);
     await ctx.reply("در خواندن وسیله‌های این نقطه مشکلی پیش آمد.");
     return;
   }
 
+  // هیچ وسیله‌ای اینجا نیست
   if (!vehicles || vehicles.length === 0) {
     const kb = new InlineKeyboard().text(
       "⬅️ بازگشت به حمل‌ونقل",
@@ -782,26 +786,31 @@ async function showRideMenu(ctx: MyContext) {
   let anyBoardable = false;
 
   for (const v of vehicles) {
-        // اگر برای مسافرها قفل است، در این لیست نشان نده
+    // اگر ماشین قفل است، به لیست انتخاب‌ها اضافه نشود
     if (v.passenger_locked) continue;
+
     const { driverId, passengerIds } = await getVehicleLoad(ctx, v.id);
+    // فقط ماشین‌هایی که راننده دارند
     if (!driverId) continue;
+
     const cap = v.capacity ?? 1;
     const used = 1 + passengerIds.length;
-    if (used >= cap) continue;
+    if (used >= cap) continue; // جا ندارد
 
     anyBoardable = true;
     const free = cap - used;
-    const label = `🚕 ${v.title ?? "وسیله"} (جای خالی: ${free})`;
+
+    const labelName = v.display_name ?? "وسیله";
+    const label = `🚕 ${labelName} (جای خالی: ${free})`;
     kb.text(label, `ride:req:${v.id}`).row();
   }
 
-  kb.text("⬅️ بازگشت به حمل‌ونقل", "trans:menu");
+  kb.text("⬅️ بازگشت", "trans:menu");
 
   if (!anyBoardable) {
     await sendVehicleScreen(
       ctx,
-      "وسیله‌هایی در این نقطه وجود دارند، اما هیچ‌کدام جای خالی برای مسافر ندارند.",
+      "وسیله‌هایی در این نقطه وجود دارند، اما هیچ‌کدام جای خالی برای مسافر ندارند یا قفل هستند.",
       kb
     );
     return;
