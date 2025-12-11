@@ -550,7 +550,6 @@ async function showVehiclePassengers(ctx: MyContext, vehicleId: number) {
   await sendVehicleScreen(ctx, lines.join("\n"), kb);
 }
 
-
 /** راننده شدن روی یک وسیله */
 async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
   const { supabase } = ctx.services;
