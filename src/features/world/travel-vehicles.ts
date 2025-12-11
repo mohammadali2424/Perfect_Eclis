@@ -152,6 +152,7 @@ async function isCharacterPassenger(
 }
 
 /** حذف مسافر از همهٔ وسیله‌ها (برای ری‌ست شدن تمیز) */
+/** حذف مسافر از همهٔ وسیله‌ها (برای ری‌ست شدن تمیز) */
 async function removePassengerFromAllVehicles(
   ctx: MyContext,
   charId: number
@@ -163,17 +164,20 @@ async function removePassengerFromAllVehicles(
     .delete()
     .eq("character_id", charId);
 
-    const { error: updCharErr } = await supabase
+  if (error) {
+    console.error("removePassengerFromAllVehicles error:", error);
+  }
+
+  const { error: charErr } = await supabase
     .from("characters")
     .update({ riding_vehicle_id: null })
     .eq("id", charId);
 
-  if (updCharErr) {
-    console.error(
-      "removePassengerFromAllVehicles char update error:",
-      updCharErr
-    );
+  if (charErr) {
+    console.error("removePassengerFromAllVehicles char update error:", charErr);
   }
+}
+
 
 
   if (error) {
