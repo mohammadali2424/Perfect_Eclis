@@ -1227,56 +1227,29 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
   });
 
     // قفل/باز کردن ماشین برای مسافرها
+  // قفل/باز کردن مسافرها از صفحه‌ی پشت‌فرمون
   bot.callbackQuery(/^veh:lock:(\d+)$/, async (ctx) => {
     const vehicleId = Number(ctx.match[1]);
+
     try {
       await ctx.answerCallbackQuery();
     } catch (e) {
       console.warn("answerCallbackQuery veh:lock failed:", e);
     }
 
-    const { supabase } = ctx.services;
-    const { char, errorText } = await getCharacterByTg(ctx);
-    if (!char) {
-      await ctx.reply(errorText ?? "پرونده‌ات را پیدا نکردم.");
+    const res = await toggleVehiclePassengerLock(ctx, vehicleId);
+
+    if (!res.ok) {
+      // خطا را به صورت نوتیف کوتاه یا آلرت بده
+      await ctx.answerCallbackQuery({
+        text: res.errorText ?? "خطایی رخ داد.",
+        show_alert: true,
+      }).catch(() => {});
       return;
     }
 
-    const { vehicle, errorText: err2 } = await getVehicleById(ctx, vehicleId);
-    if (!vehicle) {
-      await ctx.reply(err2 ?? "وسیله‌ای با این مشخصات پیدا نشد.");
-      return;
-    }
-
-    if (vehicle.owner_char_id !== char.id) {
-      await ctx.reply("فقط صاحب وسیله می‌تواند آن را برای مسافران قفل/باز کند.");
-      return;
-    }
-
-    const newLocked = !vehicle.locked_for_passengers;
-    const { error } = await supabase
-      .from("vehicles")
-      .update({ locked_for_passengers: newLocked })
-      .eq("id", vehicleId);
-
-    if (error) {
-      console.error("veh:lock update error:", error);
-      await ctx.reply("در تغییر وضعیت قفل مشکلی پیش آمد.");
-      return;
-    }
-
+    // همه‌چیز اوکی → همان صفحه‌ی وسیله را با وضعیت جدید رفرش کن
     await showVehicleDetail(ctx, vehicleId);
-  });
-
-    // قفل/باز کردن مسافران
-  bot.callbackQuery(/^veh:lock:(\d+)$/, async (ctx) => {
-    const id = Number(ctx.match[1]);
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery veh:lock failed:", e);
-    }
-    await toggleVehiclePassengerLock(ctx, id);
   });
 
 }
