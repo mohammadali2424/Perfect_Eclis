@@ -159,6 +159,7 @@ async function removePassengerFromAllVehicles(
 ): Promise<void> {
   const { supabase } = ctx.services;
 
+  // همه رکوردهای مسافر این کاراکتر را پاک کن
   const { error } = await supabase
     .from("vehicle_passengers")
     .delete()
@@ -168,23 +169,7 @@ async function removePassengerFromAllVehicles(
     console.error("removePassengerFromAllVehicles error:", error);
   }
 
-  const { error: charErr } = await supabase
-    .from("characters")
-    .update({ riding_vehicle_id: null })
-    .eq("id", charId);
-
-  if (charErr) {
-    console.error("removePassengerFromAllVehicles char update error:", charErr);
-  }
-}
-
-
-
-  if (error) {
-    console.error("removePassengerFromAllVehicles error:", error);
-  }
-
-  // riding_vehicle_id را هم پاک کنیم
+  // riding_vehicle_id را هم خالی کن
   const { error: updErr } = await supabase
     .from("characters")
     .update({ riding_vehicle_id: null })
@@ -194,6 +179,7 @@ async function removePassengerFromAllVehicles(
     console.error("removePassengerFromAllVehicles char update error:", updErr);
   }
 }
+
 /** افزودن یک مسافر به وسیله */
 async function addPassengerToVehicle(
   ctx: MyContext,
