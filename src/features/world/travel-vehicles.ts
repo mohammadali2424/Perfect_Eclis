@@ -501,9 +501,20 @@ async function showVehiclePassengers(ctx: MyContext, vehicleId: number) {
     return;
   }
 
+  // فقط وقتی کنار وسیله‌ای اجازه بده
+  if (
+    !char.current_region_id ||
+    !char.current_spot_id ||
+    char.current_region_id !== vehicle.current_region_id ||
+    char.current_spot_id !== vehicle.current_spot_id
+  ) {
+    await ctx.reply("برای دیدن وضعیت مسافران باید کنار همین وسیله باشی.");
+    return;
+  }
+
   const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicleId);
   const lines: string[] = [];
-  lines.push(`🚕 مسافران ${vehicle.title ?? "وسیله"} (#${vehicle.id})`);
+  lines.push(`🚕 مسافران ${vehicle.display_name ?? vehicle.title ?? "وسیله"} (#${vehicle.id})`);
   lines.push("");
 
   if (!driverId && passengerIds.length === 0) {
@@ -534,10 +545,11 @@ async function showVehiclePassengers(ctx: MyContext, vehicleId: number) {
   const kb = new InlineKeyboard()
     .text("⬅️ بازگشت به وسیله", `veh:open:${vehicle.id}`)
     .row()
-    .text("⬅️ بازگشت به ماشین‌هایم", "veh:my");
+    .text("⬅️ بازگشت", "veh:my");
 
   await sendVehicleScreen(ctx, lines.join("\n"), kb);
 }
+
 
 /** راننده شدن روی یک وسیله */
 async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
