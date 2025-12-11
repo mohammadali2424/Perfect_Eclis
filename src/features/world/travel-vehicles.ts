@@ -181,11 +181,12 @@ async function removePassengerFromAllVehicles(
 }
 
 /** افزودن یک مسافر به وسیله */
+/** افزودن یک مسافر به وسیله */
 async function addPassengerToVehicle(
   ctx: MyContext,
   vehicleId: number,
   charId: number
-): Promise<{ ok: boolean; errorText?: string }> {
+): Promise<AddPassengerResult> {
   const { supabase } = ctx.services;
 
   const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicleId);
@@ -215,7 +216,16 @@ async function addPassengerToVehicle(
     return { ok: false, errorText: "این وسیله دیگر جایی برای مسافر ندارد." };
   }
 
-  await removePassengerFromAllVehicles(ctx, charId);
+  // اول از همه‌جا پیاده‌اش کن
+  const { error: removeErr } = await supabase
+    .from("vehicle_passengers")
+    .delete()
+    .eq("character_id", charId);
+
+  if (removeErr) {
+    console.error("addPassengerToVehicle remove old rows error:", removeErr);
+    // ادامه می‌دهیم، ولی لاگ داریم
+  }
 
   const { error } = await supabase.from("vehicle_passengers").insert({
     vehicle_id: vehicleId,
@@ -235,6 +245,7 @@ async function addPassengerToVehicle(
 
   if (updErr) {
     console.error("addPassengerToVehicle char update error:", updErr);
+    // ولی سوار شدن را موفق در نظر می‌گیریم، چون روی vehicle_passengers ثبت شده
   }
 
   return { ok: true };
