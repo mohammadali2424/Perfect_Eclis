@@ -571,7 +571,7 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  // قبل از هرچیز: باید کنار وسیله باشی
+  // حتماً باید کنار وسیله باشی
   if (
     !char.current_region_id ||
     !char.current_spot_id ||
@@ -582,16 +582,7 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  // آیا کسی دیگه الان راننده است؟
-  if (
-    vehicle.current_driver_char_id &&
-    vehicle.current_driver_char_id !== char.id
-  ) {
-    await ctx.reply("الان فرد دیگری پشت فرمون این وسیله است.");
-    return;
-  }
-
-  // اگر این کاراکتر راننده‌ی وسیله‌ی دیگری است، اول او را از آن‌ها پیاده کن
+  // اگر الان راننده‌ی وسیله‌ی دیگری هستی، اول خالی‌شان کن
   const { data: otherVehicles, error: ovErr } = await supabase
     .from("vehicles")
     .select("id")
@@ -603,11 +594,12 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
       .from("vehicles")
       .update({ current_driver_char_id: null })
       .in("id", otherIds);
-    if (clearErr)
+    if (clearErr) {
       console.error("handleDriveVehicle clear other vehicles error:", clearErr);
+    }
   }
 
-  // حالا این وسیله را رانندگی کن
+  // این وسیله را رانندگی کن
   const { error } = await supabase
     .from("vehicles")
     .update({ current_driver_char_id: char.id })
@@ -619,10 +611,22 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
+  // توی رکورد کاراکتر هم بگو سوار چه ماشینی هستی
+  const { error: charErr } = await supabase
+    .from("characters")
+    .update({ riding_vehicle_id: vehicleId })
+    .eq("id", char.id);
+
+  if (charErr) {
+    console.error("handleDriveVehicle char update error:", charErr);
+  }
+
   await ctx.reply(
-    `🕹 تو حالا رانندهٔ ${vehicle.display_name ?? vehicle.title ?? "وسیله"} شدی.`
+    `🕹 تو حالا رانندهٔ ${vehicle.display_name ?? vehicle.title ?? "وسیله"} شدی.\n` +
+    `برای دیدن مسیرهای رانندگی، از «🧭 مسیر های من» استفاده کن.`
   );
 }
+
 
 
 /** پیاده شدن راننده از وسیله */
