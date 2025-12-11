@@ -192,7 +192,7 @@ async function addPassengerToVehicle(
 
   const { data: veh, error: vehError } = await supabase
     .from("vehicles")
-    .select("capacity")
+    .select("capacity, passenger_locked")
     .eq("id", vehicleId)
     .maybeSingle();
 
@@ -201,16 +201,22 @@ async function addPassengerToVehicle(
     return { ok: false, errorText: "نتوانستم وسیله را پیدا کنم." };
   }
 
+  // اگر قفل است، اصلاً اجازه ندیم
+  if (veh.passenger_locked) {
+    return {
+      ok: false,
+      errorText: "راننده صندلی‌های مسافر را قفل کرده است.",
+    };
+  }
+
   const cap = veh.capacity ?? 1;
   const usedSeats = (driverId ? 1 : 0) + passengerIds.length;
   if (usedSeats >= cap) {
     return { ok: false, errorText: "این وسیله دیگر جایی برای مسافر ندارد." };
   }
 
-  // اول از همه جا مسافر بودنش را پاک کن
   await removePassengerFromAllVehicles(ctx, charId);
 
-  // ثبت در جدول مسافران
   const { error } = await supabase.from("vehicle_passengers").insert({
     vehicle_id: vehicleId,
     character_id: charId,
@@ -221,18 +227,19 @@ async function addPassengerToVehicle(
     return { ok: false, errorText: "در ثبت مسافر جدید مشکلی پیش آمد." };
   }
 
-  // روی خود کاراکتر هم riding_vehicle_id را ست کن
-  const { error: charErr } = await supabase
+  // riding_vehicle_id را هم ست کنیم
+  const { error: updErr } = await supabase
     .from("characters")
     .update({ riding_vehicle_id: vehicleId })
     .eq("id", charId);
 
-  if (charErr) {
-    console.error("addPassengerToVehicle char update error:", charErr);
+  if (updErr) {
+    console.error("addPassengerToVehicle char update error:", updErr);
   }
 
   return { ok: true };
 }
+
 
 /** حذف یک مسافر از یک وسیله خاص */
 /** حذف یک مسافر از یک وسیله خاص */
