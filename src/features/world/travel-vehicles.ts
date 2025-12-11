@@ -949,6 +949,7 @@ async function handleRideRequest(ctx: MyContext, vehicleId: number) {
 }
 
 /** راننده قبول/رد می‌کند */
+/** راننده قبول/رد می‌کند */
 async function handleRideDecision(
   ctx: MyContext,
   vehicleId: number,
@@ -1001,6 +1002,7 @@ async function handleRideDecision(
   }
 
   const res = await addPassengerToVehicle(ctx, vehicleId, passenger.id);
+
   if (!res.ok) {
     await ctx.reply(res.errorText ?? "نتوانستم مسافر را سوار کنم.");
     if (passenger.tg_id) {
@@ -1031,6 +1033,7 @@ async function handleRideDecision(
     }
   }
 }
+
 
 /** حرکت وسیله + مسافران بین Spotها (برای آینده؛ فعلاً از handleArrive استفاده می‌کنیم) */
 export async function moveVehicleWithPassengers(
