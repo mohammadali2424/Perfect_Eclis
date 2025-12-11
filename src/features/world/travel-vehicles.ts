@@ -192,6 +192,7 @@ async function removePassengerFromAllVehicles(
 }
 
 /** افزودن یک مسافر به وسیله */
+/** افزودن یک مسافر به وسیله */
 async function addPassengerToVehicle(
   ctx: MyContext,
   vehicleId: number,
@@ -218,8 +219,10 @@ async function addPassengerToVehicle(
     return { ok: false, errorText: "این وسیله دیگر جایی برای مسافر ندارد." };
   }
 
+  // اول از همه جا مسافر بودنش را پاک کن
   await removePassengerFromAllVehicles(ctx, charId);
 
+  // ثبت در جدول مسافران
   const { error } = await supabase.from("vehicle_passengers").insert({
     vehicle_id: vehicleId,
     character_id: charId,
@@ -230,29 +233,20 @@ async function addPassengerToVehicle(
     return { ok: false, errorText: "در ثبت مسافر جدید مشکلی پیش آمد." };
   }
 
-    const { error: updCharErr } = await supabase
+  // روی خود کاراکتر هم riding_vehicle_id را ست کن
+  const { error: charErr } = await supabase
     .from("characters")
     .update({ riding_vehicle_id: vehicleId })
     .eq("id", charId);
 
-  if (updCharErr) {
-    console.error("addPassengerToVehicle char update error:", updCharErr);
-  }
-
-
-  // riding_vehicle_id را روی وسیله ست کنیم
-  const { error: updErr } = await supabase
-    .from("characters")
-    .update({ riding_vehicle_id: vehicleId })
-    .eq("id", charId);
-
-  if (updErr) {
-    console.error("addPassengerToVehicle char update error:", updErr);
+  if (charErr) {
+    console.error("addPassengerToVehicle char update error:", charErr);
   }
 
   return { ok: true };
 }
 
+/** حذف یک مسافر از یک وسیله خاص */
 /** حذف یک مسافر از یک وسیله خاص */
 async function removePassengerFromVehicle(
   ctx: MyContext,
@@ -271,13 +265,15 @@ async function removePassengerFromVehicle(
     console.error("removePassengerFromVehicle error:", error);
   }
 
-  const { error: updErr } = await supabase
+  // اگر هنوز سوار همین وسیله ثبت شده، riding_vehicle_id را خالی کن
+  const { error: charErr } = await supabase
     .from("characters")
     .update({ riding_vehicle_id: null })
-    .eq("id", charId);
+    .eq("id", charId)
+    .eq("riding_vehicle_id", vehicleId);
 
-  if (updErr) {
-    console.error("removePassengerFromVehicle char update error:", updErr);
+  if (charErr) {
+    console.error("removePassengerFromVehicle char update error:", charErr);
   }
 }
 
