@@ -391,7 +391,7 @@ async function showMyVehiclesMenu(ctx: MyContext) {
 
   const { data: vehicles, error } = await supabase
     .from("vehicles")
-    .select("*")
+    .select("id, title, display_name, capacity, current_region_id, current_spot_id")
     .eq("owner_char_id", char.id);
 
   if (error) {
@@ -401,18 +401,21 @@ async function showMyVehiclesMenu(ctx: MyContext) {
   }
 
   if (!vehicles || vehicles.length === 0) {
-    await ctx.reply(
-      "در دفتر اکلیس برایت وسیلهٔ نقلیه‌ای ثبت نشده.\nوقتی در شاپ وسیله بخری، از اینجا می‌توانی مدیریتشان کنی."
+    await sendVehicleScreen(
+      ctx,
+      "در دفتر اکلیس برایت وسیلهٔ نقلیه‌ای ثبت نشده.\nوقتی در شاپ وسیله بخری، از اینجا می‌توانی مدیریتشان کنی.",
+      new InlineKeyboard().text("⬅️ بازگشت", "trans:menu")
     );
     return;
   }
 
   const kb = new InlineKeyboard();
   for (const v of vehicles) {
-    const label = `${v.display_name ?? "وسیله"} (#${v.id})`;
+    const name = v.display_name ?? v.title ?? "وسیله";
+    const label = `${name} (#${v.id})`;
     kb.text(label, `veh:open:${v.id}`).row();
   }
-  kb.text("⬅️ بازگشت", "travel:home");
+  kb.text("⬅️ بازگشت", "trans:menu");
 
   await sendVehicleScreen(ctx, "🚗 ماشین‌ها و وسیله‌های تو:", kb);
 }
