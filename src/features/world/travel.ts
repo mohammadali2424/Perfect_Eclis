@@ -2,6 +2,7 @@
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
 import { getVehiclePassengerCount } from "./travel-vehicles";
+import { computeFuelUsagePercent } from "./travel-vehicles";
 import { MASTER_ID } from "../../core/config";
 
 const INACTIVE_DAYS = 7;
