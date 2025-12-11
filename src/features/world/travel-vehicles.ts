@@ -631,6 +631,7 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
 
 /** پیاده شدن راننده از وسیله */
 /** پیاده شدن از وسیله (راننده یا مسافر) */
+/** پیاده شدن راننده از وسیله */
 async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
   const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
@@ -645,44 +646,35 @@ async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  const isDriver = vehicle.current_driver_char_id === char.id;
-
-  // اگر راننده است
-  if (isDriver) {
-    const { error } = await supabase
-      .from("vehicles")
-      .update({ current_driver_char_id: null })
-      .eq("id", vehicleId);
-
-    if (error) {
-      console.error("handleLeaveVehicle (driver) update error:", error);
-      await ctx.reply("در پیاده شدن راننده مشکلی پیش آمد.");
-      return;
-    }
-
-    const { error: updErr } = await supabase
-      .from("characters")
-      .update({ riding_vehicle_id: null })
-      .eq("id", char.id);
-
-    if (updErr) {
-      console.error(
-        "handleLeaveVehicle (driver) char update error:",
-        updErr
-      );
-    }
-
-    await ctx.reply(
-      `🕹 از ${vehicle.title ?? "وسیله"} پیاده شدی. وسیله در همین نقطه می‌ماند.`
-    );
+  if (vehicle.current_driver_char_id !== char.id) {
+    await ctx.reply("الان رانندهٔ این وسیله نیستی.");
     return;
   }
 
-  // اگر راننده نیست → یعنی مسافر است
-  await removePassengerFromVehicle(ctx, vehicleId, char.id);
+  const { error } = await supabase
+    .from("vehicles")
+    .update({ current_driver_char_id: null })
+    .eq("id", vehicleId);
+
+  if (error) {
+    console.error("handleLeaveVehicle update error:", error);
+    await ctx.reply("در پیاده شدن مشکلی پیش آمد.");
+    return;
+  }
+
+  // از روی کاراکتر هم پاکش کن
+  const { error: charErr } = await supabase
+    .from("characters")
+    .update({ riding_vehicle_id: null })
+    .eq("id", char.id)
+    .eq("riding_vehicle_id", vehicleId);
+
+  if (charErr) {
+    console.error("handleLeaveVehicle char update error:", charErr);
+  }
 
   await ctx.reply(
-    `🚶 به‌عنوان مسافر از ${vehicle.title ?? "وسیله"} پیاده شدی.`
+    `🕹 از ${vehicle.display_name ?? vehicle.title ?? "وسیله"} پیاده شدی. وسیله در همین نقطه می‌ماند.`
   );
 }
 
