@@ -1281,12 +1281,6 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await showQuickMap(ctx);
   });
 
-    // صفحه پشت فرمون: سوخت + سرنشین‌ها
- // بالای فایل:
-import { getVehiclePassengerCount } from "./travel-vehicles";
-
-// ...
-
 // داخل registerTravelFeature:
 bot.callbackQuery("veh:dash", async (ctx) => {
   await ctx.answerCallbackQuery();
