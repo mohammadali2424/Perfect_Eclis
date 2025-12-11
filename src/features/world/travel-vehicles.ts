@@ -551,11 +551,24 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
+  // این وسیله مال توست؟
   if (vehicle.owner_char_id !== char.id) {
     await ctx.reply("این وسیله متعلق به تو نیست.");
     return;
   }
 
+  // قبل از هرچیز: باید کنار وسیله باشی
+  if (
+    !char.current_region_id ||
+    !char.current_spot_id ||
+    char.current_region_id !== vehicle.current_region_id ||
+    char.current_spot_id !== vehicle.current_spot_id
+  ) {
+    await ctx.reply("برای سوار شدن باید کنار همین وسیله باشی.");
+    return;
+  }
+
+  // آیا کسی دیگه الان راننده است؟
   if (
     vehicle.current_driver_char_id &&
     vehicle.current_driver_char_id !== char.id
@@ -564,6 +577,7 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
+  // اگر این کاراکتر راننده‌ی وسیله‌ی دیگری است، اول او را از آن‌ها پیاده کن
   const { data: otherVehicles, error: ovErr } = await supabase
     .from("vehicles")
     .select("id")
@@ -579,6 +593,7 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
       console.error("handleDriveVehicle clear other vehicles error:", clearErr);
   }
 
+  // حالا این وسیله را رانندگی کن
   const { error } = await supabase
     .from("vehicles")
     .update({ current_driver_char_id: char.id })
@@ -590,28 +605,11 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-    const { error: updCharErr } = await supabase
-    .from("characters")
-    .update({ riding_vehicle_id: vehicleId })
-    .eq("id", char.id);
-
-  if (updCharErr) {
-    console.error("handleDriveVehicle char update error:", updCharErr);
-  }
-
-
-  // riding_vehicle_id را روی شخصیت ست کنیم
-  const { error: updErr } = await supabase
-    .from("characters")
-    .update({ riding_vehicle_id: vehicleId })
-    .eq("id", char.id);
-
-  if (updErr) {
-    console.error("handleDriveVehicle char update error:", updErr);
-  }
-
-  await ctx.reply(`🕹 تو حالا رانندهٔ ${vehicle.title ?? "وسیله"} شدی.`);
+  await ctx.reply(
+    `🕹 تو حالا رانندهٔ ${vehicle.display_name ?? vehicle.title ?? "وسیله"} شدی.`
+  );
 }
+
 
 /** پیاده شدن راننده از وسیله */
 /** پیاده شدن از وسیله (راننده یا مسافر) */
