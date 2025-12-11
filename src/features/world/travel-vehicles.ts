@@ -777,25 +777,22 @@ async function showRideMenu(ctx: MyContext) {
 
   let anyBoardable = false;
 
-  for (const v of vehicles) {
-    // اگر ماشین قفل است، به لیست انتخاب‌ها اضافه نشود
-    if (v.passenger_locked) continue;
+ for (const v of vehicles) {
+  // اگر قفل است، این وسیله اصلاً در لیست مسافرها نمایش داده نشود
+  if (v.passenger_locked) continue;
 
-    const { driverId, passengerIds } = await getVehicleLoad(ctx, v.id);
-    // فقط ماشین‌هایی که راننده دارند
-    if (!driverId) continue;
+  const { driverId, passengerIds } = await getVehicleLoad(ctx, v.id);
+  if (!driverId) continue;
+  const cap = v.capacity ?? 1;
+  const used = 1 + passengerIds.length;
+  if (used >= cap) continue;
 
-    const cap = v.capacity ?? 1;
-    const used = 1 + passengerIds.length;
-    if (used >= cap) continue; // جا ندارد
+  anyBoardable = true;
+  const free = cap - used;
+  const label = `🚕 ${v.display_name ?? "وسیله"} (جای خالی: ${free})`;
+  kb.text(label, `ride:req:${v.id}`).row();
+}
 
-    anyBoardable = true;
-    const free = cap - used;
-
-    const labelName = v.display_name ?? "وسیله";
-    const label = `🚕 ${labelName} (جای خالی: ${free})`;
-    kb.text(label, `ride:req:${v.id}`).row();
-  }
 
   kb.text("⬅️ بازگشت", "trans:menu");
 
