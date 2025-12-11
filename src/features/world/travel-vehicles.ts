@@ -447,13 +447,14 @@ async function showVehicleDetail(ctx: MyContext, vehicleId: number) {
   if (driverId) lines.push("وضعیت: در حال رانندگی");
   else lines.push("وضعیت: پارک شده");
 
-  // وضعیت قفل بودن برای مسافرها
-  const locked = !!vehicle.locked_for_passengers;
+   // وضعیت قفل بودن برای مسافرها
+  const locked = !!vehicle.passenger_locked;
   lines.push(
     locked
       ? "درها: 🔒 بسته روی مسافرها (هیچ‌کس نمی‌تواند درخواست بدهد)"
       : "درها: 🔓 باز برای مسافرها"
   );
+
 
   const kb = new InlineKeyboard();
 
