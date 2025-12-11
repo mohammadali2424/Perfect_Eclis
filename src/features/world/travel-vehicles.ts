@@ -432,14 +432,18 @@ async function showVehicleDetail(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicleId);
-  const cap = vehicle.capacity ?? 1;
+   const cap = vehicle.capacity ?? 1;
   const used = (driverId ? 1 : 0) + passengerIds.length;
   const free = cap - used;
 
   const lines: string[] = [];
   lines.push(`🚗 ${vehicle.display_name ?? vehicle.title ?? "وسیلهٔ ناشناس"} (#${vehicle.id})`);
   lines.push("");
+
+  // سوخت
+  const fuel = Number(vehicle.fuel_percent ?? 0);
+  lines.push(`⛽ سوخت: ${fuel.toFixed(1)}٪`);
+
   lines.push(`ظرفیت کلی: ${cap}`);
   lines.push(`صندلی‌های پر: ${used}`);
   lines.push(`صندلی‌های خالی: ${free < 0 ? 0 : free}`);
@@ -447,8 +451,9 @@ async function showVehicleDetail(ctx: MyContext, vehicleId: number) {
   if (driverId) lines.push("وضعیت: در حال رانندگی");
   else lines.push("وضعیت: پارک شده");
 
-   // وضعیت قفل بودن برای مسافرها
+  // وضعیت قفل بودن برای مسافرها
   const locked = !!vehicle.passenger_locked;
+
   lines.push(
     locked
       ? "درها: 🔒 بسته روی مسافرها (هیچ‌کس نمی‌تواند درخواست بدهد)"
