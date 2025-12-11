@@ -194,8 +194,6 @@ async function removePassengerFromAllVehicles(
     console.error("removePassengerFromAllVehicles char update error:", updErr);
   }
 }
-
-/** افزودن یک مسافر به وسیله */
 /** افزودن یک مسافر به وسیله */
 async function addPassengerToVehicle(
   ctx: MyContext,
