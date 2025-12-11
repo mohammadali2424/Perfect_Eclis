@@ -1028,6 +1028,7 @@ export async function moveVehicleWithPassengers(
 ) {
   const { supabase } = ctx.services;
 
+  // وسیله را بگیر
   const { data: vehicle, error: vehErr } = await supabase
     .from("vehicles")
     .select("*")
@@ -1039,7 +1040,15 @@ export async function moveVehicleWithPassengers(
     return;
   }
 
-  // پیدا کردن مدت رانندگی این مسیر
+  // اگر سوخت ندارد، اصلاً اجازه حرکت نده
+  const fuel = vehicle.fuel_percent ?? 0;
+  if (fuel <= 0) {
+    console.warn("moveVehicleWithPassengers: fuel empty, cannot move.");
+    // اینجا می‌تونی پیام هم برای راننده بفرستی، اگر خواستی
+    return;
+  }
+
+  // مدت رانندگی را از edges دربیاوریم
   let driveSeconds = 0;
   if (fromSpotId && toSpotId) {
     const { data: edge, error: edgeErr } = await supabase
@@ -1049,39 +1058,34 @@ export async function moveVehicleWithPassengers(
       .eq("to_spot_id", toSpotId)
       .maybeSingle();
 
-    if (!edgeErr && edge) {
+    if (edgeErr) {
+      console.error("moveVehicleWithPassengers edge error:", edgeErr);
+    } else if (edge) {
       driveSeconds = edge.drive_seconds ?? edge.travel_seconds ?? 0;
     }
   }
 
-  // آپدیت موقعیت وسیله
-  await updateVehicleLocation(
-    ctx,
-    vehicleId,
-    vehicle.current_region_id,
-    toSpotId
-  );
+  const fuelUsage = computeFuelUsagePercent(driveSeconds);
+  const newFuel = Math.max(0, fuel - fuelUsage);
 
-  await logVehicleMove(ctx, vehicleId, fromSpotId, toSpotId, "drive");
+  // لوکیشن + سوخت را آپدیت کن
+  const { error: updVehErr } = await supabase
+    .from("vehicles")
+    .update({
+      current_region_id: vehicle.current_region_id,
+      current_spot_id: toSpotId,
+      fuel_percent: newFuel,
+    })
+    .eq("id", vehicleId);
 
-  // کم کردن سوخت بر اساس زمان رانندگی
-  if (driveSeconds > 0) {
-    const usagePercent = computeFuelUsagePercent(driveSeconds); // مثلاً هر ۱۲۰ ثانیه = ۱٪
-    const currentFuel = typeof vehicle.fuel_percent === "number"
-      ? vehicle.fuel_percent
-      : 100;
-    const newFuel = Math.max(0, currentFuel - usagePercent);
-
-    const { error: fuelErr } = await supabase
-      .from("vehicles")
-      .update({ fuel_percent: newFuel })
-      .eq("id", vehicleId);
-
-    if (fuelErr) {
-      console.error("moveVehicleWithPassengers fuel update error:", fuelErr);
-    }
+  if (updVehErr) {
+    console.error("moveVehicleWithPassengers vehicle update error:", updVehErr);
   }
 
+  // لاگ حرکت
+  await logVehicleMove(ctx, vehicleId, fromSpotId, toSpotId, "drive");
+
+  // راننده + مسافران
   const { driverId, passengerIds } = await getVehicleLoad(ctx, vehicleId);
   const involvedCharIds = [
     ...(driverId ? [driverId] : []),
