@@ -678,43 +678,42 @@ async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
 async function toggleVehiclePassengerLock(
   ctx: MyContext,
   vehicleId: number
-): Promise<{ ok: boolean; newLocked?: boolean; errorText?: string }> {
+) {
   const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
   if (!char) {
-    return { ok: false, errorText: errorText ?? "پرونده‌ات را پیدا نکردم." };
+    await ctx.reply(errorText ?? "پرونده‌ات را پیدا نکردم.");
+    return;
   }
 
   const { vehicle, errorText: err2 } = await getVehicleById(ctx, vehicleId);
   if (!vehicle) {
-    return { ok: false, errorText: err2 ?? "وسیله‌ای پیدا نشد." };
+    await ctx.reply(err2 ?? "وسیله‌ای پیدا نشد.");
+    return;
   }
 
   if (vehicle.owner_char_id !== char.id) {
-    return {
-      ok: false,
-      errorText: "فقط صاحب وسیله می‌تواند قفل مسافران را عوض کند.",
-    };
+    await ctx.reply("فقط صاحب وسیله می‌تواند قفل مسافران را عوض کند.");
+    return;
   }
 
   const current = !!vehicle.passenger_locked;
-  const newLocked = !current;
 
   const { error } = await supabase
     .from("vehicles")
-    .update({ passenger_locked: newLocked })
+    .update({ passenger_locked: !current })
     .eq("id", vehicleId);
 
   if (error) {
     console.error("toggleVehiclePassengerLock update error:", error);
-    return {
-      ok: false,
-      errorText: "در تغییر وضعیت قفل مسافران مشکلی پیش آمد.",
-    };
+    await ctx.reply("در تغییر وضعیت قفل مسافران مشکلی پیش آمد.");
+    return;
   }
 
-  return { ok: true, newLocked };
+  // بعد از تغییر قفل، همان صفحه‌ی وسیله دوباره آپدیت شود
+  await showVehicleDetail(ctx, vehicleId);
 }
+
 
 
 /** منوی مسافر شدن: لیست ماشین‌های حاضر در همین نقطه */
