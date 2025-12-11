@@ -1202,6 +1202,18 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     await showRideMenu(ctx);
   });
 
+    // قفل/باز کردن ماشین برای مسافرها (از صفحه پشت فرمون)
+  bot.callbackQuery(/^veh:lock:(\d+)$/, async (ctx) => {
+    const vehicleId = Number(ctx.match[1]);
+    try {
+      await ctx.answerCallbackQuery();
+    } catch (e) {
+      console.warn("answerCallbackQuery veh:lock failed:", e);
+    }
+    await toggleVehiclePassengerLock(ctx, vehicleId);
+  });
+
+
   // انتخاب یک ماشین خاص برای سوار شدن
   bot.callbackQuery(/^ride:req:(\d+)$/, async (ctx) => {
     const vehicleId = Number(ctx.match[1]);
