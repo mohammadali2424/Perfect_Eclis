@@ -9,6 +9,7 @@ import { registerSecurityFeature } from "../features/security/guard";
 import { registerOnboardingFeature } from "../features/world/onboarding";
 import { registerTravelFeature } from "../features/world/travel";
 import { registerUiFeature } from "../features/ui/ui";
+import { registerFluxBuilderFeature } from "../features/worldbuilder/flux-builder";
 import { registerVehicleTravelFeature } from "../features/world/travel-vehicles";
 import { registerWorldAdminFeature } from "../features/worldbuilder/admin-builder";
 import { registerWorldAdminCommands } from "../features/worldbuilder/admin-commands";
@@ -49,6 +50,7 @@ registerWorldAdminFeature(bot);
 registerWorldVehicleShop(bot);
 registerTravelFeature(bot);
 registerUiFeature(bot);
+registerFluxBuilderFeature(bot);
 services.db = makeSupabaseDb(services.supabase);
 
 
