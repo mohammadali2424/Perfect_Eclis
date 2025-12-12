@@ -188,7 +188,6 @@ async function removePassengerFromAllVehicles(
 }
 
 /** افزودن یک مسافر به وسیله */
-/** افزودن یک مسافر به وسیله */
 async function addPassengerToVehicle(
   ctx: MyContext,
   vehicleId: number,
@@ -252,14 +251,12 @@ async function addPassengerToVehicle(
 
   if (updErr) {
     console.error("addPassengerToVehicle char update error:", updErr);
-    // ولی سوار شدن را موفق در نظر می‌گیریم، چون روی vehicle_passengers ثبت شده
+    // اینجا دیگه fail نمی‌کنیم چون مسافر عملاً سوار شده
   }
 
   return { ok: true };
 }
 
-
-/** حذف یک مسافر از یک وسیله خاص */
 /** حذف یک مسافر از یک وسیله خاص */
 async function removePassengerFromVehicle(
   ctx: MyContext,
