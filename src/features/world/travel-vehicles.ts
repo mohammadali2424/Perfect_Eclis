@@ -3,6 +3,13 @@ import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
 import { hasBoardableVehicleHere, getVehicleLoad } from "./vehicle-helpers";
 
+// نتیجه‌ی افزودن مسافر به وسیله
+type AddPassengerResult = {
+  ok: boolean;
+  errorText?: string;
+};
+
+
 /** گرفتن کاراکتر از روی tg_id */
 async function getCharacterByTg(ctx: MyContext) {
   const { supabase } = ctx.services;
