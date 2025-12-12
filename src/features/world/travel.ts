@@ -1368,63 +1368,65 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await showQuickMap(ctx);
   });
 
-// داخل registerTravelFeature:
-bot.callbackQuery("veh:dash", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  if (ctx.chat?.type !== "private" || !ctx.from) return;
+  bot.callbackQuery("veh:dash", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await showVehicleDash(ctx);
+  });
 
-  const { supabase } = ctx.services;
-  const char = await ensureCharacterFor(ctx, ctx.from.id);
-  if (!char || !char.riding_vehicle_id) {
-    await sendScreen(ctx, "الان سوار هیچ وسیله‌ای نیستی.", buildMainMenu());
-    return;
-  }
+  bot.callbackQuery(/^veh:lockdash:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    if (ctx.chat?.type !== "private" || !ctx.from) return;
 
-  const { data: vehicle, error: vehErr } = await supabase
-    .from("vehicles")
-    .select("id, title, capacity, fuel_percent, passenger_locked")
-    .eq("id", char.riding_vehicle_id)
-    .maybeSingle();
+    const vehicleId = Number(ctx.match![1]);
+    const { supabase } = ctx.services;
+    const char = await ensureCharacterFor(ctx, ctx.from.id);
+    if (!char) return;
 
-  if (vehErr || !vehicle) {
-    console.error("veh:dash vehicle error:", vehErr);
-    await sendScreen(ctx, "وسیله‌ات پیدا نشد.", buildMainMenu());
-    return;
-  }
+    const { data: vehicle, error: vehErr } = await supabase
+      .from("vehicles")
+      .select("id, owner_char_id, passenger_locked")
+      .eq("id", vehicleId)
+      .maybeSingle();
 
-  const { driverCount, passengerCount, total } =
-    await getVehiclePassengerCount(ctx, vehicle.id);
+    if (vehErr || !vehicle) {
+      console.error("veh:lockdash vehicle error:", vehErr);
+      await sendScreen(ctx, "وسیله‌ات پیدا نشد.", buildMainMenu());
+      return;
+    }
 
-  const cap = vehicle.capacity ?? 1;
-  const fuel =
-    typeof vehicle.fuel_percent === "number"
-      ? `${vehicle.fuel_percent.toFixed(1)}٪`
-      : "نامشخص";
+    if (vehicle.owner_char_id !== char.id) {
+      await sendScreen(
+        ctx,
+        "فقط صاحب وسیله می‌تواند درهای مسافران را قفل یا باز کند.",
+        buildMainMenu()
+      );
+      return;
+    }
 
-  const locked = !!vehicle.passenger_locked;
+    const newLocked = !vehicle.passenger_locked;
 
-  let text = "";
-  text += `🎛 صفحه پشت فرمون\n\n`;
-  text += `وسیله: ${vehicle.title ?? "وسیله"} (#${vehicle.id})\n`;
-  text += `سوخت: ${fuel}\n`;
-  text += `سرنشین‌ها: ${total}/${cap}\n`;
-  text += `- راننده: ${driverCount}\n`;
-  text += `- مسافر: ${passengerCount}\n`;
-  text += `وضعیت مسافران: ${locked ? "🔒 قفل" : "🔓 باز"}\n`;
+    const { error: updErr } = await supabase
+      .from("vehicles")
+      .update({ passenger_locked: newLocked })
+      .eq("id", vehicle.id);
 
-  const kb = new InlineKeyboard()
-    .text(
-      locked ? "🔓 باز کردن درِ مسافران" : "🔒 قفل کردن مسافران",
-      `veh:lock:${vehicle.id}`
-    )
-    .row()
-    .text("🔙 بازگشت", "travel:home");
+    if (updErr) {
+      console.error("veh:lockdash update error:", updErr);
+      await ctx
+        .answerCallbackQuery({
+          text: "در تغییر وضعیت قفل مشکلی پیش آمد.",
+          show_alert: true,
+        })
+        .catch(() => {});
+      return;
+    }
 
-  await sendScreen(ctx, text, kb);
-});
+    // بعد از تغییر، دوباره صفحهٔ پشت فرمون را نشان بده
+    await showVehicleDash(ctx);
+  });
 
 
-
+  
   // ثبت پلیر در Region
   bot.command("regplayer", handleRegPlayer);
 
