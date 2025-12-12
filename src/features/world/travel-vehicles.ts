@@ -222,17 +222,21 @@ async function addPassengerToVehicle(
     return { ok: false, errorText: "این وسیله دیگر جایی برای مسافر ندارد." };
   }
 
-  // اول از همه‌جا پیاده‌اش کن
+  // اول مسافر را از همه‌ی وسیله‌ها پیاده کن
   const { error: removeErr } = await supabase
     .from("vehicle_passengers")
     .delete()
     .eq("character_id", charId);
 
   if (removeErr) {
-    console.error("addPassengerToVehicle remove old rows error:", removeErr);
-    // ادامه می‌دهیم، ولی لاگ داریم
+    console.error(
+      "addPassengerToVehicle remove old passenger rows error:",
+      removeErr
+    );
+    // ادامه می‌دیم، ولی در لاگ ثبت شده
   }
 
+  // مسافر جدید را روی این وسیله ثبت کن
   const { error } = await supabase.from("vehicle_passengers").insert({
     vehicle_id: vehicleId,
     character_id: charId,
@@ -251,41 +255,12 @@ async function addPassengerToVehicle(
 
   if (updErr) {
     console.error("addPassengerToVehicle char update error:", updErr);
-    // اینجا دیگه fail نمی‌کنیم چون مسافر عملاً سوار شده
+    // اینجا دیگه fail نمی‌کنیم، چون مسافر عملاً سوار شده
   }
 
   return { ok: true };
 }
 
-/** حذف یک مسافر از یک وسیله خاص */
-async function removePassengerFromVehicle(
-  ctx: MyContext,
-  vehicleId: number,
-  charId: number
-): Promise<void> {
-  const { supabase } = ctx.services;
-
-  const { error } = await supabase
-    .from("vehicle_passengers")
-    .delete()
-    .eq("vehicle_id", vehicleId)
-    .eq("character_id", charId);
-
-  if (error) {
-    console.error("removePassengerFromVehicle error:", error);
-  }
-
-  // اگر هنوز سوار همین وسیله ثبت شده، riding_vehicle_id را خالی کن
-  const { error: charErr } = await supabase
-    .from("characters")
-    .update({ riding_vehicle_id: null })
-    .eq("id", charId)
-    .eq("riding_vehicle_id", vehicleId);
-
-  if (charErr) {
-    console.error("removePassengerFromVehicle char update error:", charErr);
-  }
-}
 
 /** ارسال/آپدیت منوی حمل‌ونقل/ماشین‌/مسافر با پاک‌کردن منوی قبلی */
 async function sendVehicleScreen(
