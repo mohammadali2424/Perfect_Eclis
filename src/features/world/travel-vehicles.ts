@@ -928,7 +928,6 @@ async function handleRideRequest(ctx: MyContext, vehicleId: number) {
 }
 
 /** راننده قبول/رد می‌کند */
-/** راننده قبول/رد می‌کند */
 async function handleRideDecision(
   ctx: MyContext,
   vehicleId: number,
@@ -998,7 +997,9 @@ async function handleRideDecision(
   }
 
   await ctx.reply(
-    `مسافر ${passenger.char_name} را سوار ${vehicle.title ?? "وسیله"} کردی.`
+    `مسافر ${passenger.char_name} را سوار ${
+      vehicle.title ?? "وسیله"
+    } کردی.`
   );
 
   if (passenger.tg_id) {
