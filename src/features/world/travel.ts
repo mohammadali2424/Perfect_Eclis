@@ -1230,6 +1230,59 @@ async function handleRegPlayer(ctx: MyContext): Promise<void> {
   );
 }
 
+async function showVehicleDash(ctx: MyContext): Promise<void> {
+  if (ctx.chat?.type !== "private" || !ctx.from) return;
+
+  const { supabase } = ctx.services;
+  const char = await ensureCharacterFor(ctx, ctx.from.id);
+  if (!char || !char.riding_vehicle_id) {
+    await sendScreen(ctx, "الان سوار هیچ وسیله‌ای نیستی.", buildMainMenu());
+    return;
+  }
+
+  const { data: vehicle, error: vehErr } = await supabase
+    .from("vehicles")
+    .select("id, title, capacity, fuel_percent, passenger_locked")
+    .eq("id", char.riding_vehicle_id)
+    .maybeSingle();
+
+  if (vehErr || !vehicle) {
+    console.error("veh:dash vehicle error:", vehErr);
+    await sendScreen(ctx, "وسیله‌ات پیدا نشد.", buildMainMenu());
+    return;
+  }
+
+  const { driverCount, passengerCount, total } =
+    await getVehiclePassengerCount(ctx, vehicle.id);
+
+  const cap = vehicle.capacity ?? 1;
+  const fuel =
+    typeof vehicle.fuel_percent === "number"
+      ? `${vehicle.fuel_percent.toFixed(1)}٪`
+      : "نامشخص";
+
+  const locked = !!vehicle.passenger_locked;
+
+  let text = "";
+  text += `🎛 صفحه پشت فرمون\n\n`;
+  text += `وسیله: ${vehicle.title ?? "وسیله"} (#${vehicle.id})\n`;
+  text += `سوخت: ${fuel}\n`;
+  text += `سرنشین‌ها: ${total}/${cap}\n`;
+  text += `- راننده: ${driverCount}\n`;
+  text += `- مسافر: ${passengerCount}\n`;
+  text += `وضعیت مسافران: ${locked ? "🔒 قفل" : "🔓 باز"}\n`;
+
+  const kb = new InlineKeyboard()
+    .text(
+      locked ? "🔓 باز کردن درِ مسافران" : "🔒 قفل کردن مسافران",
+      `veh:lockdash:${vehicle.id}`
+    )
+    .row()
+    .text("🔙 بازگشت", "travel:home");
+
+  await sendScreen(ctx, text, kb);
+}
+
 // --- رجیستر کردن فیچر سفر ---
 
 export function registerTravelFeature(bot: Bot<MyContext>): void {
