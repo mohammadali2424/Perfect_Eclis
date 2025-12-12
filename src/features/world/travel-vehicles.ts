@@ -1235,28 +1235,6 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     await handleRideDecision(ctx, vehicleId, passengerCharId, accepted);
   });
 
-    // قفل/باز کردن ماشین برای مسافرها
-  // قفل/باز کردن مسافرها از صفحه‌ی پشت‌فرمون
-  bot.callbackQuery(/^veh:lock:(\d+)$/, async (ctx) => {
-    const vehicleId = Number(ctx.match[1]);
-
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery veh:lock failed:", e);
-    }
-
-    const res = await toggleVehiclePassengerLock(ctx, vehicleId);
-
-    if (!res.ok) {
-      // خطا را به صورت نوتیف کوتاه یا آلرت بده
-      await ctx.answerCallbackQuery({
-        text: res.errorText ?? "خطایی رخ داد.",
-        show_alert: true,
-      }).catch(() => {});
-      return;
-    }
-
     // همه‌چیز اوکی → همان صفحه‌ی وسیله را با وضعیت جدید رفرش کن
     await showVehicleDetail(ctx, vehicleId);
   });
