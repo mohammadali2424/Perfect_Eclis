@@ -613,11 +613,7 @@ async function handleDriveVehicle(ctx: MyContext, vehicleId: number) {
   );
 }
 
-
-
-/** پیاده شدن راننده از وسیله */
 /** پیاده شدن از وسیله (راننده یا مسافر) */
-/** پیاده شدن راننده از وسیله */
 async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
   const { supabase } = ctx.services;
   const { char, errorText } = await getCharacterByTg(ctx);
@@ -632,37 +628,77 @@ async function handleLeaveVehicle(ctx: MyContext, vehicleId: number) {
     return;
   }
 
-  if (vehicle.current_driver_char_id !== char.id) {
-    await ctx.reply("الان رانندهٔ این وسیله نیستی.");
+  // 1) اگر راننده است
+  if (vehicle.current_driver_char_id === char.id) {
+    const { error: updVehErr } = await supabase
+      .from("vehicles")
+      .update({ current_driver_char_id: null })
+      .eq("id", vehicleId);
+
+    if (updVehErr) {
+      console.error("handleLeaveVehicle driver update error:", updVehErr);
+      await ctx.reply("در پیاده شدن (راننده) مشکلی پیش آمد.");
+      return;
+    }
+
+    const { error: updCharErr } = await supabase
+      .from("characters")
+      .update({ riding_vehicle_id: null })
+      .eq("id", char.id)
+      .eq("riding_vehicle_id", vehicleId);
+
+    if (updCharErr) {
+      console.error("handleLeaveVehicle driver char update error:", updCharErr);
+    }
+
+    await ctx.reply(`🕹 از ${vehicle.display_name ?? vehicle.title ?? "وسیله"} پیاده شدی.`);
     return;
   }
 
-  const { error } = await supabase
-    .from("vehicles")
-    .update({ current_driver_char_id: null })
-    .eq("id", vehicleId);
+  // 2) اگر مسافر است
+  const { data: passRow, error: passCheckErr } = await supabase
+    .from("vehicle_passengers")
+    .select("id")
+    .eq("vehicle_id", vehicleId)
+    .eq("character_id", char.id)
+    .maybeSingle();
 
-  if (error) {
-    console.error("handleLeaveVehicle update error:", error);
-    await ctx.reply("در پیاده شدن مشکلی پیش آمد.");
+  if (passCheckErr) {
+    console.error("handleLeaveVehicle passenger check error:", passCheckErr);
+    await ctx.reply("در بررسی وضعیت مسافر بودن مشکلی پیش آمد.");
     return;
   }
 
-  // از روی کاراکتر هم پاکش کن
-  const { error: charErr } = await supabase
+  if (!passRow) {
+    await ctx.reply("الان نه راننده‌ی این وسیله‌ای، نه مسافرِ آن.");
+    return;
+  }
+
+  const { error: delErr } = await supabase
+    .from("vehicle_passengers")
+    .delete()
+    .eq("vehicle_id", vehicleId)
+    .eq("character_id", char.id);
+
+  if (delErr) {
+    console.error("handleLeaveVehicle passenger delete error:", delErr);
+    await ctx.reply("در پیاده شدن (مسافر) مشکلی پیش آمد.");
+    return;
+  }
+
+  const { error: updCharErr2 } = await supabase
     .from("characters")
     .update({ riding_vehicle_id: null })
     .eq("id", char.id)
     .eq("riding_vehicle_id", vehicleId);
 
-  if (charErr) {
-    console.error("handleLeaveVehicle char update error:", charErr);
+  if (updCharErr2) {
+    console.error("handleLeaveVehicle passenger char update error:", updCharErr2);
   }
 
-  await ctx.reply(
-    `🕹 از ${vehicle.display_name ?? vehicle.title ?? "وسیله"} پیاده شدی. وسیله در همین نقطه می‌ماند.`
-  );
+  await ctx.reply(`🚶 از ${vehicle.display_name ?? vehicle.title ?? "وسیله"} پیاده شدی.`);
 }
+
 
 /** قفل/باز کردن اجازه‌ی سوار شدن مسافران توسط صاحب وسیله */
 async function toggleVehiclePassengerLock(
