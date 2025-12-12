@@ -13,6 +13,7 @@ import { registerVehicleTravelFeature } from "../features/world/travel-vehicles"
 import { registerWorldAdminFeature } from "../features/worldbuilder/admin-builder";
 import { registerWorldAdminCommands } from "../features/worldbuilder/admin-commands";
 import { registerPathBuilderFeature } from "../features/worldbuilder/path-builder";
+import { makeSupabaseDb } from "./core/db/adapters/supabase-db";
 import { registerWorldVehicleShop } from "../features/economy/vehicle-shop";
 // 👇 اگر ui.ts درست کرده‌ای، بعداً اینو برمی‌گردونیم
 // import { registerUiFeature } from "../features/ui/ui";
@@ -48,6 +49,7 @@ registerWorldAdminFeature(bot);
 registerWorldVehicleShop(bot);
 registerTravelFeature(bot);
 registerUiFeature(bot);
+services.db = makeSupabaseDb(services.supabase);
 
 
 // /start ساده برای راهنمای اولیه
