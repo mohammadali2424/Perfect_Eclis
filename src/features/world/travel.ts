@@ -1289,10 +1289,25 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   // منوی وضعیت سفر
   bot.command("path", showTravelHome);
   bot.hears("🧭 مسیر های من", showTravelHome);
-  bot.callbackQuery("paths:open", async (ctx) => {
+   bot.callbackQuery("paths:open", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await showTravelHome(ctx);
+    if (!ctx.from || ctx.chat?.type !== "private") return;
+
+    const { supabase } = ctx.services;
+    const { data: char } = await supabase
+      .from("characters")
+      .select("*")
+      .eq("tg_id", ctx.from.id)
+      .maybeSingle();
+
+    if (char && isTraveling(char)) {
+      await showTravelInProgress(ctx, char);
+      return;
+    }
+
+    await openPaths(ctx);
   });
+
   bot.callbackQuery("travel:home", async (ctx) => {
     await ctx.answerCallbackQuery();
     await showTravelHome(ctx);
