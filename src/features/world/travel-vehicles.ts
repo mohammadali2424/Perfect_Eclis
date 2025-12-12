@@ -1196,7 +1196,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     await showRideMenu(ctx);
   });
 
-    // قفل/باز کردن ماشین برای مسافرها (از صفحه پشت فرمون)
+  // قفل/باز کردن ماشین برای مسافرها (از صفحه پشت فرمون)
   bot.callbackQuery(/^veh:lock:(\d+)$/, async (ctx) => {
     const vehicleId = Number(ctx.match[1]);
     try {
@@ -1206,7 +1206,6 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     }
     await toggleVehiclePassengerLock(ctx, vehicleId);
   });
-
 
   // انتخاب یک ماشین خاص برای سوار شدن
   bot.callbackQuery(/^ride:req:(\d+)$/, async (ctx) => {
@@ -1234,9 +1233,5 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
 
     await handleRideDecision(ctx, vehicleId, passengerCharId, accepted);
   });
-
-    // همه‌چیز اوکی → همان صفحه‌ی وسیله را با وضعیت جدید رفرش کن
-    await showVehicleDetail(ctx, vehicleId);
-  });
-
 }
+
