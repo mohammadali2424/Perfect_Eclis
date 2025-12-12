@@ -719,6 +719,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
   if (ctx.chat?.type !== "private") return;
 
   const { supabase } = ctx.services;
+  const fromSpotId = char.current_spot_id ?? null;
 
   const { data: char, error: charErr } = await supabase
     .from("characters")
