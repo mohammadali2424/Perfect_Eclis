@@ -1274,7 +1274,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   bot.command("path", showTravelHome);
   bot.hears("🧭 مسیر های من", showTravelHome);
    bot.callbackQuery("paths:open", async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await ctx.answerCallbackQuery().catch(() => {});
     if (!ctx.from || ctx.chat?.type !== "private") return;
 
     const { supabase } = ctx.services;
@@ -1293,13 +1293,13 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   });
 
   bot.callbackQuery("travel:home", async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await ctx.answerCallbackQuery().catch(() => {});
     await showTravelHome(ctx);
   });
 
   // لیست مسیرها
   bot.callbackQuery("paths:list", async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await ctx.answerCallbackQuery().catch(() => {});
     if (!ctx.from || ctx.chat?.type !== "private") return;
 
     const { supabase } = ctx.services;
@@ -1321,7 +1321,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   // کلیک روی مسیر پیاده
   bot.callbackQuery(/go:(\d+)/, async (ctx) => {
     if (ctx.chat?.type !== "private") {
-      await ctx.answerCallbackQuery();
+      await ctx.answerCallbackQuery().catch(() => {});
       return;
     }
     const edgeId = Number(ctx.match![1]);
@@ -1331,7 +1331,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   // کلیک روی مسیر رانندگی
   bot.callbackQuery(/^veh:go:(\d+):(\d+)$/, async (ctx) => {
     if (ctx.chat?.type !== "private") {
-      await ctx.answerCallbackQuery();
+      await ctx.answerCallbackQuery().catch(() => {});
       return;
     }
     const edgeId = Number(ctx.match![1]);
@@ -1342,19 +1342,19 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   // رسیدم؟
   bot.command("arrive", handleArrive);
   bot.callbackQuery("travel:arrive", async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await ctx.answerCallbackQuery().catch(() => {});
     await handleArrive(ctx);
   });
 
    // لغو مسیر
   bot.callbackQuery("travel:cancel", async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await ctx.answerCallbackQuery().catch(() => {});
     await handleCancelTravel(ctx);
   });
 
     // برگشت به صفحه وضعیت (پیاده / سوار)
   bot.callbackQuery("travel:home", async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await ctx.answerCallbackQuery().catch(() => {});
     await showTravelHome(ctx);
   });
 
@@ -1368,9 +1368,9 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   });
 
   bot.callbackQuery("veh:dash", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await showVehicleDash(ctx);
-  });
+  await ctx.answerCallbackQuery().catch(() => {});
+  await showVehicleDash(ctx);
+});
 
   bot.callbackQuery(/^veh:lockdash:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
