@@ -1249,12 +1249,18 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
 
   // ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
   if (char.current_region_id && char.current_spot_id) {
-   const { data: wells, error: wErr } = await supabase
-  .from("flux_wells")
-  .select("region_id, spot_id")
-  .eq("region_id", char.current_region_id)
-  .eq("spot_id", char.current_spot_id)
-  .limit(1); 
+// ✅ چک چاه فلوکس بدون وابستگی به ستون‌های جدول
+let hasFluxWellHere = false;
+try {
+  hasFluxWellHere = await ctx.services.db.hasFluxWell(
+    char.current_region_id,
+    char.current_spot_id
+  );
+} catch (e) {
+  console.error("veh:dash hasFluxWell error:", e);
+}
+
+
     
     if (wErr) console.error("veh:dash wells error:", wErr);
 
