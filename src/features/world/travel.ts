@@ -1264,9 +1264,9 @@ try {
     
     if (wErr) console.error("veh:dash wells error:", wErr);
 
-    if (wells && wells.length > 0) {
-      kb.text("⛽ سوخت‌گیری", "flux:refuel").row();
-    }
+    if (hasFluxWellHere) {
+  kb.text("⛽ سوخت‌گیری", "flux:fuel").row();
+}
   }
 
   kb.text("🔙 بازگشت", "travel:home");
