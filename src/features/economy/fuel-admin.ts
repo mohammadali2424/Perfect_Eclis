@@ -1,212 +1,160 @@
+// src/features/economy/fuel-admin.ts
 import { Bot, InlineKeyboard } from "grammy";
-import { MyContext } from "../../core/types";
-import { MASTER_ID } from "../../core/config";
+import type { MyContext } from "../../core/types";
 
-function isMaster(ctx: MyContext) {
-  return !!ctx.from && ctx.from.id === MASTER_ID;
+type Kind = "normal" | "emergency";
+
+function kindTitle(kind: Kind) {
+  return kind === "normal" ? "چاه فلوکس" : "چاه اضطراری فلوکس";
 }
 
-function isGroup(ctx: MyContext) {
-  return !!ctx.chat && ctx.chat.type !== "private";
+async function getWellEnabled(supabase: any, spotId: number, kind: Kind): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("flux_wells")
+    .select("enabled")
+    .eq("spot_id", spotId)
+    .eq("kind", kind)
+    .maybeSingle();
+
+  if (error) {
+    console.error("getWellEnabled error:", error);
+    return false;
+  }
+  return Boolean(data?.enabled);
 }
 
-export function registerFuelAdminFeature(bot: Bot<MyContext>): void {
-  //
-  // ساخت چاه فلوکس عادی
-  //
+async function toggleWell(supabase: any, spotId: number, kind: Kind): Promise<boolean> {
+  const current = await getWellEnabled(supabase, spotId, kind);
+  const next = !current;
+
+  const { error } = await supabase
+    .from("flux_wells")
+    .upsert(
+      {
+        spot_id: spotId,
+        kind,
+        enabled: next,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "spot_id,kind" }
+    );
+
+  if (error) {
+    console.error("toggleWell upsert error:", error);
+    return current; // اگر خطا خورد، همون قبلی رو برگردون
+  }
+
+  return next;
+}
+
+async function buildSpotsKeyboard(ctx: MyContext, kind: Kind) {
+  const { supabase } = ctx.services;
+
+  // اگر جدول spots فیلد region_id/title داره، همین خوبه
+  const { data: spots, error } = await supabase
+    .from("spots")
+    .select("id, title, region_id")
+    .order("region_id", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error || !spots) {
+    console.error("load spots error:", error);
+    return new InlineKeyboard().text("🔄 تلاش دوباره", `flux:open:${kind}`);
+  }
+
+  const kb = new InlineKeyboard();
+
+  // برای اینکه درخواست DB زیاد نشه، وضعیت‌ها رو یکجا بگیر:
+  const spotIds = spots.map((s: any) => s.id);
+  const { data: wells } = await supabase
+    .from("flux_wells")
+    .select("spot_id, kind, enabled")
+    .in("spot_id", spotIds)
+    .eq("kind", kind);
+
+  const enabledMap = new Map<number, boolean>();
+  for (const w of wells ?? []) enabledMap.set(w.spot_id, Boolean(w.enabled));
+
+  for (const s of spots) {
+    const enabled = enabledMap.get(s.id) ?? false;
+    const mark = enabled ? "✅" : "❌";
+    kb.text(`${mark} ${s.title}`, `flux:set:${s.id}:${kind}`).row();
+  }
+
+  kb.text("🏠 منوی اصلی", "ui:home");
+  return kb;
+}
+
+export function registerFuelAdminFeature(bot: Bot<MyContext>) {
+  // ادمین‌چک اگر داری، اینجا بذار. فعلاً همون حالت ساده:
   bot.hears("ساخت چاه فلوکس", async (ctx) => {
-    if (!isGroup(ctx) || !isMaster(ctx)) return;
+    if (!ctx.from) return;
 
-    const { supabase } = ctx.services;
-    const chatId = ctx.chat!.id;
-
-    const { data: region, error: regErr } = await supabase
-      .from("regions")
-      .select("id, title")
-      .eq("telegram_chat_id", chatId)
-      .maybeSingle();
-
-    if (regErr || !region) {
-      await ctx.reply("این گروه هنوز به عنوان Region ثبت نشده. اول worldadmin/ساخت منطقه را انجام بده.");
-      return;
-    }
-
-    const { data: spots, error: spotErr } = await supabase
-      .from("spots")
-      .select("id, title")
-      .eq("region_id", region.id);
-
-    if (spotErr || !spots || spots.length === 0) {
-      await ctx.reply("برای این Region هنوز هیچ Spotی تعریف نشده.");
-      return;
-    }
-
-    const kb = new InlineKeyboard();
-    for (const s of spots) {
-      kb.text(s.title, `flux:set:${s.id}:normal`).row();
-    }
-
-    await ctx.api.sendMessage(
-      ctx.from!.id,
-      `⛽ ساخت چاه فلوکس برای Region: ${region.title}\n` +
-        "یکی از Spotها را انتخاب کن:",
-      { reply_markup: kb }
-    );
-
-    await ctx.reply("لیست Spotها برای ساخت چاه فلوکس به پی‌وی‌ات ارسال شد.");
-  });
-
-  //
-  // ساخت چاه اضطراری (ظرف فلوکس هم دارد)
-  //
-  bot.hears("ساخت چاه اضطراری فلوکس", async (ctx) => {
-    if (!isGroup(ctx) || !isMaster(ctx)) return;
-
-    const { supabase } = ctx.services;
-    const chatId = ctx.chat!.id;
-
-    const { data: region, error: regErr } = await supabase
-      .from("regions")
-      .select("id, title")
-      .eq("telegram_chat_id", chatId)
-      .maybeSingle();
-
-    if (regErr || !region) {
-      await ctx.reply("این گروه هنوز به عنوان Region ثبت نشده.");
-      return;
-    }
-
-    const { data: spots, error: spotErr } = await supabase
-      .from("spots")
-      .select("id, title")
-      .eq("region_id", region.id);
-
-    if (spotErr || !spots || spots.length === 0) {
-      await ctx.reply("برای این Region هنوز Spot تعریف نشده.");
-      return;
-    }
-
-    const kb = new InlineKeyboard();
-    for (const s of spots) {
-      kb.text(s.title, `flux:set:${s.id}:emergency`).row();
-    }
-
-    await ctx.api.sendMessage(
-      ctx.from!.id,
-      `🧪 ساخت چاه اضطراری فلوکس برای Region: ${region.title}\n` +
-        "Spot مورد نظر را انتخاب کن:",
-      { reply_markup: kb }
-    );
-
-    await ctx.reply("لیست Spotها برای ساخت چاه اضطراری به پی‌وی‌ات ارسال شد.");
-  });
-
-  //
-  // حذف چاه فلوکس از یک Spot
-  //
-  bot.hears("حذف چاه فلوکس", async (ctx) => {
-    if (!isGroup(ctx) || !isMaster(ctx)) return;
-
-    const { supabase } = ctx.services;
-    const chatId = ctx.chat!.id;
-
-    const { data: region, error: regErr } = await supabase
-      .from("regions")
-      .select("id, title")
-      .eq("telegram_chat_id", chatId)
-      .maybeSingle();
-
-    if (regErr || !region) {
-      await ctx.reply("این گروه هنوز به عنوان Region ثبت نشده.");
-      return;
-    }
-
-    const { data: spots, error: spotErr } = await supabase
-      .from("spots")
-      .select("id, title, is_flux_station, has_emergency_flux")
-      .eq("region_id", region.id)
-      .eq("is_flux_station", true);
-
-    if (spotErr || !spots || spots.length === 0) {
-      await ctx.reply("در این Region هیچ چاه فلوکس فعالی نیست.");
-      return;
-    }
-
-    const kb = new InlineKeyboard();
-    for (const s of spots) {
-      kb.text(s.title, `flux:clear:${s.id}`).row();
-    }
-
-    await ctx.api.sendMessage(
-      ctx.from!.id,
-      `❌ حذف چاه فلوکس در Region: ${region.title}\n` +
-        "کدام چاه را می‌خواهی حذف کنی؟",
-      { reply_markup: kb }
-    );
-
-    await ctx.reply("لیست چاه‌های فلوکس برای حذف، به پی‌وی‌ات ارسال شد.");
-  });
-
-  //
-  // callback برای set / clear
-  //
-  bot.callbackQuery(/flux:(set|clear):(\d+):(normal|emergency)?/, async (ctx) => {
+    // پیام گروه پاک شود
     if (ctx.chat?.type !== "private") {
-      await ctx.answerCallbackQuery();
-      return;
+      try {
+        await ctx.deleteMessage();
+      } catch {}
     }
 
-    const action = ctx.match![1]; // set / clear
-    const spotId = Number(ctx.match![2]);
-    const mode = ctx.match![3];   // normal / emergency یا undefined
+    // برو پیوی
+    await ctx.api.sendMessage(
+      ctx.from.id,
+      `🛠 پنل ساخت ${kindTitle("normal")}\n` +
+        "روی هر منطقه/اسپات بزن تا فعال/غیرفعال شود:",
+      { reply_markup: await buildSpotsKeyboard(ctx as any, "normal") }
+    );
+  });
 
-    const { supabase } = ctx.services;
+  bot.hears("ساخت چاه اضطراری فلوکس", async (ctx) => {
+    if (!ctx.from) return;
 
-    if (action === "clear") {
-      const { error } = await supabase
-        .from("spots")
-        .update({ is_flux_station: false, has_emergency_flux: false })
-        .eq("id", spotId);
-
-      if (error) {
-        console.error("clear flux spot error:", error);
-        await ctx.answerCallbackQuery({
-          text: "در حذف چاه فلوکس مشکلی پیش آمد.",
-          show_alert: true,
-        });
-        return;
-      }
-
-      await ctx.answerCallbackQuery();
-      await ctx.editMessageText("✅ چاه فلوکس این Spot حذف شد.");
-      return;
+    if (ctx.chat?.type !== "private") {
+      try {
+        await ctx.deleteMessage();
+      } catch {}
     }
 
-    // action === set
-    const isEmergency = mode === "emergency";
+    await ctx.api.sendMessage(
+      ctx.from.id,
+      `🛠 پنل ساخت ${kindTitle("emergency")}\n` +
+        "روی هر منطقه/اسپات بزن تا فعال/غیرفعال شود:",
+      { reply_markup: await buildSpotsKeyboard(ctx as any, "emergency") }
+    );
+  });
 
-    const { error } = await supabase
-      .from("spots")
-      .update({
-        is_flux_station: true,
-        has_emergency_flux: isEmergency,
-      })
-      .eq("id", spotId);
-
-    if (error) {
-      console.error("set flux spot error:", error);
-      await ctx.answerCallbackQuery({
-        text: "در تنظیم چاه فلوکس مشکلی پیش آمد.",
-        show_alert: true,
-      });
-      return;
-    }
-
+  // (اختیاری) برای دکمه‌ی تلاش دوباره
+  bot.callbackQuery(/^flux:open:(normal|emergency)$/, async (ctx) => {
+    const kind = ctx.match[1] as Kind;
+    await ctx.editMessageReplyMarkup({
+      reply_markup: await buildSpotsKeyboard(ctx as any, kind),
+    });
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      isEmergency
-        ? "✅ این Spot به عنوان چاه اضطراری فلوکس ثبت شد."
-        : "✅ این Spot به عنوان چاه فلوکس ثبت شد."
+  });
+
+  // ✅ این همون چیزیه که پنلت کم داشت: toggle واقعی
+  bot.callbackQuery(/^flux:set:(\d+):(normal|emergency)$/, async (ctx) => {
+    const spotId = Number(ctx.match[1]);
+    const kind = ctx.match[2] as Kind;
+
+    const { supabase } = (ctx as any).services;
+
+    // toggle در DB
+    const enabledNow = await toggleWell(supabase, spotId, kind);
+
+    // آپدیت کیبورد همان پیام
+    try {
+      await ctx.editMessageReplyMarkup({
+        reply_markup: await buildSpotsKeyboard(ctx as any, kind),
+      });
+    } catch (e) {
+      // اگر پیام قدیمی بود یا قابل ادیت نبود، مهم نیست
+      console.warn("editMessageReplyMarkup failed:", e);
+    }
+
+    await ctx.answerCallbackQuery(
+      enabledNow ? `✅ ${kindTitle(kind)} فعال شد` : `❌ ${kindTitle(kind)} غیرفعال شد`,
+      { show_alert: false }
     );
   });
 }
