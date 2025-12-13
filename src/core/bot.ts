@@ -16,8 +16,6 @@ import { registerWorldAdminCommands } from "../features/worldbuilder/admin-comma
 import { registerPathBuilderFeature } from "../features/worldbuilder/path-builder";
 import { makeSupabaseDb } from "./db/adapters/supabase-db";
 import { registerWorldVehicleShop } from "../features/economy/vehicle-shop";
-// 👇 اگر ui.ts درست کرده‌ای، بعداً اینو برمی‌گردونیم
-// import { registerUiFeature } from "../features/ui/ui";
 
 if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is required");
@@ -33,26 +31,17 @@ bot.use(
   })
 );
 
-// تزریق سرویس‌ها (فعلاً فقط supabase)
-bot.use((ctx, next) => {
-  ctx.services = { supabase } as Services;
-  return next();
-});
-
-type AppServices = {
-  supabase: any; // اگه تایپ دقیق داری، این any رو درستش می‌کنیم
-  db: ReturnType<typeof makeSupabaseDb>;
-};
-
-const AppServices: Services = {
+// ✅ یک‌بار برای همیشه سرویس‌ها را بساز
+const services: Services = {
   supabase,
   db: makeSupabaseDb(supabase),
 };
+
+// ✅ تزریق سرویس‌ها به ctx
 bot.use(async (ctx, next) => {
-  (ctx as any).services = services;
+  ctx.services = services;
   return next();
 });
-
 
 // ===== رجیستر تمام فیچرها =====
 
@@ -66,15 +55,12 @@ registerWorldVehicleShop(bot);
 registerTravelFeature(bot);
 registerUiFeature(bot);
 registerFluxBuilderFeature(bot);
-services.db = makeSupabaseDb(services.supabase);
-
 
 // /start ساده برای راهنمای اولیه
 bot.command("start", async (ctx) => {
   if (ctx.chat?.type !== "private") return;
 
   await ctx.reply(
-    "به اکلیس خوش آمدی.\n" +
-      "برای دیدن منوی اصلی بعداً می‌تونی از /menu استفاده کنی."
+    "به اکلیس خوش آمدی.\n" + "برای دیدن منوی اصلی بعداً می‌تونی از /menu استفاده کنی."
   );
 });
