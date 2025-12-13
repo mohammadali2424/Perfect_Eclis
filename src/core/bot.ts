@@ -39,6 +39,23 @@ bot.use((ctx, next) => {
   return next();
 });
 
+type Services = {
+  supabase: any; // اگه تایپ دقیق داری، این any رو درستش می‌کنیم
+  db: ReturnType<typeof makeSupabaseDb>;
+};
+
+const services: Services = {
+  supabase,
+  db: makeSupabaseDb(supabase),
+};
+bot.use(async (ctx, next) => {
+  (ctx as any).services = services;
+  return next();
+});
+
+const { db } = (ctx as any).services;
+
+
 // ===== رجیستر تمام فیچرها =====
 
 registerSecurityFeature(bot);
