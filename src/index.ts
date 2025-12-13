@@ -13,6 +13,10 @@ app.get("/", (_req, res) => {
   res.send("Pathweaver is alive ✨");
 });
 
+bot.catch((err) => {
+  console.error("BOT ERROR:", err.error);
+});
+
 // وبهوک اصلی تلگرام
 app.post(
   "/webhook",
