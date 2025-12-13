@@ -731,8 +731,8 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     return;
   }
 
-  // ✅ این خط باید بعد از لود شدن char باشه
-  const fromSpotId = char.current_spot_id ?? null;
+  const fromSpotId: number | null = char.current_spot_id ?? null;
+  const prevRegionId: number | null = char.current_region_id ?? null;
 
   if (!char.pending_region_id || !char.pending_spot_id || !char.travel_ready_at) {
     await sendScreen(
@@ -779,10 +779,10 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     console.error("arrive destRegion error:", drErr);
   }
 
-  const prevRegionId: number | null = char.current_region_id ?? null;
-
+  // متن سوخت برای راننده (اگر سوار وسیله باشد)
   let fuelInfoText: string | null = null;
 
+  // آپدیت خود کاراکتر
   const { error: updErr } = await supabase
     .from("characters")
     .update({
@@ -801,35 +801,28 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     console.error("arrive update char error:", updErr);
   }
 
+  // Region قبلی را لود کنیم برای کیک
   let prevRegion: any | null = null;
   if (prevRegionId) {
-    const { data: pr } = await supabase
+    const { data: pr, error: prErr } = await supabase
       .from("regions")
       .select("*")
       .eq("id", prevRegionId)
       .maybeSingle();
+
+    if (prErr) console.error("load prevRegion error:", prErr);
     prevRegion = pr ?? null;
   }
-
-  // ادامه کدت...
-}
-
 
   // کیک از گروه قبلی برای خود کاراکتر
   if (prevRegion && prevRegion.telegram_chat_id) {
     try {
-      await ctx.api.banChatMember(
-        prevRegion.telegram_chat_id as number,
-        ctx.from.id,
-        {
-          until_date: Math.floor(Date.now() / 1000) + 30,
-        }
-      );
-      await ctx.api.unbanChatMember(
-        prevRegion.telegram_chat_id as number,
-        ctx.from.id,
-        { only_if_banned: true }
-      );
+      await ctx.api.banChatMember(prevRegion.telegram_chat_id as number, ctx.from.id, {
+        until_date: Math.floor(Date.now() / 1000) + 30,
+      });
+      await ctx.api.unbanChatMember(prevRegion.telegram_chat_id as number, ctx.from.id, {
+        only_if_banned: true,
+      });
     } catch (e) {
       console.warn("kick from previous region failed:", e);
     }
@@ -844,12 +837,9 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     prevRegionId !== destRegion.id
   ) {
     try {
-      const link = await ctx.api.createChatInviteLink(
-        destRegion.telegram_chat_id as number,
-        {
-          name: `Pathweaver-${Date.now()}`,
-        }
-      );
+      const link = await ctx.api.createChatInviteLink(destRegion.telegram_chat_id as number, {
+        name: `Pathweaver-${Date.now()}`,
+      });
       inviteUrl = link.invite_link;
     } catch (e) {
       console.error("createChatInviteLink error:", e);
@@ -870,11 +860,11 @@ async function handleArrive(ctx: MyContext): Promise<void> {
 
         // محاسبه زمان رانندگی از edge
         let driveSeconds = 0;
-        if (char.current_spot_id) {
+        if (fromSpotId) {
           const { data: edge, error: edgeErr } = await supabase
             .from("edges")
             .select("drive_seconds, travel_seconds")
-            .eq("from_spot_id", char.current_spot_id)
+            .eq("from_spot_id", fromSpotId)
             .eq("to_spot_id", destSpot.id)
             .maybeSingle();
 
@@ -901,22 +891,18 @@ async function handleArrive(ctx: MyContext): Promise<void> {
           console.error("group arrive: vehicle update error:", vehUpdateErr);
         } else {
           // لاگ حرکت وسیله
-          const { error: moveErr } = await supabase
-            .from("vehicle_moves")
-            .insert({
-              vehicle_id: vehicle.id,
-              from_spot_id: char.current_spot_id,
-              to_spot_id: destSpot.id,
-              mode: "drive",
-            });
+          const { error: moveErr } = await supabase.from("vehicle_moves").insert({
+            vehicle_id: vehicle.id,
+            from_spot_id: fromSpotId,
+            to_spot_id: destSpot.id,
+            mode: "drive",
+          });
 
           if (moveErr) {
             console.error("group arrive: log vehicle move error:", moveErr);
           }
 
-          fuelInfoText = `⛽ سوخت وسیله‌ات حالا حدود ${fuelAfter.toFixed(
-            1
-          )}٪ است.`;
+          fuelInfoText = `⛽ سوخت وسیله‌ات حالا حدود ${fuelAfter.toFixed(1)}٪ است.`;
         }
 
         // مسافرها
@@ -926,9 +912,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
           .eq("vehicle_id", vehicle.id);
 
         if (!passErr && passengerRows && passengerRows.length > 0) {
-          const passengerIds = passengerRows.map(
-            (r: any) => r.character_id as number
-          );
+          const passengerIds = passengerRows.map((r: any) => r.character_id as number);
 
           const { data: passengerChars, error: pcErr } = await supabase
             .from("characters")
@@ -955,58 +939,46 @@ async function handleArrive(ctx: MyContext): Promise<void> {
               );
 
             if (updPassengersErr) {
-              console.error(
-                "group arrive: update passengers error:",
-                updPassengersErr
-              );
+              console.error("group arrive: update passengers error:", updPassengersErr);
             } else {
               // اگر ریجن عوض شده، از گروه قبلی کیک‌شان کن
-              if (prevRegion && prevRegion.telegram_chat_id && prevRegionId !== destRegion.id) {
+              if (
+                prevRegion &&
+                prevRegion.telegram_chat_id &&
+                destRegion &&
+                prevRegionId !== destRegion.id
+              ) {
                 for (const p of passengerChars) {
                   if (!p.tg_id) continue;
                   try {
-                    await ctx.api.banChatMember(
-                      prevRegion.telegram_chat_id as number,
-                      p.tg_id as number,
-                      { until_date: Math.floor(Date.now() / 1000) + 30 }
-                    );
-                    await ctx.api.unbanChatMember(
-                      prevRegion.telegram_chat_id as number,
-                      p.tg_id as number,
-                      { only_if_banned: true }
-                    );
+                    await ctx.api.banChatMember(prevRegion.telegram_chat_id as number, p.tg_id as number, {
+                      until_date: Math.floor(Date.now() / 1000) + 30,
+                    });
+                    await ctx.api.unbanChatMember(prevRegion.telegram_chat_id as number, p.tg_id as number, {
+                      only_if_banned: true,
+                    });
                   } catch (e) {
-                    console.warn(
-                      "group arrive: kick passenger failed:",
-                      e
-                    );
+                    console.warn("group arrive: kick passenger failed:", e);
                   }
                 }
               }
 
               // اگر ریجن عوض شده و لینک داریم، برای همه‌ی مسافرها هم بفرست
               if (inviteUrl) {
-                const groupKb = new InlineKeyboard().url(
-                  "🚪 ورود به مکان جدید",
-                  inviteUrl
-                );
+                const groupKb = new InlineKeyboard().url("🚪 ورود به مکان جدید", inviteUrl);
 
                 for (const p of passengerChars) {
                   if (!p.tg_id) continue;
                   try {
                     await ctx.api.sendMessage(
                       p.tg_id as number,
-                      `با ${char.char_name ?? "راننده"} به «${
-                        destRegion?.title ?? "منطقه‌ی جدید"
-                      } / ${destSpot.title}» رسیدی.\n` +
-                        "برای ورود به مکان جدید، روی دکمه زیر بزن:",
+                      `با ${char.char_name ?? "راننده"} به «${destRegion?.title ?? "منطقه‌ی جدید"} / ${
+                        destSpot.title
+                      }» رسیدی.\n` + "برای ورود به مکان جدید، روی دکمه زیر بزن:",
                       { reply_markup: groupKb }
                     );
                   } catch (e) {
-                    console.error(
-                      "group arrive: notify passenger error:",
-                      e
-                    );
+                    console.error("group arrive: notify passenger error:", e);
                   }
                 }
               }
@@ -1027,9 +999,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
   kb.text("🧭 مسیر های من", "paths:open").row().text("🏠 منوی اصلی", "ui:home");
 
   const baseText =
-    `به «${destRegion?.title ?? "منطقه‌ی جدید"} / ${
-      destSpot.title
-    }» رسیدی.\n` +
+    `به «${destRegion?.title ?? "منطقه‌ی جدید"} / ${destSpot.title}» رسیدی.\n` +
     "هم‌اکنون مکان جدید در برابر تو باز شده است.";
 
   const finalText = fuelInfoText ? `${baseText}\n\n${fuelInfoText}` : baseText;
