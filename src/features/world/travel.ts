@@ -1246,8 +1246,24 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
       `veh:lockdash:${vehicle.id}`
     )
     .row()
-    .text("🔙 بازگشت", "travel:home");
 
+      // ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
+  if (char.current_region_id && char.current_spot_id) {
+    const { data: wells, error: wErr } = await supabase
+      .from("flux_wells")
+      .select("id")
+      .eq("region_id", char.current_region_id)
+      .eq("spot_id", char.current_spot_id)
+      .limit(1);
+
+    if (wErr) console.error("veh:dash wells error:", wErr);
+
+    if (wells && wells.length > 0) {
+      kb.text("⛽ سوخت‌گیری", "flux:refuel").row();
+    }
+  }
+
+    .text("🔙 بازگشت", "travel:home");
   await sendScreen(ctx, text, kb);
 }
 
