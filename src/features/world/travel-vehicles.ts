@@ -312,12 +312,23 @@ export async function showTransportMenu(ctx: MyContext) {
   let canBoard = false;
   let hasFlux = false;
 
-  if (char.current_region_id && char.current_spot_id) {
-    canBoard = await hasBoardableVehicleHere(
-      ctx,
+ if (char.current_region_id && char.current_spot_id) {
+  canBoard = await hasBoardableVehicleHere(
+    ctx,
+    char.current_region_id,
+    char.current_spot_id
+  );
+
+  // ✅ جایگزین امن
+  try {
+    hasFlux = await ctx.services.db.hasFluxWell(
       char.current_region_id,
       char.current_spot_id
     );
+  } catch (e) {
+    console.error("showTransportMenu hasFluxWell error:", e);
+  }
+}
 
     const { data: wells, error: wellErr } = await supabase
       .from("flux_wells")
