@@ -53,8 +53,6 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
-const { db } = (ctx as any).services;
-
 
 // ===== رجیستر تمام فیچرها =====
 
