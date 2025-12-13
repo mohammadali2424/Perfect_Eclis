@@ -5,8 +5,8 @@ import { SupabaseClient } from "@supabase/supabase-js";
 export interface SessionData {
   // ثبت‌نام
   reg_step?: "clan" | "name";
-  reg_clan: string | null;
-  reg_name: string | null;
+  reg_clan?: string | null;
+  reg_name?: string | null;
 
   // برای UI اگر بعداً خواستی
   ui_last_menu_id?: number;
