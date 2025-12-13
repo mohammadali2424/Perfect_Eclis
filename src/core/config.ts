@@ -5,7 +5,6 @@ export const MASTER_ID = Number(process.env.MASTER_ID || 0);
 export const SUPABASE_URL = process.env.SUPABASE_URL || "";
 export const SUPABASE_KEY = process.env.SUPABASE_KEY || "";
 export const FLUX_PRICE_PER_PERCENT = Number(process.env.FLUX_PRICE_PER_PERCENT ?? 10); // هر 1٪ چند تا پول؟
-export const BANK_GROUP_ID = process.env.BANK_GROUP_ID ? Number(process.env.BANK_GROUP_ID) : null;
 
 
 if (!BOT_TOKEN) {
