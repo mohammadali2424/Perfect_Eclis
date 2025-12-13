@@ -39,12 +39,12 @@ bot.use((ctx, next) => {
   return next();
 });
 
-type Services = {
+type AppServices = {
   supabase: any; // اگه تایپ دقیق داری، این any رو درستش می‌کنیم
   db: ReturnType<typeof makeSupabaseDb>;
 };
 
-const services: Services = {
+const AppServices: Services = {
   supabase,
   db: makeSupabaseDb(supabase),
 };
