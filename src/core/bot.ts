@@ -15,6 +15,7 @@ import { registerWorldAdminFeature } from "../features/worldbuilder/admin-builde
 import { registerWorldAdminCommands } from "../features/worldbuilder/admin-commands";
 import { registerPathBuilderFeature } from "../features/worldbuilder/path-builder";
 import { makeSupabaseDb } from "./db/adapters/supabase-db";
+import { registerFuelAdminFeature } from "../features/economy/fuel-admin";
 import { registerWorldVehicleShop } from "../features/economy/vehicle-shop";
 
 if (!BOT_TOKEN) {
@@ -55,6 +56,7 @@ registerWorldVehicleShop(bot);
 registerTravelFeature(bot);
 registerUiFeature(bot);
 registerFluxBuilderFeature(bot);
+registerFuelAdminFeature(bot);
 
 // /start ساده برای راهنمای اولیه
 bot.command("start", async (ctx) => {
