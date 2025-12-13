@@ -719,7 +719,6 @@ async function handleArrive(ctx: MyContext): Promise<void> {
   if (ctx.chat?.type !== "private") return;
 
   const { supabase } = ctx.services;
-  const fromSpotId = char.current_spot_id ?? null;
 
   const { data: char, error: charErr } = await supabase
     .from("characters")
@@ -732,11 +731,13 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     return;
   }
 
+  // ✅ این خط باید بعد از لود شدن char باشه
+  const fromSpotId = char.current_spot_id ?? null;
+
   if (!char.pending_region_id || !char.pending_spot_id || !char.travel_ready_at) {
     await sendScreen(
       ctx,
-      "الان در حال سفر نیستی.\n" +
-        "برای حرکت جدید از «🧭 مسیر های من» استفاده کن.",
+      "الان در حال سفر نیستی.\n" + "برای حرکت جدید از «🧭 مسیر های من» استفاده کن.",
       buildMainMenu()
     );
     return;
@@ -749,8 +750,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     const remainSec = Math.ceil((readyAt.getTime() - now.getTime()) / 1000);
     await sendScreen(
       ctx,
-      `هنوز به مقصد نرسیده‌ای.\n` +
-        `حدود ${remainSec} ثانیه‌ی دیگر باقی مانده.`,
+      `هنوز به مقصد نرسیده‌ای.\n` + `حدود ${remainSec} ثانیه‌ی دیگر باقی مانده.`,
       buildMainMenu()
     );
     return;
@@ -765,11 +765,7 @@ async function handleArrive(ctx: MyContext): Promise<void> {
 
   if (dsErr || !destSpot) {
     console.error("arrive destSpot error:", dsErr);
-    await sendScreen(
-      ctx,
-      "نقطه‌ی مقصد پیدا نشد، اما سفر را پایان دادم.",
-      buildMainMenu()
-    );
+    await sendScreen(ctx, "نقطه‌ی مقصد پیدا نشد، اما سفر را پایان دادم.", buildMainMenu());
     return;
   }
 
@@ -785,10 +781,8 @@ async function handleArrive(ctx: MyContext): Promise<void> {
 
   const prevRegionId: number | null = char.current_region_id ?? null;
 
-  // متن سوخت برای راننده (اگر سوار وسیله باشد)
   let fuelInfoText: string | null = null;
 
-  // آپدیت خود کاراکتر
   const { error: updErr } = await supabase
     .from("characters")
     .update({
@@ -807,7 +801,6 @@ async function handleArrive(ctx: MyContext): Promise<void> {
     console.error("arrive update char error:", updErr);
   }
 
-  // Region قبلی را لود کنیم برای کیک
   let prevRegion: any | null = null;
   if (prevRegionId) {
     const { data: pr } = await supabase
@@ -817,6 +810,10 @@ async function handleArrive(ctx: MyContext): Promise<void> {
       .maybeSingle();
     prevRegion = pr ?? null;
   }
+
+  // ادامه کدت...
+}
+
 
   // کیک از گروه قبلی برای خود کاراکتر
   if (prevRegion && prevRegion.telegram_chat_id) {
