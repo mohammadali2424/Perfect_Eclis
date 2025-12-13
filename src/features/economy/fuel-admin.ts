@@ -151,11 +151,5 @@ export function registerFuelAdminFeature(bot: Bot<MyContext>) {
       // اگر پیام قدیمی بود یا قابل ادیت نبود، مهم نیست
       console.warn("editMessageReplyMarkup failed:", e);
     }
-await ctx.answerCallbackQuery({
-  text: enabledNow
-    ? `✅ ${kindTitle(kind)} فعال شد`
-    : `❌ ${kindTitle(kind)} غیرفعال شد`,
-  show_alert: false,
-});
   });
 }
