@@ -1240,14 +1240,14 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
   text += `- مسافر: ${passengerCount}\n`;
   text += `وضعیت مسافران: ${locked ? "🔒 قفل" : "🔓 باز"}\n`;
 
-  const kb = new InlineKeyboard()
-    .text(
-      locked ? "🔓 باز کردن درِ مسافران" : "🔒 قفل کردن مسافران",
-      `veh:lockdash:${vehicle.id}`
-    )
-    .row()
+  const kb = new InlineKeyboard();
 
-      // ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
+  kb.text(
+    locked ? "🔓 باز کردن درِ مسافران" : "🔒 قفل کردن مسافران",
+    `veh:lockdash:${vehicle.id}`
+  ).row();
+
+  // ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
   if (char.current_region_id && char.current_spot_id) {
     const { data: wells, error: wErr } = await supabase
       .from("flux_wells")
@@ -1263,8 +1263,8 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
     }
   }
 
-    .text("🔙 بازگشت", "travel:home");
-  await sendScreen(ctx, text, kb);
+  kb.text("🔙 بازگشت", "travel:home");
+
 }
 
 // --- رجیستر کردن فیچر سفر ---
