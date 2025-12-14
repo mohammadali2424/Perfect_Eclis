@@ -55,17 +55,17 @@ export function makeSupabaseDb(supabase: any): GameDb {
     },
 
     // ✅ این همون hasFluxWell درست است (بدون select("id"))
-    async hasFluxWell(regionId: number, spotId: number): Promise<DbResult<boolean>> {
-      const { data, error } = await supabase
-        .from("flux_wells")
-        .select("region_id") // یا select("*") هم اوکیه
-        .eq("region_id", regionId)
-        .eq("spot_id", spotId)
-        .maybeSingle();
+  async hasFluxWell(regionId: number, spotId: number): Promise<DbResult<boolean>> {
+  const { data, error } = await supabase
+    .from("flux_wells")
+    .select("region_id")
+    .eq("region_id", regionId)
+    .eq("spot_id", spotId)
+    .limit(1);
 
-      if (error) return { ok: false, error };
-      return { ok: true, data: !!data };
-    },
+  if (error) return { ok: false, error };
+  return { ok: true, data: !!data && data.length > 0 };
+},
 
     async createFluxWell(
       regionId: number,
