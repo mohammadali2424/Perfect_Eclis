@@ -80,6 +80,14 @@ registerUiFeature(bot);
 registerFluxBuilderFeature(bot);
 registerFuelAdminFeature(bot);
 
+bot.action(/.*/s, async (ctx) => {
+  const data = (ctx.callbackQuery as any)?.data;
+  console.log("[UNHANDLED ACTION]", data);
+
+  try { await ctx.reply(`این دکمه هندلر ندارد: ${data}`); } catch {}
+});
+
+
 // /start ساده برای راهنمای اولیه
 bot.command("start", async (ctx) => {
   if (ctx.chat?.type !== "private") return;
