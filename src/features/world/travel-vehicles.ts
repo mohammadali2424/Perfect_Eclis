@@ -1146,12 +1146,11 @@ export async function moveVehicleWithPassengers(
 
 /** رجیسترکردن همهٔ این فیچرها روی بات */
 export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
-//دکمه متنی «حمل و نقل» در پی‌وی
- const PRICE_PER_PERCENT = 0.25;
+  const FLUX_PRICE_PER_PERCENT = 0.25;
 
-  // ---------------------------
-  // ⛽ دکمه سوخت‌گیری
-  // ---------------------------
+  // ------------------------------
+  // ⛽ سوخت‌گیری
+  // ------------------------------
   bot.callbackQuery("flux:fuel", async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
     if (ctx.chat?.type !== "private" || !ctx.from) return;
@@ -1199,7 +1198,7 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     }
 
     if (veh.current_spot_id !== char.current_spot_id) {
-      await ctx.reply("برای سوخت‌گیری باید کنار وسیله باشی.");
+      await ctx.reply("برای سوخت‌گیری باید کنار وسیله و چاه باشی.");
       return;
     }
 
@@ -1215,59 +1214,61 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
       .text("🔙 بازگشت", "veh:dash");
 
     await ctx.reply(
-      `⛽ سوخت‌گیری «${veh.title ?? "وسیله"}»\n` +
+      `⛽ سوخت‌گیری برای «${veh.title ?? "وسیله"}»\n` +
         `سوخت فعلی: ${fuelNow.toFixed(1)}٪\n` +
         `حداکثر قابل شارژ: ${maxAdd.toFixed(1)}٪\n` +
-        `قیمت: هر 1٪ = ${PRICE_PER_PERCENT} سولن`,
+        `قیمت: هر 1٪ = ${FLUX_PRICE_PER_PERCENT} سولن`,
       { reply_markup: kb }
     );
   });
 
-  // ---------------------------
-  // انتخاب درصد آماده
-  // ---------------------------
+  // ------------------------------
+  // دکمه‌های درصد ثابت
+  // ------------------------------
   bot.callbackQuery(/^fuel:add:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
-    await doFuelPurchase(ctx, Number(ctx.match[1]));
+    const add = Number(ctx.match[1]);
+    await applyFuelPurchase(ctx, add);
   });
 
-  // ---------------------------
+  // ------------------------------
   // پر کردن کامل
-  // ---------------------------
+  // ------------------------------
   bot.callbackQuery("fuel:full", async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
-    await doFuelPurchase(ctx, "full");
+    await applyFuelPurchase(ctx, "full");
   });
 
-  // ---------------------------
-  // دلخواه
-  // ---------------------------
+  // ------------------------------
+  // درصد دلخواه
+  // ------------------------------
   bot.callbackQuery("fuel:custom", async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
     if (ctx.chat?.type !== "private") return;
 
-    (ctx.session as any).fuel_waiting = true;
-    await ctx.reply("چند درصد می‌خواهی سوخت‌گیری کنی؟ (عدد)");
+    (ctx.session as any).fuel_custom_waiting = true;
+    await ctx.reply("چند درصد می‌خوای شارژ کنی؟ (عدد بین 1 تا 100)");
   });
 
-  bot.on("message:text", async (ctx) => {
-    if (ctx.chat?.type !== "private") return;
-    if (!(ctx.session as any).fuel_waiting) return;
+  bot.on("message:text", async (ctx, next) => {
+    if (ctx.chat?.type !== "private") return next();
 
-    (ctx.session as any).fuel_waiting = false;
+    if (!(ctx.session as any).fuel_custom_waiting) return next();
+    (ctx.session as any).fuel_custom_waiting = false;
+
     const n = Number(ctx.message.text.trim());
-    if (!Number.isFinite(n) || n <= 0) {
-      await ctx.reply("عدد معتبر نیست.");
+    if (!Number.isFinite(n) || n <= 0 || n > 100) {
+      await ctx.reply("عدد معتبر نیست. یک عدد بین 1 تا 100 بفرست.");
       return;
     }
 
-    await doFuelPurchase(ctx, n);
+    await applyFuelPurchase(ctx, n);
   });
 
-  // ---------------------------
-  // منطق اصلی سوخت‌گیری
-  // ---------------------------
-  async function doFuelPurchase(
+  // ------------------------------
+  // هسته اصلی سوخت‌گیری
+  // ------------------------------
+  async function applyFuelPurchase(
     ctx: MyContext,
     amount: number | "full"
   ) {
@@ -1280,8 +1281,8 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
       .eq("tg_id", ctx.from.id)
       .maybeSingle();
 
-    if (!char || !char.riding_vehicle_id) {
-      await ctx.reply("وضعیتت نامعتبر است.");
+    if (!char?.riding_vehicle_id) {
+      await ctx.reply("وسیله‌ای پیدا نشد.");
       return;
     }
 
@@ -1306,15 +1307,15 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     }
 
     const fuelAfter = Math.min(100, fuelNow + add);
-    const cost = add * PRICE_PER_PERCENT;
+    const cost = add * FLUX_PRICE_PER_PERCENT;
 
-    // ✅ اعمال سوخت
+    // ⛽ اعمال سوخت
     await supabase
       .from("vehicles")
       .update({ fuel_percent: fuelAfter })
       .eq("id", veh.id);
 
-    // ✅ اعلان به بانک (بدون دکمه، بدون تایید)
+    // 🏦 پیام به بانک (فقط اطلاع)
     const bankChatId = await getBankChatId(ctx);
     if (bankChatId) {
       await ctx.api.sendMessage(
@@ -1323,253 +1324,17 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
           `کاربر: ${ctx.from.first_name} (${ctx.from.id})\n` +
           `وسیله: ${veh.title ?? "وسیله"} (#${veh.id})\n` +
           `مقدار: +${add}%\n` +
-          `هزینه: ${cost} سولن\n\n` +
-          `⚠️ کسر حساب به‌صورت دستی انجام شود`
+          `هزینه: ${cost} سولن\n` +
+          `وضعیت: کسر دستی توسط بانک`
       );
     }
 
     await ctx.reply(
-      `⛽ سوخت‌گیری انجام شد\n` +
+      `⛽ سوخت‌گیری انجام شد.\n` +
         `+${add}%\n` +
         `هزینه: ${cost} سولن\n` +
         `سوخت فعلی: ${fuelAfter.toFixed(1)}٪`
     );
   }
-}
-  
-  bot.hears(/حمل.?و.?نقل/, async (ctx) => {
-    if (ctx.chat?.type !== "private") return;
-    await showTransportMenu(ctx);
-  });
-
-  // برگشت به پنل حمل‌ونقل
-  bot.callbackQuery("trans:menu", async (ctx) => {
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery trans:menu failed:", e);
-    }
-    await showTransportMenu(ctx);
-  });
-
-  // «ماشین‌های من» از داخل حمل‌ونقل
-  bot.callbackQuery("veh:my", async (ctx) => {
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery veh:my failed:", e);
-    }
-    await showMyVehiclesMenu(ctx);
-  });
-
-  // باز کردن جزئیات یک وسیله
-  bot.callbackQuery(/^veh:open:(\d+)$/, async (ctx) => {
-    const id = Number(ctx.match[1]);
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery veh:open failed:", e);
-    }
-    await showVehicleDetail(ctx, id);
-  });
-  // سوار شدن راننده
-  bot.callbackQuery(/^veh:drive:(\d+)$/, async (ctx) => {
-    const id = Number(ctx.match[1]);
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery veh:drive failed:", e);
-    }
-    await handleDriveVehicle(ctx, id);
-  });
-
-  // پیاده شدن راننده
-  bot.callbackQuery(/^veh:leave:(\d+)$/, async (ctx) => {
-    const id = Number(ctx.match[1]);
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery veh:leave failed:", e);
-    }
-    await handleLeaveVehicle(ctx, id);
-  });
-
-  // لیست مسافران
-  bot.callbackQuery(/^veh:passengers:(\d+)$/, async (ctx) => {
-    const id = Number(ctx.match[1]);
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery veh:passengers failed:", e);
-    }
-    await showVehiclePassengers(ctx, id);
-  });
-
-  // دکمه «🚕 سوار می‌شوم» در پنل حمل‌ونقل
-  bot.callbackQuery("ride:menu", async (ctx) => {
-    if (ctx.chat?.type !== "private") {
-      try {
-        await ctx.answerCallbackQuery();
-      } catch (e) {
-        console.warn("answerCallbackQuery ride:menu (group) failed:", e);
-      }
-      return;
-    }
-
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery ride:menu (pv) failed:", e);
-    }
-
-    await showRideMenu(ctx);
-  });
-
-  // قفل/باز کردن ماشین برای مسافرها (از صفحه پشت فرمون)
-  bot.callbackQuery(/^veh:lock:(\d+)$/, async (ctx) => {
-    const vehicleId = Number(ctx.match[1]);
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery veh:lock failed:", e);
-    }
-    await toggleVehiclePassengerLock(ctx, vehicleId);
-  });
-
-  // انتخاب یک ماشین خاص برای سوار شدن
-  bot.callbackQuery(/^ride:req:(\d+)$/, async (ctx) => {
-    const vehicleId = Number(ctx.match[1]);
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery ride:req failed:", e);
-    }
-    await handleRideRequest(ctx, vehicleId);
-  });
-
-  // تصمیم راننده (قبول/رد)
-  bot.callbackQuery(/^ride:(approve|reject):(\d+):(\d+)$/, async (ctx) => {
-    const decision = ctx.match[1];
-    const vehicleId = Number(ctx.match[2]);
-    const passengerCharId = Number(ctx.match[3]);
-    const accepted = decision === "approve";
-
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (e) {
-      console.warn("answerCallbackQuery ride:decision failed:", e);
-    }
-
-    await handleRideDecision(ctx, vehicleId, passengerCharId, accepted);
-  });
-
-  // ⛽ سوخت‌گیری (فقط یک بار!)
-bot.callbackQuery("flux:fuel", async (ctx) => {
-  await ctx.answerCallbackQuery().catch(() => {});
-  if (ctx.chat?.type !== "private" || !ctx.from) return;
-
-  const { supabase } = ctx.services;
-
-  const { data: char } = await supabase
-    .from("characters")
-    .select("*")
-    .eq("tg_id", ctx.from.id)
-    .maybeSingle();
-
-  if (!char || !char.current_spot_id) {
-    await ctx.reply("مکانت مشخص نیست.");
-    return;
-  }
-
-  // باید کنار چاه باشی
-  const wellRes = await ctx.services.db.hasFluxWell(char.current_spot_id);
-  if (!wellRes.ok) console.error("flux:fuel hasFluxWell error:", wellRes.error);
-  if (!wellRes.ok || !wellRes.data) {
-    await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
-    return;
-  }
-
-  // باید سوار باشی و راننده باشی
-  if (!char.riding_vehicle_id) {
-    await ctx.reply("الان سوار هیچ وسیله‌ای نیستی.");
-    return;
-  }
-
-  const { data: veh } = await supabase
-    .from("vehicles")
-    .select("id, title, fuel_percent, current_driver_char_id, current_spot_id")
-    .eq("id", char.riding_vehicle_id)
-    .maybeSingle();
-
-  if (!veh) {
-    await ctx.reply("وسیله پیدا نشد.");
-    return;
-  }
-
-  if (veh.current_driver_char_id !== char.id) {
-    await ctx.reply("فقط راننده می‌تواند سوخت‌گیری کند.");
-    return;
-  }
-
-  if (veh.current_spot_id !== char.current_spot_id) {
-    await ctx.reply("برای سوخت‌گیری باید کنار چاه و کنار وسیله باشی.");
-    return;
-  }
-
-  const fuelNow = Number(veh.fuel_percent ?? 0);
-  const maxAdd = Math.max(0, 100 - fuelNow);
-
-  const kb = new InlineKeyboard()
-    .text("➕ 10٪", "fuel:add:10").row()
-    .text("➕ 25٪", "fuel:add:25").row()
-    .text("➕ 50٪", "fuel:add:50").row()
-    .text("✍️ دلخواه", "fuel:custom").row()
-    .text("✅ پر کردن کامل", "fuel:full").row()
-    .text("🔙 بازگشت", "veh:dash");
-
-  await ctx.reply(
-    `⛽ سوخت‌گیری برای «${veh.title ?? "وسیله"}»\n` +
-      `سوخت فعلی: ${fuelNow.toFixed(1)}٪\n` +
-      `حداکثر قابل شارژ: ${maxAdd.toFixed(1)}٪\n` +
-      `قیمت: هر 1٪ = 0.25 سولن`,
-    { reply_markup: kb }
-  );
-});
-
-  bot.callbackQuery(/^fuel:add:(\d+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery().catch(() => {});
-  const add = Number(ctx.match[1]);
-  await startFuelPurchaseFlow(ctx, add);
-});
-
-  bot.callbackQuery("fuel:full", async (ctx) => {
-  await ctx.answerCallbackQuery().catch(() => {});
-  await startFuelPurchaseFlow(ctx, "full");
-});
-
-  bot.callbackQuery("fuel:custom", async (ctx) => {
-  await ctx.answerCallbackQuery().catch(() => {});
-  if (ctx.chat?.type !== "private") return;
-
-  (ctx.session as any).fuel_custom_waiting = true;
-  await ctx.reply("چند درصد می‌خوای شارژ کنی؟ (عدد بین 1 تا 100)");
-});
-
-bot.on("message:text", async (ctx) => {
-  if (ctx.chat?.type !== "private") return;
-
-  if (!(ctx.session as any).fuel_custom_waiting) return;
-  (ctx.session as any).fuel_custom_waiting = false;
-
-  const n = Number(ctx.message.text.trim().replace(/[^\d.]/g, ""));
-  if (!Number.isFinite(n) || n <= 0 || n > 100) {
-    await ctx.reply("عدد معتبر نیست. یک عدد بین 1 تا 100 بفرست.");
-    return;
-  }
-
-  await startFuelPurchaseFlow(ctx, n);
-});
-
-
 }
 
