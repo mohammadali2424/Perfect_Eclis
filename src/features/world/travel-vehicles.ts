@@ -1363,6 +1363,96 @@ bot.callbackQuery("ride:menu", async (ctx) => {
   await showRideMenu(ctx);
 });
 
+    // ------------------------------
+  // 🛰 منوی حمل‌ونقل (aliasها)
+  // ------------------------------
+  bot.callbackQuery("trans:menu", async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    await showTransportMenu(ctx);
+  });
+
+  // بعضی منوها در travel.ts از ride:home می‌سازن، بعضی جاها مستقیم trans:menu
+  // این alias باعث می‌شه هیچ دکمه‌ای یتیم نمونه.
+  bot.callbackQuery("ride:home", async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    await showTransportMenu(ctx);
+  });
+
+  // ------------------------------
+  // 🚗 ماشین‌های من
+  // ------------------------------
+  bot.callbackQuery("veh:my", async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    await showMyVehiclesMenu(ctx);
+  });
+
+  bot.callbackQuery(/^veh:open:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const vehicleId = Number(ctx.match![1]);
+    await showVehicleDetail(ctx, vehicleId);
+  });
+
+  bot.callbackQuery(/^veh:passengers:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const vehicleId = Number(ctx.match![1]);
+    await showVehiclePassengers(ctx, vehicleId);
+  });
+
+  bot.callbackQuery(/^veh:drive:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const vehicleId = Number(ctx.match![1]);
+    await handleDriveVehicle(ctx, vehicleId);
+  });
+
+  bot.callbackQuery(/^veh:leave:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const vehicleId = Number(ctx.match![1]);
+    await handleLeaveVehicle(ctx, vehicleId);
+  });
+
+  bot.callbackQuery(/^veh:lock:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const vehicleId = Number(ctx.match![1]);
+    await toggleVehiclePassengerLock(ctx, vehicleId);
+  });
+
+  // ------------------------------
+  // 🚕 منوی مسافر شدن
+  // ------------------------------
+  bot.callbackQuery("ride:menu", async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    await showRideMenu(ctx);
+  });
+
+  bot.callbackQuery(/^ride:req:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const vehicleId = Number(ctx.match![1]);
+    await handleRideRequest(ctx, vehicleId);
+  });
+
+  bot.callbackQuery(/^ride:approve:(\d+):(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const vehicleId = Number(ctx.match![1]);
+    const passengerCharId = Number(ctx.match![2]);
+    await handleRideDecision(ctx, vehicleId, passengerCharId, true);
+  });
+
+  bot.callbackQuery(/^ride:reject:(\d+):(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const vehicleId = Number(ctx.match![1]);
+    const passengerCharId = Number(ctx.match![2]);
+    await handleRideDecision(ctx, vehicleId, passengerCharId, false);
+  });
+
+  // ------------------------------
+  // 📦 صندوق عقب (اگر هنوز منطقش را نداری، فعلاً یتیم نماند)
+  // ------------------------------
+  bot.callbackQuery("veh:trunk", async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    await ctx.reply("📦 صندوق عقب هنوز پیاده‌سازی نشده/غیرفعال است.");
+  });
+
+
 
 // پایان رجیستر فیچر وسایل نقلیه
 }
