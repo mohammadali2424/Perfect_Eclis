@@ -38,18 +38,19 @@ export function makeSupabaseDb(supabase: any): GameDb {
     },
 
     // ✅ جدول flux_wells شما region_id ندارد → فقط spot_id + enabled را چک می‌کنیم
-    async hasFluxWell(regionId: number, spotId: number): Promise<DbResult<boolean>> {
-      const { data, error } = await supabase
-        .from("flux_wells")
-        .select("spot_id, enabled, kind")
-        .eq("spot_id", spotId)
-        .eq("enabled", true)
-        .limit(1)
-        .maybeSingle();
+  async hasFluxWell(spotId: number): Promise<DbResult<boolean>> {
+  const { data, error } = await supabase
+    .from("flux_wells")
+    .select("spot_id, enabled, kind")
+    .eq("spot_id", spotId)
+    .eq("enabled", true)
+    // اگر چند نوع چاه داری، این خط رو نگه دار:
+    .eq("kind", "fuel")
+    .maybeSingle();
 
-      if (error) return { ok: false, error };
-      return { ok: true, data: !!data };
-    },
+  if (error) return { ok: false, error };
+  return { ok: true, data: !!data };
+},
 
     async createFluxWell(regionId: number, spotId: number): Promise<DbResult<null>> {
       // regionId در اسکیمای شما وجود ندارد، پس ذخیره‌اش نمی‌کنیم
