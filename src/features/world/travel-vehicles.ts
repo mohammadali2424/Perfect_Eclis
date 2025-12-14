@@ -1346,5 +1346,23 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
   );
 }
 
+  // پیاده شدن راننده
+bot.callbackQuery(/^veh:leave:(\d+)$/, async (ctx) => {
+  const id = Number(ctx.match[1]);
+  try { await ctx.answerCallbackQuery(); } catch {}
+  await handleLeaveVehicle(ctx, id);
+});
+
+// دکمه «🚕 سوار می‌شوم» در منوی حمل‌ونقل
+bot.callbackQuery("ride:menu", async (ctx) => {
+  if (ctx.chat?.type !== "private") {
+    try { await ctx.answerCallbackQuery(); } catch {}
+    return;
+  }
+  try { await ctx.answerCallbackQuery(); } catch {}
+  await showRideMenu(ctx);
+});
+
+
 // پایان رجیستر فیچر وسایل نقلیه
 }
