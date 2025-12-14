@@ -3,9 +3,7 @@ import { DbCharacter, DbVehicle } from "../types";
 
 export function makeSupabaseDb(supabase: any): GameDb {
   return {
-    async getCharacterByTgId(
-      tgId: number
-    ): Promise<DbResult<DbCharacter | null>> {
+    async getCharacterByTgId(tgId: number): Promise<DbResult<DbCharacter | null>> {
       const { data, error } = await supabase
         .from("characters")
         .select("*")
@@ -16,15 +14,8 @@ export function makeSupabaseDb(supabase: any): GameDb {
       return { ok: true, data };
     },
 
-    async updateCharacterById(
-      id: number,
-      patch: Partial<DbCharacter>
-    ): Promise<DbResult<null>> {
-      const { error } = await supabase
-        .from("characters")
-        .update(patch)
-        .eq("id", id);
-
+    async updateCharacterById(id: number, patch: Partial<DbCharacter>): Promise<DbResult<null>> {
+      const { error } = await supabase.from("characters").update(patch).eq("id", id);
       if (error) return { ok: false, error };
       return { ok: true, data: null };
     },
@@ -40,31 +31,19 @@ export function makeSupabaseDb(supabase: any): GameDb {
       return { ok: true, data };
     },
 
-    async updateVehicleById(
-      id: number,
-      patch: Partial<DbVehicle>
-    ): Promise<DbResult<null>> {
-      const { error } = await supabase
-        .from("vehicles")
-        .update(patch)
-        .eq("id", id);
-
+    async updateVehicleById(id: number, patch: Partial<DbVehicle>): Promise<DbResult<null>> {
+      const { error } = await supabase.from("vehicles").update(patch).eq("id", id);
       if (error) return { ok: false, error };
       return { ok: true, data: null };
     },
 
-    // ✅ با ساختار واقعی جدول flux_wells
-    // امضای تابع رو همون نگه می‌داریم که جای دیگه چیزی نشکنه
-    async hasFluxWell(
-      _regionId: number,
-      spotId: number
-    ): Promise<DbResult<boolean>> {
+    // ✅ جدول flux_wells شما region_id ندارد → فقط spot_id + enabled را چک می‌کنیم
+    async hasFluxWell(regionId: number, spotId: number): Promise<DbResult<boolean>> {
       const { data, error } = await supabase
         .from("flux_wells")
-        .select("spot_id")
+        .select("spot_id, enabled, kind")
         .eq("spot_id", spotId)
         .eq("enabled", true)
-        .eq("kind", "flux")
         .limit(1)
         .maybeSingle();
 
@@ -72,15 +51,12 @@ export function makeSupabaseDb(supabase: any): GameDb {
       return { ok: true, data: !!data };
     },
 
-    // ✅ ساخت چاه: region_id نداریم، id نداریم
-    async createFluxWell(
-      _regionId: number,
-      spotId: number
-    ): Promise<DbResult<null>> {
+    async createFluxWell(regionId: number, spotId: number): Promise<DbResult<null>> {
+      // regionId در اسکیمای شما وجود ندارد، پس ذخیره‌اش نمی‌کنیم
       const { error } = await supabase.from("flux_wells").insert({
         spot_id: spotId,
-        kind: "flux",
         enabled: true,
+        kind: "fuel",
       });
 
       if (error) return { ok: false, error };
