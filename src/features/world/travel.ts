@@ -1250,24 +1250,19 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
   // ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
   if (char.current_region_id && char.current_spot_id) {
 // ✅ چک چاه فلوکس بدون وابستگی به ستون‌های جدول
-let hasFluxWellHere = false;
-try {
-  hasFluxWellHere = await ctx.services.db.hasFluxWell(
-    char.current_region_id,
-    char.current_spot_id
-  );
-} catch (e) {
-  console.error("veh:dash hasFluxWell error:", e);
+let hasFlux = false;
+
+const wellRes = await ctx.services.db.hasFluxWell(
+  char.current_region_id,
+  char.current_spot_id
+);
+
+if (!wellRes.ok) {
+  console.error("showTravelHome hasFluxWell error:", wellRes.error);
+  hasFlux = false;
+} else {
+  hasFlux = !!wellRes.data;
 }
-
-
-    
-    if (wErr) console.error("veh:dash wells error:", wErr);
-
-    if (hasFluxWellHere) {
-  kb.text("⛽ سوخت‌گیری", "flux:fuel").row();
-}
-  }
 
   kb.text("🔙 بازگشت", "travel:home");
 
