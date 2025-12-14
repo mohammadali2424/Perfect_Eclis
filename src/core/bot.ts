@@ -61,6 +61,11 @@ bot.on("callback_query", async (ctx, next) => {
   return next();
 });
 
+bot.catch((err, ctx) => {
+  console.error("[BOT ERROR]", err);
+});
+
+
 // ===== رجیستر تمام فیچرها =====
 
 registerSecurityFeature(bot);
