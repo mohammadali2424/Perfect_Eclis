@@ -1265,7 +1265,7 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
   kb.text("🔙 بازگشت", "travel:home");
 
   await sendScreen(ctx, text, kb);
-  
+  }
 
 // --- رجیستر کردن فیچر سفر ---
 
