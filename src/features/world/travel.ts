@@ -1248,17 +1248,17 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
   ).row();
 
     // ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
- if (char.current_region_id && char.current_spot_id) {
-    const wellRes = await ctx.services.db.hasFluxWell(
-      char.current_region_id,
-      char.current_spot_id
-    );
+if (char.current_region_id && char.current_spot_id) {
+  const wellRes = await ctx.services.db.hasFluxWell(
+    char.current_region_id,
+    char.current_spot_id
+  );
 
-    if (!wellRes.ok) {
-      console.error("veh:dash hasFluxWell error:", wellRes.error);
-    } else if (wellRes.data) {
-      kb.text("⛽ سوخت‌گیری", "flux:fuel").row();
-    }
+  const hasFlux = wellRes.ok && !!wellRes.data;
+  if (!wellRes.ok) console.error("veh:dash hasFluxWell error:", wellRes.error);
+
+  if (hasFlux) kb.text("⛽ سوخت‌گیری", "flux:fuel").row();
+}
   }
 
   kb.text("🔙 بازگشت", "travel:home");
