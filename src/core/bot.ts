@@ -48,16 +48,11 @@ bot.on("callback_query", async (ctx, next) => {
   const data =
     "data" in ctx.callbackQuery ? (ctx.callbackQuery as any).data : undefined;
 
-  console.log("[CBQ]", {
-    from: ctx.from?.id,
-    chat: ctx.chat?.id,
-    data,
-  });
+  console.log("[CBQ]", { from: ctx.from?.id, chat: ctx.chat?.id, data });
 
-  // فقط برای اینکه spinner تلگرام نچرخه
+  // spinner رو جمع می‌کنه؛ مشکلی هم ایجاد نمی‌کنه
   try { await (ctx as any).answerCbQuery(); } catch {}
 
-  // ✅ خیلی مهم: اجازه بده بقیه handlerها هم اجرا بشن
   return next();
 });
 
