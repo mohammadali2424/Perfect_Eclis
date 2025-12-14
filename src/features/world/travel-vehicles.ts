@@ -1366,5 +1366,81 @@ bot.callbackQuery("flux:fuel", async (ctx) => {
     await handleRideDecision(ctx, vehicleId, passengerCharId, accepted);
   });
 
+   // ⛽ سوخت‌گیری
+  bot.callbackQuery("flux:fuel", async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
+    if (ctx.chat?.type !== "private" || !ctx.from) return;
+
+    const { supabase } = ctx.services;
+
+    const { data: char } = await supabase
+      .from("characters")
+      .select("*")
+      .eq("tg_id", ctx.from.id)
+      .maybeSingle();
+
+    if (!char || !char.current_region_id || !char.current_spot_id) {
+      await ctx.reply("مکانت مشخص نیست.");
+      return;
+    }
+
+    let hasWell = false;
+    try {
+      hasWell = await ctx.services.db.hasFluxWell(
+        char.current_region_id,
+        char.current_spot_id
+      );
+    } catch (e) {
+      console.error("flux:fuel hasFluxWell error:", e);
+    }
+
+    if (!hasWell) {
+      await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
+      return;
+    }
+
+    if (!char.riding_vehicle_id) {
+      await ctx.reply("الان سوار هیچ وسیله‌ای نیستی.");
+      return;
+    }
+
+    const { data: veh } = await supabase
+      .from("vehicles")
+      .select("id, title, current_driver_char_id, current_region_id, current_spot_id")
+      .eq("id", char.riding_vehicle_id)
+      .maybeSingle();
+
+    if (!veh) {
+      await ctx.reply("وسیله پیدا نشد.");
+      return;
+    }
+
+    if (veh.current_driver_char_id !== char.id) {
+      await ctx.reply("فقط راننده می‌تواند سوخت‌گیری کند.");
+      return;
+    }
+
+    if (
+      veh.current_region_id !== char.current_region_id ||
+      veh.current_spot_id !== char.current_spot_id
+    ) {
+      await ctx.reply("برای سوخت‌گیری باید کنار چاه فلوکس و کنار وسیله باشی.");
+      return;
+    }
+
+    const { error: updErr } = await supabase
+      .from("vehicles")
+      .update({ fuel_percent: 100 })
+      .eq("id", veh.id);
+
+    if (updErr) {
+      console.error("flux:fuel update error:", updErr);
+      await ctx.reply("در سوخت‌گیری مشکلی پیش آمد.");
+      return;
+    }
+
+    await ctx.reply(`⛽ باک «${veh.title ?? "وسیله"}» پر شد (100٪).`);
+  });
+
 }
 
