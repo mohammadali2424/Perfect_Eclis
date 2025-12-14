@@ -331,7 +331,6 @@ if (char.current_region_id && char.current_spot_id) {
   }
 }
 
-
   const kb = new InlineKeyboard();
 
   if (hasOwnedVehicles) {
