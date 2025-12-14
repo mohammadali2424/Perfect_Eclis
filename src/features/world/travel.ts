@@ -1248,7 +1248,7 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
   ).row();
 
     // ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
-  if (char.current_region_id && char.current_spot_id) {
+ if (char.current_region_id && char.current_spot_id) {
     const wellRes = await ctx.services.db.hasFluxWell(
       char.current_region_id,
       char.current_spot_id
@@ -1261,7 +1261,6 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
     }
   }
 
-  // دکمه برگشت همیشه باشد
   kb.text("🔙 بازگشت", "travel:home");
 
   await sendScreen(ctx, text, kb);
