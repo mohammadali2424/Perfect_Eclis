@@ -1272,7 +1272,8 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   // منوی وضعیت سفر
   bot.command("path", showTravelHome);
   bot.hears("🧭 مسیر های من", showTravelHome);
-   bot.callbackQuery("paths:open", async (ctx) => {
+
+  bot.callbackQuery("paths:open", async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
     if (!ctx.from || ctx.chat?.type !== "private") return;
 
@@ -1291,6 +1292,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await openPaths(ctx);
   });
 
+  // برگشت به صفحه وضعیت (پیاده / سوار)
   bot.callbackQuery("travel:home", async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
     await showTravelHome(ctx);
@@ -1315,7 +1317,6 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
 
     await openPaths(ctx);
   });
-
 
   // کلیک روی مسیر پیاده
   bot.callbackQuery(/go:(\d+)/, async (ctx) => {
@@ -1345,31 +1346,25 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await handleArrive(ctx);
   });
 
-   // لغو مسیر
+  // لغو مسیر
   bot.callbackQuery("travel:cancel", async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
     await handleCancelTravel(ctx);
   });
 
-    // برگشت به صفحه وضعیت (پیاده / سوار)
-  bot.callbackQuery("travel:home", async (ctx) => {
-    await ctx.answerCallbackQuery().catch(() => {});
-    await showTravelHome(ctx);
-  });
-
-
   // نقشه سریع من
   bot.command("mymap", showQuickMap);
   bot.hears("🗺 نقشه سریع من", showQuickMap);
   bot.callbackQuery("mymap:open", async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await ctx.answerCallbackQuery().catch(() => {});
     await showQuickMap(ctx);
   });
 
+  // صفحه پشت فرمون
   bot.callbackQuery("veh:dash", async (ctx) => {
-  await ctx.answerCallbackQuery().catch(() => {});
-  await showVehicleDash(ctx);
-});
+    await ctx.answerCallbackQuery().catch(() => {});
+    await showVehicleDash(ctx);
+  });
 
   bot.callbackQuery(/^veh:lockdash:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
@@ -1419,18 +1414,15 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
       return;
     }
 
-    // بعد از تغییر، دوباره صفحهٔ پشت فرمون را نشان بده
     await showVehicleDash(ctx);
   });
 
-
-  
   // ثبت پلیر در Region
   bot.command("regplayer", handleRegPlayer);
 
   // صفحه «روش‌های سوار شدن» از منوی پیاده
-   bot.callbackQuery("ride:home", async (ctx) => {
-    await ctx.answerCallbackQuery();
+  bot.callbackQuery("ride:home", async (ctx) => {
+    await ctx.answerCallbackQuery().catch(() => {});
     if (ctx.chat?.type !== "private" || !ctx.from) return;
 
     const { supabase } = ctx.services;
@@ -1458,8 +1450,7 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
 
     if (vehicles && vehicles.length > 0) {
       kb.text("🚗 سواری‌های من", "veh:my").row();
-      text +=
-        "• «سوار شدن» → روی وسیله‌های حاضر در این نقطه می‌توانی مسافر شوی.\n";
+      text += "• «سوار شدن» → روی وسیله‌های حاضر در این نقطه می‌توانی مسافر شوی.\n";
       text +=
         "• «سواری‌های من» → وسیله‌های خودت را می‌بینی و اگر در همین نقطه باشند می‌توانی راننده‌ی آن‌ها شوی.\n";
     } else {
@@ -1468,7 +1459,6 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     }
 
     kb.text("🔙 بازگشت", "travel:home");
-
     await sendScreen(ctx, text, kb);
   });
 }
