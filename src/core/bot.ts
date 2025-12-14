@@ -83,12 +83,17 @@ registerUiFeature(bot);
 registerFluxBuilderFeature(bot);
 registerFuelAdminFeature(bot);
 
-bot.action(/.*/s, async (ctx) => {
-  const data = (ctx.callbackQuery as any)?.data;
-  console.log("[UNHANDLED ACTION]", data);
+bot.callbackQuery(/.*/s, async (ctx) => {
+  const data = ctx.callbackQuery.data;
+  console.log("[UNHANDLED CBQ]", data);
 
+  // برای دیباگ خوبه؛ بعداً حذفش می‌کنیم
   try { await ctx.reply(`این دکمه هندلر ندارد: ${data}`); } catch {}
+
+  // خیلی مهم: دوباره جواب بده تا تلگرام گیر نکنه
+  try { await ctx.answerCallbackQuery(); } catch {}
 });
+
 
 
 // /start ساده برای راهنمای اولیه
