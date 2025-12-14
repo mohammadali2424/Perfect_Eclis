@@ -222,7 +222,7 @@ async function showTravelHome(ctx: MyContext): Promise<void> {
   kb.text("🧭 مسیرهای پیش‌رو", "paths:list").row();
   kb.text("🚕 سوار می‌شوم", "ride:home");
 
-  await sendScreen(ctx, text, kb);
+   await sendScreen(ctx, text, kb);
 }
 
 
