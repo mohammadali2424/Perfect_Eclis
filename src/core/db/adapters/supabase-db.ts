@@ -31,16 +31,19 @@ export function makeSupabaseDb(supabase: any): GameDb {
       return { ok: true, data: null };
     },
 
-    async hasFluxWell(regionId: number, spotId: number): Promise<DbResult<boolean>> {
-      const { data, error } = await supabase
-        .from("flux_wells")
-        .select("id")
-        .eq("region_id", regionId)
-        .eq("spot_id", spotId)
-        .limit(1);
-      if (error) return { ok: false, error };
-      return { ok: true, data: !!(data && data.length > 0) };
-    },
+   export async function hasFluxWell(regionId: number, spotId: number) {
+  const { supabase } = ...;
+
+  const { data, error } = await supabase
+    .from("flux_wells")
+    .select("region_id") // ✅ این ستون هست
+    .eq("region_id", regionId)
+    .eq("spot_id", spotId)
+    .maybeSingle();
+
+  if (error) return { ok: false as const, error };
+  return { ok: true as const, data: !!data };
+}
 
     async createFluxWell(regionId: number, spotId: number): Promise<DbResult<null>> {
       const { error } = await supabase.from("flux_wells").insert({ region_id: regionId, spot_id: spotId });
