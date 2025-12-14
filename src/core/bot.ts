@@ -54,8 +54,8 @@ bot.on("callback_query", async (ctx) => {
     data,
   });
 
-  // خیلی مهم: برای اینکه تلگرام فکر نکنه بات هنگ کرده
-  try { await ctx.answerCbQuery(); } catch {}
+  // TypeScript-friendly:
+  try { await (ctx as any).answerCbQuery(); } catch {}
 });
 
 // ===== رجیستر تمام فیچرها =====
