@@ -1259,7 +1259,6 @@ if (char.current_region_id && char.current_spot_id) {
 
   if (hasFlux) kb.text("⛽ سوخت‌گیری", "flux:fuel").row();
 }
-  }
 
   kb.text("🔙 بازگشت", "travel:home");
 
