@@ -1280,52 +1280,36 @@ bot.callbackQuery("flux:fuel", async (ctx) => {
 
   const { supabase } = ctx.services;
 
-  // کاراکتر
-  const { data: char, error: cErr } = await supabase
+  const { data: char } = await supabase
     .from("characters")
     .select("*")
     .eq("tg_id", ctx.from.id)
     .maybeSingle();
 
-  if (cErr) console.error("flux:fuel char error:", cErr);
-
-  if (!char || !char.current_region_id || !char.current_spot_id) {
+  if (!char || !char.current_spot_id) {
     await ctx.reply("مکانت مشخص نیست.");
     return;
   }
 
-  // ✅ چاه فلوکس هست؟
-  const wellRes = await ctx.services.db.hasFluxWell(
-    char.current_region_id,
-    char.current_spot_id
-  );
-
-  if (!wellRes.ok) {
-    console.error("flux:fuel hasFluxWell error:", wellRes.error);
-    await ctx.reply("در بررسی چاه فلوکس مشکلی پیش آمد.");
-    return;
-  }
-
-  if (!wellRes.data) {
+  // باید کنار چاه باشی
+  const wellRes = await ctx.services.db.hasFluxWell(char.current_spot_id);
+  if (!wellRes.ok) console.error("flux:fuel hasFluxWell error:", wellRes.error);
+  if (!wellRes.ok || !wellRes.data) {
     await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
     return;
   }
 
-  // باید سوار وسیله باشی
+  // باید سوار باشی و راننده باشی
   if (!char.riding_vehicle_id) {
     await ctx.reply("الان سوار هیچ وسیله‌ای نیستی.");
     return;
   }
 
-  const { data: veh, error: vErr } = await supabase
+  const { data: veh } = await supabase
     .from("vehicles")
-    .select(
-      "id, title, current_driver_char_id, current_region_id, current_spot_id"
-    )
+    .select("id, title, fuel_percent, current_driver_char_id, current_spot_id")
     .eq("id", char.riding_vehicle_id)
     .maybeSingle();
-
-  if (vErr) console.error("flux:fuel vehicle error:", vErr);
 
   if (!veh) {
     await ctx.reply("وسیله پیدا نشد.");
@@ -1337,28 +1321,65 @@ bot.callbackQuery("flux:fuel", async (ctx) => {
     return;
   }
 
-  if (
-    veh.current_region_id !== char.current_region_id ||
-    veh.current_spot_id !== char.current_spot_id
-  ) {
-    await ctx.reply("برای سوخت‌گیری باید کنار چاه فلوکس و کنار وسیله باشی.");
+  if (veh.current_spot_id !== char.current_spot_id) {
+    await ctx.reply("برای سوخت‌گیری باید کنار چاه و کنار وسیله باشی.");
     return;
   }
 
-  // پر کردن باک
-  const { error: updErr } = await supabase
-    .from("vehicles")
-    .update({ fuel_percent: 100 })
-    .eq("id", veh.id);
+  const fuelNow = Number(veh.fuel_percent ?? 0);
+  const maxAdd = Math.max(0, 100 - fuelNow);
 
-  if (updErr) {
-    console.error("flux:fuel update error:", updErr);
-    await ctx.reply("در سوخت‌گیری مشکلی پیش آمد.");
-    return;
-  }
+  const kb = new InlineKeyboard()
+    .text("➕ 10٪", "fuel:add:10").row()
+    .text("➕ 25٪", "fuel:add:25").row()
+    .text("➕ 50٪", "fuel:add:50").row()
+    .text("✍️ دلخواه", "fuel:custom").row()
+    .text("✅ پر کردن کامل", "fuel:full").row()
+    .text("🔙 بازگشت", "veh:dash");
 
-  await ctx.reply(`⛽ باک «${veh.title ?? "وسیله"}» پر شد (100٪).`);
+  await ctx.reply(
+    `⛽ سوخت‌گیری برای «${veh.title ?? "وسیله"}»\n` +
+      `سوخت فعلی: ${fuelNow.toFixed(1)}٪\n` +
+      `حداکثر قابل شارژ: ${maxAdd.toFixed(1)}٪\n` +
+      `قیمت: هر 1٪ = 0.25 سولن`,
+    { reply_markup: kb }
+  );
 });
+
+  bot.callbackQuery(/^fuel:add:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  const add = Number(ctx.match[1]);
+  await startFuelPurchaseFlow(ctx, add);
+});
+
+  bot.callbackQuery("fuel:full", async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  await startFuelPurchaseFlow(ctx, "full");
+});
+
+  bot.callbackQuery("fuel:custom", async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (ctx.chat?.type !== "private") return;
+
+  (ctx.session as any).fuel_custom_waiting = true;
+  await ctx.reply("چند درصد می‌خوای شارژ کنی؟ (عدد بین 1 تا 100)");
+});
+
+bot.on("message:text", async (ctx) => {
+  if (ctx.chat?.type !== "private") return;
+
+  if (!(ctx.session as any).fuel_custom_waiting) return;
+  (ctx.session as any).fuel_custom_waiting = false;
+
+  const n = Number(ctx.message.text.trim().replace(/[^\d.]/g, ""));
+  if (!Number.isFinite(n) || n <= 0 || n > 100) {
+    await ctx.reply("عدد معتبر نیست. یک عدد بین 1 تا 100 بفرست.");
+    return;
+  }
+
+  await startFuelPurchaseFlow(ctx, n);
+});
+
 
 }
 
