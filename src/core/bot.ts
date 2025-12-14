@@ -44,6 +44,20 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
+bot.on("callback_query", async (ctx) => {
+  const data =
+    "data" in ctx.callbackQuery ? (ctx.callbackQuery as any).data : undefined;
+
+  console.log("[CBQ]", {
+    from: ctx.from?.id,
+    chat: ctx.chat?.id,
+    data,
+  });
+
+  // خیلی مهم: برای اینکه تلگرام فکر نکنه بات هنگ کرده
+  try { await ctx.answerCbQuery(); } catch {}
+});
+
 // ===== رجیستر تمام فیچرها =====
 
 registerSecurityFeature(bot);
