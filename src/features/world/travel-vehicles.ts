@@ -309,17 +309,17 @@ export async function showTransportMenu(ctx: MyContext) {
 
   const hasOwnedVehicles = !!vehicles && vehicles.length > 0;
 
-  let canBoard = false;
-  let hasFlux = false;
+let canBoard = false;
+let hasFlux = false;
 
- if (char.current_region_id && char.current_spot_id) {
+if (char.current_region_id && char.current_spot_id) {
   canBoard = await hasBoardableVehicleHere(
     ctx,
     char.current_region_id,
     char.current_spot_id
   );
 
-  // ✅ جایگزین امن
+  // ✅ فقط همین! (دیگه flux_wells رو دستی query نکن)
   try {
     hasFlux = await ctx.services.db.hasFluxWell(
       char.current_region_id,
@@ -327,18 +327,10 @@ export async function showTransportMenu(ctx: MyContext) {
     );
   } catch (e) {
     console.error("showTransportMenu hasFluxWell error:", e);
+    hasFlux = false;
   }
 }
 
-    const { data: wells, error: wellErr } = await supabase
-      .from("flux_wells")
-      .select("id")
-      .eq("region_id", char.current_region_id)
-      .eq("spot_id", char.current_spot_id);
-
-    if (wellErr) console.error("showTransportMenu wells error:", wellErr);
-    hasFlux = !!wells && wells.length > 0;
-  }
 
   const kb = new InlineKeyboard();
 
