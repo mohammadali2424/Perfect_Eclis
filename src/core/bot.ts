@@ -44,7 +44,7 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
-bot.on("callback_query", async (ctx) => {
+bot.on("callback_query", async (ctx, next) => {
   const data =
     "data" in ctx.callbackQuery ? (ctx.callbackQuery as any).data : undefined;
 
@@ -54,8 +54,11 @@ bot.on("callback_query", async (ctx) => {
     data,
   });
 
-  // TypeScript-friendly:
+  // فقط برای اینکه spinner تلگرام نچرخه
   try { await (ctx as any).answerCbQuery(); } catch {}
+
+  // ✅ خیلی مهم: اجازه بده بقیه handlerها هم اجرا بشن
+  return next();
 });
 
 // ===== رجیستر تمام فیچرها =====
