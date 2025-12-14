@@ -44,17 +44,21 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
-bot.on("callback_query", async (ctx, next) => {
-  const data =
-    "data" in ctx.callbackQuery ? (ctx.callbackQuery as any).data : undefined;
+bot.on("callback_query:data", async (ctx, next) => {
+  const data = ctx.callbackQuery.data;
 
-  console.log("[CBQ]", { from: ctx.from?.id, chat: ctx.chat?.id, data });
+  console.log("[CBQ]", {
+    from: ctx.from?.id,
+    chat: ctx.chat?.id,
+    data,
+  });
 
-  // spinner رو جمع می‌کنه؛ مشکلی هم ایجاد نمی‌کنه
-  try { await (ctx as any).answerCbQuery(); } catch {}
+  // spinner تلگرام رو جمع کن
+  try { await ctx.answerCallbackQuery(); } catch {}
 
   return next();
 });
+
 
 bot.catch((err, ctx) => {
   console.error("[BOT ERROR]", err);
