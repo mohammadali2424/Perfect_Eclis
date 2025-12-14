@@ -1,6 +1,7 @@
 // src/features/world/travel-vehicles.ts
 import { Bot, InlineKeyboard } from "grammy";
 import { MyContext } from "../../core/types";
+import { getBankChatId } from "../economy/vehicle-shop";
 import { hasBoardableVehicleHere, getVehicleLoad } from "./vehicle-helpers";
 
 // نتیجه‌ی افزودن مسافر به وسیله
