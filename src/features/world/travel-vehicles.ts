@@ -1181,92 +1181,6 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     }
     await showVehicleDetail(ctx, id);
   });
-
-  // ⛽ سوخت‌گیری
-bot.callbackQuery("flux:fuel", async (ctx) => {
-  await ctx.answerCallbackQuery().catch(() => {});
-  if (ctx.chat?.type !== "private" || !ctx.from) return;
-
-  const { supabase } = ctx.services;
-
-  // کاراکتر
-  const { data: char, error: cErr } = await supabase
-    .from("characters")
-    .select("*")
-    .eq("tg_id", ctx.from.id)
-    .maybeSingle();
-
-  if (cErr) console.error("flux:fuel char error:", cErr);
-
-  if (!char || !char.current_region_id || !char.current_spot_id) {
-    await ctx.reply("مکانت مشخص نیست.");
-    return;
-  }
-
-  // ✅ چاه فلوکس هست؟
-  let hasWell = false;
-  try {
-    hasWell = await ctx.services.db.hasFluxWell(
-      char.current_region_id,
-      char.current_spot_id
-    );
-  } catch (e) {
-    console.error("flux:fuel hasFluxWell error:", e);
-  }
-
-  if (!hasWell) {
-    await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
-    return;
-  }
-
-  // باید سوار وسیله باشی
-  if (!char.riding_vehicle_id) {
-    await ctx.reply("الان سوار هیچ وسیله‌ای نیستی.");
-    return;
-  }
-
-  const { data: veh, error: vErr } = await supabase
-    .from("vehicles")
-    .select("id, title, fuel_percent, current_driver_char_id, current_region_id, current_spot_id")
-    .eq("id", char.riding_vehicle_id)
-    .maybeSingle();
-
-  if (vErr) console.error("flux:fuel vehicle error:", vErr);
-
-  if (!veh) {
-    await ctx.reply("وسیله پیدا نشد.");
-    return;
-  }
-
-  if (veh.current_driver_char_id !== char.id) {
-    await ctx.reply("فقط راننده می‌تواند سوخت‌گیری کند.");
-    return;
-  }
-
-  if (
-    veh.current_region_id !== char.current_region_id ||
-    veh.current_spot_id !== char.current_spot_id
-  ) {
-    await ctx.reply("برای سوخت‌گیری باید کنار چاه فلوکس و کنار وسیله باشی.");
-    return;
-  }
-
-  // پر کردن باک
-  const { error: updErr } = await supabase
-    .from("vehicles")
-    .update({ fuel_percent: 100 })
-    .eq("id", veh.id);
-
-  if (updErr) {
-    console.error("flux:fuel update error:", updErr);
-    await ctx.reply("در سوخت‌گیری مشکلی پیش آمد.");
-    return;
-  }
-
-  await ctx.reply(`⛽ باک «${veh.title ?? "وسیله"}» پر شد (100٪).`);
-});
-
-
   // سوار شدن راننده
   bot.callbackQuery(/^veh:drive:(\d+)$/, async (ctx) => {
     const id = Number(ctx.match[1]);
@@ -1358,81 +1272,92 @@ bot.callbackQuery("flux:fuel", async (ctx) => {
     await handleRideDecision(ctx, vehicleId, passengerCharId, accepted);
   });
 
-   // ⛽ سوخت‌گیری
-  bot.callbackQuery("flux:fuel", async (ctx) => {
-    await ctx.answerCallbackQuery().catch(() => {});
-    if (ctx.chat?.type !== "private" || !ctx.from) return;
+  // ⛽ سوخت‌گیری (فقط یک بار!)
+bot.callbackQuery("flux:fuel", async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (ctx.chat?.type !== "private" || !ctx.from) return;
 
-    const { supabase } = ctx.services;
+  const { supabase } = ctx.services;
 
-    const { data: char } = await supabase
-      .from("characters")
-      .select("*")
-      .eq("tg_id", ctx.from.id)
-      .maybeSingle();
+  // کاراکتر
+  const { data: char, error: cErr } = await supabase
+    .from("characters")
+    .select("*")
+    .eq("tg_id", ctx.from.id)
+    .maybeSingle();
 
-    if (!char || !char.current_region_id || !char.current_spot_id) {
-      await ctx.reply("مکانت مشخص نیست.");
-      return;
-    }
+  if (cErr) console.error("flux:fuel char error:", cErr);
 
-    let hasWell = false;
-    try {
-      hasWell = await ctx.services.db.hasFluxWell(
-        char.current_region_id,
-        char.current_spot_id
-      );
-    } catch (e) {
-      console.error("flux:fuel hasFluxWell error:", e);
-    }
+  if (!char || !char.current_region_id || !char.current_spot_id) {
+    await ctx.reply("مکانت مشخص نیست.");
+    return;
+  }
 
-    if (!hasWell) {
-      await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
-      return;
-    }
+  // ✅ چاه فلوکس هست؟
+  const wellRes = await ctx.services.db.hasFluxWell(
+    char.current_region_id,
+    char.current_spot_id
+  );
 
-    if (!char.riding_vehicle_id) {
-      await ctx.reply("الان سوار هیچ وسیله‌ای نیستی.");
-      return;
-    }
+  if (!wellRes.ok) {
+    console.error("flux:fuel hasFluxWell error:", wellRes.error);
+    await ctx.reply("در بررسی چاه فلوکس مشکلی پیش آمد.");
+    return;
+  }
 
-    const { data: veh } = await supabase
-      .from("vehicles")
-      .select("id, title, current_driver_char_id, current_region_id, current_spot_id")
-      .eq("id", char.riding_vehicle_id)
-      .maybeSingle();
+  if (!wellRes.data) {
+    await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
+    return;
+  }
 
-    if (!veh) {
-      await ctx.reply("وسیله پیدا نشد.");
-      return;
-    }
+  // باید سوار وسیله باشی
+  if (!char.riding_vehicle_id) {
+    await ctx.reply("الان سوار هیچ وسیله‌ای نیستی.");
+    return;
+  }
 
-    if (veh.current_driver_char_id !== char.id) {
-      await ctx.reply("فقط راننده می‌تواند سوخت‌گیری کند.");
-      return;
-    }
+  const { data: veh, error: vErr } = await supabase
+    .from("vehicles")
+    .select(
+      "id, title, current_driver_char_id, current_region_id, current_spot_id"
+    )
+    .eq("id", char.riding_vehicle_id)
+    .maybeSingle();
 
-    if (
-      veh.current_region_id !== char.current_region_id ||
-      veh.current_spot_id !== char.current_spot_id
-    ) {
-      await ctx.reply("برای سوخت‌گیری باید کنار چاه فلوکس و کنار وسیله باشی.");
-      return;
-    }
+  if (vErr) console.error("flux:fuel vehicle error:", vErr);
 
-    const { error: updErr } = await supabase
-      .from("vehicles")
-      .update({ fuel_percent: 100 })
-      .eq("id", veh.id);
+  if (!veh) {
+    await ctx.reply("وسیله پیدا نشد.");
+    return;
+  }
 
-    if (updErr) {
-      console.error("flux:fuel update error:", updErr);
-      await ctx.reply("در سوخت‌گیری مشکلی پیش آمد.");
-      return;
-    }
+  if (veh.current_driver_char_id !== char.id) {
+    await ctx.reply("فقط راننده می‌تواند سوخت‌گیری کند.");
+    return;
+  }
 
-    await ctx.reply(`⛽ باک «${veh.title ?? "وسیله"}» پر شد (100٪).`);
-  });
+  if (
+    veh.current_region_id !== char.current_region_id ||
+    veh.current_spot_id !== char.current_spot_id
+  ) {
+    await ctx.reply("برای سوخت‌گیری باید کنار چاه فلوکس و کنار وسیله باشی.");
+    return;
+  }
+
+  // پر کردن باک
+  const { error: updErr } = await supabase
+    .from("vehicles")
+    .update({ fuel_percent: 100 })
+    .eq("id", veh.id);
+
+  if (updErr) {
+    console.error("flux:fuel update error:", updErr);
+    await ctx.reply("در سوخت‌گیری مشکلی پیش آمد.");
+    return;
+  }
+
+  await ctx.reply(`⛽ باک «${veh.title ?? "وسیله"}» پر شد (100٪).`);
+});
 
 }
 
