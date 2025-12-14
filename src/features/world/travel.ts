@@ -1463,4 +1463,3 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
   });
 }
 
-}
