@@ -319,15 +319,16 @@ if (char.current_region_id && char.current_spot_id) {
     char.current_spot_id
   );
 
-  // ✅ فقط همین! (دیگه flux_wells رو دستی query نکن)
-  try {
-    hasFlux = await ctx.services.db.hasFluxWell(
-      char.current_region_id,
-      char.current_spot_id
-    );
-  } catch (e) {
-    console.error("showTransportMenu hasFluxWell error:", e);
+  const wellRes = await ctx.services.db.hasFluxWell(
+    char.current_region_id,
+    char.current_spot_id
+  );
+
+  if (!wellRes.ok) {
+    console.error("showTransportMenu hasFluxWell error:", wellRes.error);
     hasFlux = false;
+  } else {
+    hasFlux = !!wellRes.data;
   }
 }
 
