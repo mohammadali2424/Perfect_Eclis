@@ -60,9 +60,13 @@ bot.on("callback_query:data", async (ctx, next) => {
 });
 
 
-bot.catch((err, ctx) => {
-  console.error("[BOT ERROR]", err);
+bot.catch((err) => {
+  console.error("[BOT ERROR]", err.error);
+  try {
+    console.error("[BOT ERROR ctx update]", JSON.stringify(err.ctx.update));
+  } catch {}
 });
+
 
 
 // ===== رجیستر تمام فیچرها =====
