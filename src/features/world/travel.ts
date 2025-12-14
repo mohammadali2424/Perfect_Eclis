@@ -1247,26 +1247,25 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
     `veh:lockdash:${vehicle.id}`
   ).row();
 
-  // ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
+    // ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
   if (char.current_region_id && char.current_spot_id) {
-// ✅ چک چاه فلوکس بدون وابستگی به ستون‌های جدول
-let hasFlux = false;
+    const wellRes = await ctx.services.db.hasFluxWell(
+      char.current_region_id,
+      char.current_spot_id
+    );
 
-const wellRes = await ctx.services.db.hasFluxWell(
-  char.current_region_id,
-  char.current_spot_id
-);
+    if (!wellRes.ok) {
+      console.error("veh:dash hasFluxWell error:", wellRes.error);
+    } else if (wellRes.data) {
+      kb.text("⛽ سوخت‌گیری", "flux:fuel").row();
+    }
+  }
 
-if (!wellRes.ok) {
-  console.error("showTravelHome hasFluxWell error:", wellRes.error);
-  hasFlux = false;
-} else {
-  hasFlux = !!wellRes.data;
-}
-
+  // دکمه برگشت همیشه باشد
   kb.text("🔙 بازگشت", "travel:home");
 
-}
+  await sendScreen(ctx, text, kb);
+  
 
 // --- رجیستر کردن فیچر سفر ---
 
