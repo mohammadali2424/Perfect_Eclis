@@ -1,4 +1,3 @@
-// src/core/db/adapters/supabase-db.ts
 import { GameDb, DbResult } from "../repo";
 import { DbCharacter, DbVehicle } from "../types";
 
@@ -54,26 +53,35 @@ export function makeSupabaseDb(supabase: any): GameDb {
       return { ok: true, data: null };
     },
 
-    // ✅ این همون hasFluxWell درست است (بدون select("id"))
-  async hasFluxWell(regionId: number, spotId: number): Promise<DbResult<boolean>> {
-  const { data, error } = await supabase
-    .from("flux_wells")
-    .select("region_id")
-    .eq("region_id", regionId)
-    .eq("spot_id", spotId)
-    .limit(1);
+    // ✅ با ساختار واقعی جدول flux_wells
+    // امضای تابع رو همون نگه می‌داریم که جای دیگه چیزی نشکنه
+    async hasFluxWell(
+      _regionId: number,
+      spotId: number
+    ): Promise<DbResult<boolean>> {
+      const { data, error } = await supabase
+        .from("flux_wells")
+        .select("spot_id")
+        .eq("spot_id", spotId)
+        .eq("enabled", true)
+        .eq("kind", "flux")
+        .limit(1)
+        .maybeSingle();
 
-  if (error) return { ok: false, error };
-  return { ok: true, data: !!data && data.length > 0 };
-},
+      if (error) return { ok: false, error };
+      return { ok: true, data: !!data };
+    },
 
+    // ✅ ساخت چاه: region_id نداریم، id نداریم
     async createFluxWell(
-      regionId: number,
+      _regionId: number,
       spotId: number
     ): Promise<DbResult<null>> {
-      const { error } = await supabase
-        .from("flux_wells")
-        .insert({ region_id: regionId, spot_id: spotId });
+      const { error } = await supabase.from("flux_wells").insert({
+        spot_id: spotId,
+        kind: "flux",
+        enabled: true,
+      });
 
       if (error) return { ok: false, error };
       return { ok: true, data: null };
