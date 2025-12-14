@@ -1169,7 +1169,10 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     }
 
     // چاه فلوکس
-    const wellRes = await ctx.services.db.hasFluxWell(char.current_spot_id);
+  const wellRes = await ctx.services.db.hasFluxWell(
+  char.current_region_id,
+  char.current_spot_id
+);
     if (!wellRes.ok || !wellRes.data) {
       await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
       return;
