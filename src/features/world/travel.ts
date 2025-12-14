@@ -117,7 +117,7 @@ async function showTravelInProgress(ctx: MyContext, char: any) {
     .text("❌ لغو مسیر", "travel:cancel");
 
   await sendScreen(ctx, text, kb);
-}
+
 
 
 // --- منوی fallback (فقط یک دکمه برگشت) ---
