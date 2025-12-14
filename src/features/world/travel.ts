@@ -1461,4 +1461,3 @@ export function registerTravelFeature(bot: Bot<MyContext>): void {
     await sendScreen(ctx, text, kb);
   });
 }
-
