@@ -117,8 +117,7 @@ async function showTravelInProgress(ctx: MyContext, char: any) {
     .text("❌ لغو مسیر", "travel:cancel");
 
   await sendScreen(ctx, text, kb);
-
-
+}
 
 // --- منوی fallback (فقط یک دکمه برگشت) ---
 
@@ -181,9 +180,7 @@ async function showTravelHome(ctx: MyContext): Promise<void> {
   if (char.riding_vehicle_id) {
     const { data: vehicle, error: vehErr } = await supabase
       .from("vehicles")
-      .select(
-        "id, title, current_region_id, current_spot_id, current_driver_char_id"
-      )
+      .select("id, title, current_region_id, current_spot_id, current_driver_char_id")
       .eq("id", char.riding_vehicle_id)
       .maybeSingle();
 
@@ -222,9 +219,8 @@ async function showTravelHome(ctx: MyContext): Promise<void> {
   kb.text("🧭 مسیرهای پیش‌رو", "paths:list").row();
   kb.text("🚕 سوار می‌شوم", "ride:home");
 
-   await sendScreen(ctx, text, kb);
+  await sendScreen(ctx, text, kb);
 }
-
 
 // --- نمایش مسیرهای قابل حرکت از Spot فعلی ---
 
