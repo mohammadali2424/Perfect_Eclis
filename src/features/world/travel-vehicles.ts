@@ -1145,6 +1145,24 @@ export async function moveVehicleWithPassengers(
   }
 }
 
+async function hasFluxHere(ctx: MyContext, regionId: number | null, spotId: number | null) {
+  if (!regionId || !spotId) return false;
+
+  // تلاش با (region, spot)
+  try {
+    const r = await (ctx.services.db as any).hasFluxWell(regionId, spotId);
+    if (r?.ok) return !!r.data;
+  } catch {}
+
+  // تلاش با (spot)
+  try {
+    const r = await (ctx.services.db as any).hasFluxWell(spotId);
+    if (r?.ok) return !!r.data;
+  } catch {}
+
+  return false;
+}
+
 
 /** رجیسترکردن همهٔ این فیچرها روی بات */
 export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
