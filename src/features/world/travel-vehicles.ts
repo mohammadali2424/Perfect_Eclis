@@ -321,10 +321,10 @@ if (char.current_region_id && char.current_spot_id) {
     char.current_spot_id
   );
 
-  const wellRes = await ctx.services.db.hasFluxWell(
-    char.current_region_id,
-    char.current_spot_id
-  );
+ const wellRes = await ctx.services.db.hasFluxWell(
+  char.current_spot_id
+);
+
 
   if (!wellRes.ok) {
     console.error("showTransportMenu hasFluxWell error:", wellRes.error);
