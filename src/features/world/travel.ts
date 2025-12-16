@@ -813,9 +813,12 @@ console.log("[DASH] wellRes", wellRes);
   }
 
   // ⛽ دکمه سوخت‌گیری فقط وقتی چاه فلوکس در همین spot باشد
-  const hasFlux = await hasFluxHere(ctx, char.current_region_id, char.current_spot_id);
-  console.log("[DASH] flux", { spot: char.current_spot_id, hasFlux });
-  if (hasFlux) kb.text("⛽ سوخت‌گیری", "flux:fuel").row();
+const wellRes = await hasFuelWellHere(ctx, char.current_region_id, char.current_spot_id);
+const hasFlux = wellRes.ok && !!wellRes.data;
+
+console.log("[DASH] flux", { spot: char.current_spot_id, hasFlux, wellRes });
+
+if (hasFlux) kb.text("⛽ سوخت‌گیری", "flux:fuel").row();
 
   kb.text("🔙 بازگشت", "travel:home");
 
