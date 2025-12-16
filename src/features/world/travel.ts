@@ -35,29 +35,6 @@ async function sendScreen(
 
 // --- helper: گرفتن / ساختن کاراکتر بر اساس tg_id ---
 
-async function hasFluxHere(
-  ctx: MyContext,
-  regionId: number | null,
-  spotId: number | null
-): Promise<boolean> {
-  if (!spotId) return false;
-
-  // حالت (region, spot)
-  try {
-    const r = await (ctx.services.db as any).hasFluxWell(regionId, spotId);
-    if (r?.ok) return !!r.data;
-  } catch {}
-
-  // حالت (spot)
-  try {
-    const r = await (ctx.services.db as any).hasFluxWell(spotId);
-    if (r?.ok) return !!r.data;
-  } catch {}
-
-  return false;
-}
-
-
 async function ensureCharacterFor(
   ctx: MyContext,
   tgId: number
