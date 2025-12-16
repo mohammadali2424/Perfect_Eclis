@@ -1100,11 +1100,12 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    const hasFlux = await hasFluxHere(ctx, char.current_region_id ?? null, char.current_spot_id ?? null);
-    if (!hasFlux) {
-      await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
-      return;
-    }
+   const wellRes = await ctx.services.db.hasFluxWell(char.current_spot_id, "normal");
+if (!wellRes.ok || !wellRes.data) {
+  await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
+  return;
+}
+
 
     if (!char.riding_vehicle_id) {
       await ctx.reply("الان سوار هیچ وسیله‌ای نیستی.");
