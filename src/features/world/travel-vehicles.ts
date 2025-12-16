@@ -1189,13 +1189,14 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
     }
 
     // چاه فلوکس
- ctx.services.db.hasFluxWell(char.current_spot_id)
+// چاه فلوکس
+const wellRes = await ctx.services.db.hasFluxWell(char.current_spot_id);
 
-);
-    if (!wellRes.ok || !wellRes.data) {
-      await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
-      return;
-    }
+if (!wellRes.ok || !wellRes.data) {
+  await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
+  return;
+}
+
 
     // باید راننده باشد
     if (!char.riding_vehicle_id) {
