@@ -44,23 +44,23 @@ export function makeSupabaseDb(supabase: any): GameDb {
     },
 
     // ✅ فقط اگر (spot_id=...) و enabled=true و kind='fuel' باشد
-    async hasFluxWell(spotId: number): Promise<DbResult<boolean>> {
-      try {
-        const { data, error } = await supabase
-          .from("flux_wells")
-          .select("id")
-          .eq("spot_id", spotId)
-          .eq("enabled", true)
-          .eq("kind", "fuel")
-          .limit(1)
-          .maybeSingle();
+  // ✅ اگر در این spot هر چاه فعالی هست (با هر kind) → true
+async hasFluxWell(spotId: number): Promise<DbResult<boolean>> {
+  try {
+    const { data, error } = await supabase
+      .from("flux_wells")
+      .select("id, enabled, kind")
+      .eq("spot_id", spotId)
+      .eq("enabled", true)
+      .limit(1);
 
-        if (error) return { ok: false, error };
-        return { ok: true, data: !!data };
-      } catch (error) {
-        return { ok: false, error };
-      }
-    },
+    if (error) return { ok: false, error };
+    return { ok: true, data: (data ?? []).length > 0 };
+  } catch (error) {
+    return { ok: false, error };
+  }
+},
+
 
     async createFluxWell(regionId: number, spotId: number): Promise<DbResult<null>> {
       // regionId در اسکیمای شما وجود ندارد، پس ذخیره‌اش نمی‌کنیم
