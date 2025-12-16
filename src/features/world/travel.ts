@@ -754,15 +754,6 @@ async function hasFuelWellHere(ctx: MyContext, regionId: number | null, spotId: 
 async function showVehicleDash(ctx: MyContext): Promise<void> {
   if (ctx.chat?.type !== "private" || !ctx.from) return;
 
-const wellRes = await (ctx.services.db as any).hasFluxWell(
-  char.current_region_id,
-  char.current_spot_id
-);
-
-console.log("[DASH] wellRes", wellRes);
-
-
-  
   const { supabase } = ctx.services;
   const char = await ensureCharacterFor(ctx, ctx.from.id);
   if (!char || !char.riding_vehicle_id) {
