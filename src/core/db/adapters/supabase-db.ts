@@ -45,21 +45,30 @@ export function makeSupabaseDb(supabase: any): GameDb {
 
     // ✅ فقط اگر (spot_id=...) و enabled=true و kind='fuel' باشد
   // ✅ اگر در این spot هر چاه فعالی هست (با هر kind) → true
-async hasFluxWell(spotId: number): Promise<DbResult<boolean>> {
-  try {
-    const { data, error } = await supabase
-      .from("flux_wells")
-      .select("id, enabled, kind")
-      .eq("spot_id", spotId)
-      .eq("enabled", true)
-      .limit(1);
+hasFluxWell: async (spotId: number, kind: "normal" | "emergency" = "normal") => {
+  const { data, error } = await supabase
+    .from("flux_wells")
+    .select("id, enabled")
+    .eq("spot_id", spotId)
+    .eq("kind", kind)
+    .maybeSingle();
 
-    if (error) return { ok: false, error };
-    return { ok: true, data: (data ?? []).length > 0 };
-  } catch (error) {
-    return { ok: false, error };
-  }
+  if (error) return { ok: false, error };
+  return { ok: true, data: !!data && !!data.enabled };
 },
+
+createFluxWell: async (spotId: number, kind: "normal" | "emergency") => {
+  const { error } = await supabase
+    .from("flux_wells")
+    .upsert(
+      { spot_id: spotId, kind, enabled: true },
+      { onConflict: "spot_id,kind" }
+    );
+
+  if (error) return { ok: false, error };
+  return { ok: true, data: null };
+},
+
 
 
     async createFluxWell(regionId: number, spotId: number): Promise<DbResult<null>> {
