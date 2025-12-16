@@ -1244,9 +1244,8 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
 
     // ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
 if (char.current_region_id && char.current_spot_id) {
-  const wellRes = await ctx.services.db.hasFluxWell(
-    char.current_region_id,
-    char.current_spot_id
+  ctx.services.db.hasFluxWell(char.current_spot_id)
+
   );
 
   const hasFlux = wellRes.ok && !!wellRes.data;
