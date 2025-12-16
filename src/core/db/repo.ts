@@ -12,6 +12,6 @@ export interface GameDb {
   updateVehicleById(id: number, patch: Partial<DbVehicle>): Promise<DbResult<null>>;
 
   // flux wells
-  hasFluxWell(regionId: number, spotId: number): Promise<DbResult<boolean>>;
+  hasFluxWell(spotId: number): Promise<DbResult<boolean>>;
   createFluxWell(regionId: number, spotId: number): Promise<DbResult<null>>;
 }
