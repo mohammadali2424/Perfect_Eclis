@@ -1242,7 +1242,7 @@ async function showVehicleDash(ctx: MyContext): Promise<void> {
     `veh:lockdash:${vehicle.id}`
   ).row();
 
-  // ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
+// ⛽ اگر اینجا چاه فلوکس هست، دکمه سوخت‌گیری بده
 if (char.current_spot_id) {
   const wellRes = await ctx.services.db.hasFluxWell(char.current_spot_id);
   const hasFlux = wellRes.ok && !!wellRes.data;
