@@ -35,6 +35,29 @@ async function sendScreen(
 
 // --- helper: گرفتن / ساختن کاراکتر بر اساس tg_id ---
 
+async function hasFluxHere(
+  ctx: MyContext,
+  regionId: number | null,
+  spotId: number | null
+): Promise<boolean> {
+  if (!spotId) return false;
+
+  // حالت (region, spot)
+  try {
+    const r = await (ctx.services.db as any).hasFluxWell(regionId, spotId);
+    if (r?.ok) return !!r.data;
+  } catch {}
+
+  // حالت (spot)
+  try {
+    const r = await (ctx.services.db as any).hasFluxWell(spotId);
+    if (r?.ok) return !!r.data;
+  } catch {}
+
+  return false;
+}
+
+
 async function ensureCharacterFor(
   ctx: MyContext,
   tgId: number
@@ -731,6 +754,69 @@ async function handleCancelTravel(ctx: MyContext): Promise<void> {
     buildMainMenu()
   );
 }
+
+async function showVehicleDash(ctx: MyContext): Promise<void> {
+  if (ctx.chat?.type !== "private" || !ctx.from) return;
+
+  const { supabase } = ctx.services;
+  const char = await ensureCharacterFor(ctx, ctx.from.id);
+  if (!char || !char.riding_vehicle_id) {
+    await sendScreen(ctx, "الان سوار هیچ وسیله‌ای نیستی.", buildMainMenu());
+    return;
+  }
+
+  const { data: vehicle, error: vehErr } = await supabase
+    .from("vehicles")
+    .select("id, title, capacity, fuel_percent, passenger_locked, owner_char_id, current_driver_char_id, current_spot_id")
+    .eq("id", char.riding_vehicle_id)
+    .maybeSingle();
+
+  if (vehErr || !vehicle) {
+    console.error("showVehicleDash vehicle error:", vehErr);
+    await sendScreen(ctx, "وسیله‌ات پیدا نشد.", buildMainMenu());
+    return;
+  }
+
+  const { driverCount, passengerCount, total } =
+    await getVehiclePassengerCount(ctx, vehicle.id);
+
+  const cap = vehicle.capacity ?? 1;
+  const fuel =
+    typeof vehicle.fuel_percent === "number"
+      ? `${vehicle.fuel_percent.toFixed(1)}٪`
+      : `${Number(vehicle.fuel_percent ?? 0).toFixed(1)}٪`;
+
+  const locked = !!vehicle.passenger_locked;
+
+  let text = "";
+  text += `🎛 صفحه پشت فرمون\n\n`;
+  text += `وسیله: ${vehicle.title ?? "وسیله"} (#${vehicle.id})\n`;
+  text += `سوخت: ${fuel}\n`;
+  text += `سرنشین‌ها: ${total}/${cap}\n`;
+  text += `- راننده: ${driverCount}\n`;
+  text += `- مسافر: ${passengerCount}\n`;
+  text += `وضعیت مسافران: ${locked ? "🔒 قفل" : "🔓 باز"}\n`;
+
+  const kb = new InlineKeyboard();
+
+  // فقط صاحب وسیله اجازه قفل/باز دارد
+  if (vehicle.owner_char_id === char.id) {
+    kb.text(
+      locked ? "🔓 باز کردن درِ مسافران" : "🔒 قفل کردن مسافران",
+      `veh:lockdash:${vehicle.id}`
+    ).row();
+  }
+
+  // ⛽ دکمه سوخت‌گیری فقط وقتی چاه فلوکس در همین spot باشد
+  const hasFlux = await hasFluxHere(ctx, char.current_region_id, char.current_spot_id);
+  console.log("[DASH] flux", { spot: char.current_spot_id, hasFlux });
+  if (hasFlux) kb.text("⛽ سوخت‌گیری", "flux:fuel").row();
+
+  kb.text("🔙 بازگشت", "travel:home");
+
+  await sendScreen(ctx, text, kb);
+}
+
 
 async function handleArrive(ctx: MyContext): Promise<void> {
   if (!ctx.from) return;
