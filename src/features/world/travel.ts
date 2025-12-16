@@ -126,18 +126,20 @@ function buildMainMenu(): InlineKeyboard {
 
 // --- منوی وضعیت: پیاده یا سوار وسیله ---
 
-async function hasFluxHere(ctx: MyContext, regionId: number | null, spotId: number | null): Promise<boolean> {
+async function hasFluxHere(
+  ctx: MyContext,
+  regionId: number | null,
+  spotId: number | null
+): Promise<boolean> {
   if (!spotId) return false;
 
-  // تلاش با (region, spot)
-  if (regionId) {
-    try {
-      const r = await (ctx.services.db as any).hasFluxWell(regionId, spotId);
-      if (r?.ok) return !!r.data;
-    } catch {}
-  }
+  // حالت (region, spot)
+  try {
+    const r = await (ctx.services.db as any).hasFluxWell(regionId, spotId);
+    if (r?.ok) return !!r.data;
+  } catch {}
 
-  // تلاش با (spot)
+  // حالت (spot)
   try {
     const r = await (ctx.services.db as any).hasFluxWell(spotId);
     if (r?.ok) return !!r.data;
@@ -145,6 +147,7 @@ async function hasFluxHere(ctx: MyContext, regionId: number | null, spotId: numb
 
   return false;
 }
+
 
 async function showTravelHome(ctx: MyContext): Promise<void> {
   if (!ctx.from) return;
