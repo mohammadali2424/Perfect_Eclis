@@ -30,21 +30,18 @@ async function toggleWell(supabase: any, spotId: number, kind: Kind): Promise<bo
   const { error } = await supabase
     .from("flux_wells")
     .upsert(
-      {
-        spot_id: spotId,
-        kind,
-        enabled: next,
-      },
+      { spot_id: spotId, kind, enabled: next },   // ❌ updated_at نفرست (تریگر خودش ست می‌کند)
       { onConflict: "spot_id,kind" }
     );
 
   if (error) {
     console.error("toggleWell upsert error:", error);
-    return current; // اگر خطا خورد، همون قبلی رو برگردون
+    return current;
   }
 
   return next;
 }
+
 
 async function buildSpotsKeyboard(ctx: MyContext, kind: Kind) {
   const { supabase } = ctx.services;
