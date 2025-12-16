@@ -1186,12 +1186,12 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
 
     // چاه فلوکس
 // چاه فلوکس
-const wellRes = await ctx.services.db.hasFluxWell(char.current_spot_id);
-
-if (!wellRes.ok || !wellRes.data) {
+const ok = await hasFluxHere(ctx, char.current_region_id, char.current_spot_id);
+if (!ok) {
   await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
   return;
 }
+
 
 
     // باید راننده باشد
