@@ -1141,16 +1141,16 @@ export async function moveVehicleWithPassengers(
   }
 }
 
-async function hasFluxHere(ctx: MyContext, regionId: number | null, spotId: number | null) {
-  if (!regionId || !spotId) return false;
+async function hasFluxHere(ctx: MyContext, regionId: number | null, spotId: number | null): Promise<boolean> {
+  if (!spotId) return false;
 
-  // تلاش با (region, spot)
-  try {
-    const r = await (ctx.services.db as any).hasFluxWell(regionId, spotId);
-    if (r?.ok) return !!r.data;
-  } catch {}
+  if (regionId) {
+    try {
+      const r = await (ctx.services.db as any).hasFluxWell(regionId, spotId);
+      if (r?.ok) return !!r.data;
+    } catch {}
+  }
 
-  // تلاش با (spot)
   try {
     const r = await (ctx.services.db as any).hasFluxWell(spotId);
     if (r?.ok) return !!r.data;
@@ -1159,14 +1159,10 @@ async function hasFluxHere(ctx: MyContext, regionId: number | null, spotId: numb
   return false;
 }
 
-
-/** رجیسترکردن همهٔ این فیچرها روی بات */
 export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
   const FLUX_PRICE_PER_PERCENT = 0.25;
 
-  // ------------------------------
-  // ⛽ سوخت‌گیری
-  // ------------------------------
+  // ⛽ سوخت‌گیری (ورود به پنل سوخت)
   bot.callbackQuery("flux:fuel", async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
     if (ctx.chat?.type !== "private" || !ctx.from) return;
@@ -1184,16 +1180,6 @@ export function registerVehicleTravelFeature(bot: Bot<MyContext>) {
       return;
     }
 
-    // چاه فلوکس
-// چاه فلوکس
-const ok = await hasFluxHere(ctx, char.current_region_id, char.current_spot_id);
-if (!ok) {
-  await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
-  return;
-}
-
-
-
     // باید راننده باشد
     if (!char.riding_vehicle_id) {
       await ctx.reply("الان سوار هیچ وسیله‌ای نیستی.");
@@ -1202,7 +1188,7 @@ if (!ok) {
 
     const { data: veh } = await supabase
       .from("vehicles")
-      .select("id, title, fuel_percent, current_driver_char_id, current_spot_id")
+      .select("id, title, fuel_percent, current_driver_char_id, current_region_id, current_spot_id")
       .eq("id", char.riding_vehicle_id)
       .maybeSingle();
 
@@ -1216,6 +1202,14 @@ if (!ok) {
       return;
     }
 
+    // چاه فلوکس: هم با region+spot هم با spot تنها سازگار
+    const fluxOk = await hasFluxHere(ctx, veh.current_region_id ?? char.current_region_id ?? null, veh.current_spot_id ?? char.current_spot_id ?? null);
+    if (!fluxOk) {
+      await ctx.reply("اینجا چاه فلوکس فعالی وجود ندارد.");
+      return;
+    }
+
+    // باید کنار وسیله باشد
     if (veh.current_spot_id !== char.current_spot_id) {
       await ctx.reply("برای سوخت‌گیری باید کنار وسیله و چاه باشی.");
       return;
@@ -1241,39 +1235,33 @@ if (!ok) {
     );
   });
 
-  // ------------------------------
-  // دکمه‌های درصد ثابت
-  // ------------------------------
+  // درصد ثابت
   bot.callbackQuery(/^fuel:add:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
     const add = Number(ctx.match[1]);
     await applyFuelPurchase(ctx, add);
   });
 
-  // ------------------------------
   // پر کردن کامل
-  // ------------------------------
   bot.callbackQuery("fuel:full", async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
     await applyFuelPurchase(ctx, "full");
   });
 
-  // ------------------------------
   // درصد دلخواه
-  // ------------------------------
   bot.callbackQuery("fuel:custom", async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
     if (ctx.chat?.type !== "private") return;
 
-    ctx.session.fuel_custom_waiting = true;
+    (ctx.session as any).fuel_custom_waiting = true;
     await ctx.reply("چند درصد می‌خوای شارژ کنی؟ (عدد بین 1 تا 100)");
   });
 
   bot.on("message:text", async (ctx, next) => {
     if (ctx.chat?.type !== "private") return next();
 
-    if (!ctx.session.fuel_custom_waiting) return next();
-    ctx.session.fuel_custom_waiting = false;
+    if (!(ctx.session as any).fuel_custom_waiting) return next();
+    (ctx.session as any).fuel_custom_waiting = false;
 
     const n = Number(ctx.message.text.trim());
     if (!Number.isFinite(n) || n <= 0 || n > 100) {
@@ -1284,81 +1272,71 @@ if (!ok) {
     await applyFuelPurchase(ctx, n);
   });
 
-  // ------------------------------
-  // هسته اصلی سوخت‌گیری
-  // ------------------------------
- async function applyFuelPurchase(
-  ctx: MyContext,
-  amount: number | "full"
-) {
-  if (!ctx.from) return;
-  const { supabase } = ctx.services;
+  async function applyFuelPurchase(ctx: MyContext, amount: number | "full") {
+    if (!ctx.from) return;
+    const { supabase } = ctx.services;
 
-  const { data: char } = await supabase
-    .from("characters")
-    .select("*")
-    .eq("tg_id", ctx.from.id)
-    .maybeSingle();
+    const { data: char } = await supabase
+      .from("characters")
+      .select("*")
+      .eq("tg_id", ctx.from.id)
+      .maybeSingle();
 
-  if (!char?.riding_vehicle_id) {
-    await ctx.reply("وسیله‌ای پیدا نشد.");
-    return;
-  }
+    if (!char?.riding_vehicle_id) {
+      await ctx.reply("وسیله‌ای پیدا نشد.");
+      return;
+    }
 
-  const { data: veh } = await supabase
-    .from("vehicles")
-    .select("id, title, fuel_percent")
-    .eq("id", char.riding_vehicle_id)
-    .maybeSingle();
+    const { data: veh } = await supabase
+      .from("vehicles")
+      .select("id, title, fuel_percent")
+      .eq("id", char.riding_vehicle_id)
+      .maybeSingle();
 
-  if (!veh) {
-    await ctx.reply("وسیله پیدا نشد.");
-    return;
-  }
+    if (!veh) {
+      await ctx.reply("وسیله پیدا نشد.");
+      return;
+    }
 
-  const fuelNow = Number(veh.fuel_percent ?? 0);
-  const calc = computeFuelPurchase({
-    fuelNow,
-    amount,
-    pricePerPercent: FLUX_PRICE_PER_PERCENT,
-    fuelMax: 100,
-  });
+    const fuelNow = Number(veh.fuel_percent ?? 0);
+    const add = amount === "full" ? Math.max(0, 100 - fuelNow) : amount;
 
-  if (!calc.ok) {
-    await ctx.reply(calc.errorText);
-    return;
-  }
+    if (add <= 0) {
+      await ctx.reply("باک پر است.");
+      return;
+    }
 
-  const { addPercent: add, fuelAfter, cost } = calc;
+    const fuelAfter = Math.min(100, fuelNow + add);
+    const cost = add * FLUX_PRICE_PER_PERCENT;
 
-  // ⛽ فقط اعمال سوخت (بدون کسر پول)
-  await supabase
-    .from("vehicles")
-    .update({ fuel_percent: fuelAfter })
-    .eq("id", veh.id);
+    await supabase.from("vehicles").update({ fuel_percent: fuelAfter }).eq("id", veh.id);
 
-  // 🏦 فقط ارسال گزارش به بانک
-  const bankChatId = await getBankChatId(ctx);
-  if (bankChatId) {
-    await ctx.api.sendMessage(
-      bankChatId,
-      `🏦 درخواست سوخت‌گیری\n` +
-        `کاربر: ${ctx.from.first_name} (${ctx.from.id})\n` +
-        `وسیله: ${veh.title ?? "وسیله"} (#${veh.id})\n` +
+    // گزارش به بانک (اگر داری)
+    try {
+      const bankChatId = await getBankChatId(ctx);
+      if (bankChatId) {
+        await ctx.api.sendMessage(
+          bankChatId,
+          `🏦 درخواست سوخت‌گیری\n` +
+            `کاربر: ${ctx.from.first_name} (${ctx.from.id})\n` +
+            `وسیله: ${veh.title ?? "وسیله"} (#${veh.id})\n` +
+            `مقدار: +${add}%\n` +
+            `هزینه: ${cost} سولن\n` +
+            `وضعیت: ⏳ در انتظار کسر دستی`
+        );
+      }
+    } catch {}
+
+    await ctx.reply(
+      `⛽ درخواست سوخت‌گیری ثبت شد.\n` +
         `مقدار: +${add}%\n` +
         `هزینه: ${cost} سولن\n` +
-        `وضعیت: ⏳ در انتظار کسر دستی`
+        `سوخت فعلی: ${fuelAfter.toFixed(1)}٪\n\n` +
+        `💰 کسر وجه توسط بانک انجام می‌شود.`
     );
   }
-
-  await ctx.reply(
-    `⛽ درخواست سوخت‌گیری ثبت شد.\n` +
-      `مقدار: +${add}%\n` +
-      `هزینه: ${cost} سولن\n` +
-      `سوخت فعلی: ${fuelAfter.toFixed(1)}٪\n\n` +
-      `💰 کسر وجه توسط بانک انجام می‌شود.`
-  );
 }
+
 
     // ------------------------------
   // 🛰 منوی حمل‌ونقل (aliasها)
