@@ -14,7 +14,10 @@ export function makeSupabaseDb(supabase: any): GameDb {
       return { ok: true, data };
     },
 
-    async updateCharacterById(id: number, patch: Partial<DbCharacter>): Promise<DbResult<null>> {
+    async updateCharacterById(
+      id: number,
+      patch: Partial<DbCharacter>
+    ): Promise<DbResult<null>> {
       const { error } = await supabase.from("characters").update(patch).eq("id", id);
       if (error) return { ok: false, error };
       return { ok: true, data: null };
@@ -31,38 +34,52 @@ export function makeSupabaseDb(supabase: any): GameDb {
       return { ok: true, data };
     },
 
-    async updateVehicleById(id: number, patch: Partial<DbVehicle>): Promise<DbResult<null>> {
+    async updateVehicleById(
+      id: number,
+      patch: Partial<DbVehicle>
+    ): Promise<DbResult<null>> {
       const { error } = await supabase.from("vehicles").update(patch).eq("id", id);
       if (error) return { ok: false, error };
       return { ok: true, data: null };
     },
 
-    // ✅ جدول flux_wells شما region_id ندارد → فقط spot_id + enabled را چک می‌کنیم
-hasFluxWell: async (spotId: number) => {
-  try {
-    const { data, error } = await supabase
-      .from("flux_wells")
-      .select("id")
-      .eq("spot_id", spotId)
-      .maybeSingle();
+    // ✅ فقط اگر (spot_id=...) و enabled=true و kind='fuel' باشد
+    async hasFluxWell(spotId: number): Promise<DbResult<boolean>> {
+      try {
+        const { data, error } = await supabase
+          .from("flux_wells")
+          .select("id")
+          .eq("spot_id", spotId)
+          .eq("enabled", true)
+          .eq("kind", "fuel")
+          .limit(1)
+          .maybeSingle();
 
-    if (error) return { ok: false, error };
-    return { ok: true, data: !!data };
-  } catch (error) {
-    return { ok: false, error };
-  }
-},
-
+        if (error) return { ok: false, error };
+        return { ok: true, data: !!data };
+      } catch (error) {
+        return { ok: false, error };
+      }
+    },
 
     async createFluxWell(regionId: number, spotId: number): Promise<DbResult<null>> {
       // regionId در اسکیمای شما وجود ندارد، پس ذخیره‌اش نمی‌کنیم
-      const { error } = await supabase.from("flux_wells").insert({
-        spot_id: spotId,
-        enabled: true,
-        kind: "fuel",
-      });
+      // ✅ بهتر: اگر قبلاً رکورد fuel وجود داشت، دوباره نسازد (upsert)
+      const { error } = await supabase.from("flux_wells").upsert(
+        {
+          spot_id: spotId,
+          enabled: true,
+          kind: "fuel",
+        },
+        {
+          onConflict: "spot_id,kind", // اگر روی این دو ستون constraint داری عالیه
+        }
+      );
 
-      if (error) return { ok: false, error };
+      if (error) {
+        // اگر onConflict وجود نداشت، می‌تونی upsert را به insert ساده برگردانی
+        return { ok: false, error };
+      }
       return { ok: true, data: null };
     },
   };
