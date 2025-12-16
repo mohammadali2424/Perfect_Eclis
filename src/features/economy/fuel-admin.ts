@@ -34,7 +34,6 @@ async function toggleWell(supabase: any, spotId: number, kind: Kind): Promise<bo
         spot_id: spotId,
         kind,
         enabled: next,
-        updated_at: new Date().toISOString(),
       },
       { onConflict: "spot_id,kind" }
     );
