@@ -732,9 +732,37 @@ async function handleCancelTravel(ctx: MyContext): Promise<void> {
   );
 }
 
+async function hasFuelWellHere(ctx: MyContext, regionId: number | null, spotId: number | null) {
+  if (!spotId) return { ok: true as const, data: false };
+
+  // اگر db شما دو آرگومان می‌خواهد
+  try {
+    const r = await (ctx.services.db as any).hasFluxWell(regionId, spotId);
+    if (r?.ok) return r;
+  } catch {}
+
+  // اگر db شما یک آرگومان می‌خواهد
+  try {
+    const r = await (ctx.services.db as any).hasFluxWell(spotId);
+    if (r?.ok) return r;
+  } catch {}
+
+  return { ok: true as const, data: false };
+}
+
+
 async function showVehicleDash(ctx: MyContext): Promise<void> {
   if (ctx.chat?.type !== "private" || !ctx.from) return;
 
+const wellRes = await (ctx.services.db as any).hasFluxWell(
+  char.current_region_id,
+  char.current_spot_id
+);
+
+console.log("[DASH] wellRes", wellRes);
+
+
+  
   const { supabase } = ctx.services;
   const char = await ensureCharacterFor(ctx, ctx.from.id);
   if (!char || !char.riding_vehicle_id) {
