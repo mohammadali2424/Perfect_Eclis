@@ -1,0 +1,131 @@
+// src/core/bot.ts
+
+import { Bot, session } from "grammy";
+import { createGalaxyBot } from "./galaxy-bot";
+import { BOT_TOKEN } from "./config";
+import { supabase } from "./supabase";
+import { MyContext, SessionData, Services } from "./types";
+
+import { registerSecurityFeature } from "../features/security/guard";
+import { registerOnboardingFeature } from "../features/world/onboarding";
+import { registerTravelFeature } from "../features/world/travel";
+import { registerUiFeature } from "../features/ui/ui";
+import { registerFluxBuilderFeature } from "../features/worldbuilder/flux-builder";
+import { registerVehicleTravelFeature } from "../features/world/travel-vehicles";
+import { registerWorldAdminFeature } from "../features/worldbuilder/admin-builder";
+import { registerWorldAdminCommands } from "../features/worldbuilder/admin-commands";
+import { registerPathBuilderFeature } from "../features/worldbuilder/path-builder";
+import { makeSupabaseDb } from "./db/adapters/supabase-db";
+import { registerFuelAdminFeature } from "../features/economy/fuel-admin";
+import { registerWorldVehicleShop } from "../features/economy/vehicle-shop";
+import { CallbackRouter } from "./router";
+import { rateLimit } from "./ratelimit";
+
+if (!BOT_TOKEN) {
+  throw new Error("BOT_TOKEN is required");
+}
+
+// این همونیه که src/index.ts ازش استفاده می‌کنه
+export const bot = new Bot<MyContext>(BOT_TOKEN);
+const galaxyBot = createGalaxyBot(bot) as unknown as typeof bot;
+
+// Central router for signed cbq:v1 callbacks
+export const router = new CallbackRouter();
+
+// سشن – یک آبجکت خالی که به SessionData کست می‌شه
+bot.use(
+  session({
+    initial: () => ({} as SessionData),
+  })
+);
+
+// Inbound rate limiting (safe defaults for large fleets)
+bot.use(
+  rateLimit({
+    rate: 2, // 2 req/s
+    burst: 5, // quick taps allowed
+    onReject: async (ctx) => {
+      try {
+        if (ctx.callbackQuery) {
+          await ctx.answerCallbackQuery({ text: "کمی آروم‌تر 😅", show_alert: false });
+        }
+      } catch {}
+    },
+  })
+);
+
+// ✅ یک‌بار برای همیشه سرویس‌ها را بساز
+const services: Services = {
+  supabase,
+  db: makeSupabaseDb(supabase),
+};
+
+// ✅ تزریق سرویس‌ها به ctx
+bot.use(async (ctx, next) => {
+  ctx.services = services;
+  return next();
+});
+
+bot.on("callback_query:data", async (ctx, next) => {
+  const data = ctx.callbackQuery.data;
+
+  console.log("[CBQ]", {
+    from: ctx.from?.id,
+    chat: ctx.chat?.id,
+    data,
+  });
+
+  // spinner تلگرام رو جمع کن
+  try { await ctx.answerCallbackQuery(); } catch {}
+
+  return next();
+});
+
+// Attach structured cbq router (legacy callbackQuery handlers still work)
+router.attach(bot);
+
+
+bot.catch((err) => {
+  console.error("[BOT ERROR]", err.error);
+  try {
+    console.error("[BOT ERROR ctx update]", JSON.stringify(err.ctx.update));
+  } catch {}
+});
+
+
+
+// ===== رجیستر تمام فیچرها =====
+
+registerSecurityFeature(galaxyBot);
+registerWorldAdminCommands(galaxyBot);
+registerVehicleTravelFeature(galaxyBot);
+registerPathBuilderFeature(galaxyBot);
+registerOnboardingFeature(galaxyBot);
+registerWorldAdminFeature(galaxyBot);
+registerWorldVehicleShop(galaxyBot);
+registerTravelFeature(galaxyBot);
+registerUiFeature(galaxyBot);
+registerFluxBuilderFeature(galaxyBot);
+registerFuelAdminFeature(galaxyBot);
+
+bot.callbackQuery(/.*/s, async (ctx) => {
+  const data = ctx.callbackQuery.data;
+  console.log("[UNHANDLED CBQ]", data);
+
+  // برای دیباگ خوبه؛ بعداً حذفش می‌کنیم
+  try { await ctx.reply(`این دکمه هندلر ندارد: ${data}`); } catch {}
+
+  // خیلی مهم: دوباره جواب بده تا تلگرام گیر نکنه
+  try { await ctx.answerCallbackQuery(); } catch {}
+});
+
+
+
+// /start ساده برای راهنمای اولیه
+bot.command("start", async (ctx) => {
+  if (ctx.chat?.type !== "private") return;
+
+  await ctx.reply(
+    "به اکلیس خوش آمدی.\n" + "برای دیدن منوی اصلی بعداً می‌تونی از /menu استفاده کنی."
+  );
+});
