@@ -21,7 +21,6 @@ registerSystemModule(registry);
 registerXpModule(registry);
 registerAdminModule(registry);
 
-// چون createBot در پروژه‌ی تو uowFactory می‌خواهد:
 const uowFactory = () => new MemoryUnitOfWork();
 
 const bot = createBot({
@@ -32,12 +31,19 @@ const bot = createBot({
 });
 
 const app = express();
+
 app.get('/health', (_req, res) => res.status(200).send('ok'));
 
 app.use(express.json());
 
 const webhookPath = env.WEBHOOK_PATH.startsWith('/') ? env.WEBHOOK_PATH : `/${env.WEBHOOK_PATH}`;
-app.use(webhookPath, bot.webhookCallback(webhookPath));
+
+// نکته حیاتی: webhookCallback نباید زیر app.use(webhookPath, ...) mount شود.
+// باید دقیقاً روی همون مسیر با POST بسته شود.
+app.post(
+  webhookPath,
+  bot.webhookCallback(webhookPath, env.WEBHOOK_SECRET ? { secretToken: env.WEBHOOK_SECRET } : undefined),
+);
 
 app.listen(env.PORT, async () => {
   logger.info('HTTP server listening', { port: env.PORT, webhookPath });
