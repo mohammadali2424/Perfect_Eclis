@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 
 import type { CommandRegistry } from '../commands/registry.js';
-import type { Logger } from '../logger/logger.js';
+import type { Logger } from '../utils/logger.js';
 import type { UnitOfWork } from '../storage/repos.js';
 import { createCommandRouter } from './commandRouter.js';
 
