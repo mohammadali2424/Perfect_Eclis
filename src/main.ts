@@ -1,68 +1,57 @@
-// src/main.ts
 import express from 'express';
-
 import { env } from './config/env.js';
 import { createLogger } from './core/utils/logger.js';
-import { createBot } from './core/bot/createBot.js';
 import { CommandRegistry } from './core/commands/registry.js';
+import { createBot } from './core/bot/createBot.js';
 
-import { createMemoryUnitOfWork } from './adapters/storage/memory.js';
+import { MemoryUnitOfWork } from './adapters/storage/memory.js';
 
-import { registerSystemCommands } from './modules/system/index.js';
-import { registerXpCommands } from './modules/xp/index.js';
+import { registerHelpModule } from './modules/help/index.js';
+import { registerSystemModule } from './modules/system/index.js';
+import { registerXpModule } from './modules/xp/index.js';
+import { registerAdminModule } from './modules/admin/index.js';
 
-async function main() {
-  const logger = createLogger(env.NODE_ENV === 'production' ? 'info' : 'debug');
+const logger = createLogger(env.NODE_ENV === 'development' ? 'debug' : 'info');
 
-  // --- Storage (فعلاً Memory؛ بعداً Supabase/Postgres را همینجا سوییچ می‌کنیم) ---
-  const uow = createMemoryUnitOfWork();
+if (!env.BOT_TOKEN) throw new Error('BOT_TOKEN is required');
 
-  // --- Commands registry ---
-  const registry = new CommandRegistry();
-  registerSystemCommands(registry);
-  registerXpCommands(registry);
+const registry = new CommandRegistry();
+registerHelpModule(registry);
+registerSystemModule(registry);
+registerXpModule(registry);
+registerAdminModule(registry);
 
-  // --- Bot ---
-  const bot = createBot({
-    token: env.BOT_TOKEN,
-    registry,
-    uow,
-    logger,
-  });
+// چون createBot در پروژه‌ی تو uowFactory می‌خواهد:
+const uowFactory = () => new MemoryUnitOfWork();
 
-  // --- HTTP (Webhook) ---
-  const app = express();
+const bot = createBot({
+  token: env.BOT_TOKEN,
+  registry,
+  uowFactory,
+  logger,
+});
 
-  // Health check
-  app.get('/', (_req, res) => res.status(200).send('OK'));
+const app = express();
+app.get('/health', (_req, res) => res.status(200).send('ok'));
 
-  // Telegram will POST updates here
-  app.post(
-    env.WEBHOOK_PATH,
-    bot.webhookCallback(env.WEBHOOK_PATH, { secretToken: env.WEBHOOK_SECRET })
-  );
+app.use(express.json());
 
-  app.listen(env.PORT, () => {
-    logger.info('HTTP server listening', { port: env.PORT, webhookPath: env.WEBHOOK_PATH });
-  });
+const webhookPath = env.WEBHOOK_PATH.startsWith('/') ? env.WEBHOOK_PATH : `/${env.WEBHOOK_PATH}`;
+app.use(webhookPath, bot.webhookCallback(webhookPath));
 
-  // --- Set webhook (only if BASE_URL provided) ---
+app.listen(env.PORT, async () => {
+  logger.info('HTTP server listening', { port: env.PORT, webhookPath });
+
   if (!env.BASE_URL) {
     logger.warn('BASE_URL is empty; webhook not set automatically');
-  } else {
-    const url = `${env.BASE_URL}${env.WEBHOOK_PATH}`;
-    try {
-      await bot.telegram.setWebhook(url, { secret_token: env.WEBHOOK_SECRET });
-      logger.info('Webhook set', { url });
-    } catch (err) {
-      logger.error('Failed to set webhook', { err: String(err), url });
-    }
+    return;
   }
-}
 
-main().catch((err) => {
-  // اگر اینجا کرش کند، Render لاگ می‌گیرد
-  // (مهم: پیام اول باید string باشد)
-  // eslint-disable-next-line no-console
-  console.error(err);
+  const url = `${env.BASE_URL}${webhookPath}`;
+  try {
+    await bot.telegram.setWebhook(url, env.WEBHOOK_SECRET ? { secret_token: env.WEBHOOK_SECRET } : undefined);
+    logger.info('Webhook set', { url });
+  } catch (err) {
+    logger.error('Failed to set webhook', { err });
+  }
 });
