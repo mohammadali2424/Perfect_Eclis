@@ -34,6 +34,8 @@ app.use(express.json());
 const webhookPath = env.WEBHOOK_PATH.startsWith('/') ? env.WEBHOOK_PATH : `/${env.WEBHOOK_PATH}`;
 app.use(webhookPath, bot.webhookCallback(webhookPath));
 
+app.use(bot.webhookCallback(webhookPath));
+
 app.listen(env.PORT, async () => {
   logger.info(`HTTP server listening`, { port: env.PORT, webhookPath });
 
