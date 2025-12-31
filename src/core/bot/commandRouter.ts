@@ -1,29 +1,43 @@
+import type { MiddlewareFn } from 'telegraf';
 import type { Context } from 'telegraf';
-import { parseCommand } from './parseCommand.js';
-import type { UnitOfWork } from '../storage/unitOfWork.js';
+import type { UnitOfWork } from '../storage/repos.js';
 import type { CommandRegistry } from '../commands/registry.js';
+import type { Logger } from '../logger/logger.js';
 
-export type CommandCtx = Context & {
-  uow: UnitOfWork;
-};
+type RouterCtx = Context & { uow: UnitOfWork };
 
-export function createCommandRouter(registry: CommandRegistry) {
-  // gather aliases (including command names)
-  const aliases = registry
-    .listCommands()
-    .flatMap((c) => [c.name, ...(c.aliases ?? [])])
-    .filter(Boolean);
+function isTextMessage(ctx: Context): ctx is Context & { message: { text: string } } {
+  return Boolean((ctx as any).message?.text);
+}
 
-  return async (ctx: CommandCtx) => {
-    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    if (!text) return;
+export function createCommandRouter(opts: {
+  registry: CommandRegistry;
+  uowFactory: () => UnitOfWork;
+  logger: Logger;
+}): MiddlewareFn<Context> {
+  const { registry, uowFactory, logger } = opts;
 
-    const parsed = parseCommand(text, aliases);
-    if (!parsed) return;
+  return async (ctx, next) => {
+    if (!isTextMessage(ctx)) return next();
 
-    const def = registry.getCommand(parsed.name);
-    if (!def) return;
+    const text = ctx.message.text.trim();
+    if (!text) return next();
 
-    await def.handler(ctx, parsed.args);
+    // فرمان‌ها بدون اسلش: اولین توکن را command می‌گیریم
+    const [head] = text.split(/\s+/);
+    const cmd = head.toLowerCase();
+
+    const def = registry.get(cmd);
+    if (!def) return next();
+
+    // attach uow
+    (ctx as RouterCtx).uow = uowFactory();
+
+    try {
+      await def.handler(ctx as RouterCtx, { uow: (ctx as RouterCtx).uow, logger });
+    } catch (err) {
+      logger.error('command handler failed', { cmd, err });
+      await ctx.reply('خطای داخلی در اجرای دستور.');
+    }
   };
 }
