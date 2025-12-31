@@ -3,6 +3,7 @@ import type { CommandRegistry } from '../commands/registry.js';
 import { createCommandRouter } from './commandRouter.js';
 import type { Logger } from '../utils/logger.js';
 import type { UnitOfWork } from '../storage/repos.js';
+import { isPrivileged } from '../auth/access.js';
 
 export function createBot(opts: {
   token: string;
