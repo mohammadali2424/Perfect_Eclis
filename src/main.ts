@@ -1,53 +1,100 @@
-import express from 'express';
-import { env } from './config/env.js';
-import { createLogger } from './core/utils/logger.js';
-import { CommandRegistry } from './core/commands/registry.js';
-import { createBot } from './core/bot/createBot.js';
-import { MemoryUnitOfWork } from './adapters/storage/memory.js';
-import { registerHelpModule } from './modules/help/index.js';
-import { registerSystemModule } from './modules/system/index.js';
-import { registerXpModule } from './modules/xp/index.js';
-import { registerAdminModule } from './modules/admin/index.js';
+import { createServer } from "node:http";
 
-const logger = createLogger(env.NODE_ENV === 'development' ? 'debug' : 'info');
+import { env } from "./config/env.js";
+import { createBot } from "./core/bot/createBot.js";
+import { CommandRegistry } from "./core/commands/registry.js";
+import { createLogger } from "./core/utils/logger.js";
+import { MemoryUnitOfWork } from "./adapters/storage/memory.js";
 
-if (!env.BOT_TOKEN) {
-  throw new Error('BOT_TOKEN is required');
-}
+import { registerHelpModule } from "./modules/help/index.js";
+import { registerXpModule } from "./modules/xp/index.js";
+import { registerAdminModule } from "./modules/admin/index.js";
+
+const logger = createLogger(env.LOG_LEVEL);
 
 const registry = new CommandRegistry();
 registerHelpModule(registry);
-registerSystemModule(registry);
 registerXpModule(registry);
 registerAdminModule(registry);
 
-const uow = new MemoryUnitOfWork();
+// فعلاً روی Memory هستیم (پلن رایگان). بعداً همین uowFactory را با Supabase/DB واقعی سوییچ می‌کنیم.
+const uowFactory = () => new MemoryUnitOfWork();
 
-const bot = createBot({ token: env.BOT_TOKEN, registry, uow, logger });
+const bot = createBot({
+  token: env.BOT_TOKEN,
+  registry,
+  uowFactory,
+  logger,
+  auth: {
+    ownerId: env.OWNER_ID,
+    adminIds: env.ADMIN_IDS,
+  },
+});
 
-const app = express();
-app.get('/health', (_req, res) => res.status(200).send('ok'));
+const webhookPath = env.WEBHOOK_PATH || "/telegram";
+const port = env.PORT || 10000;
 
-// Telegram sends JSON
-app.use(express.json());
+const server = createServer((req, res) => {
+  try {
+    const url = req.url || "/";
 
-const webhookPath = env.WEBHOOK_PATH.startsWith('/') ? env.WEBHOOK_PATH : `/${env.WEBHOOK_PATH}`;
-app.use(webhookPath, bot.webhookCallback(webhookPath));
-
-app.use(bot.webhookCallback(webhookPath));
-
-app.listen(env.PORT, async () => {
-  logger.info(`HTTP server listening`, { port: env.PORT, webhookPath });
-
-  if (env.BASE_URL) {
-    const url = `${env.BASE_URL}${webhookPath}`;
-    try {
-      await bot.telegram.setWebhook(url, env.WEBHOOK_SECRET ? { secret_token: env.WEBHOOK_SECRET } : undefined);
-      logger.info('Webhook set', { url });
-    } catch (err) {
-      logger.error('Failed to set webhook', { err });
+    // Healthcheck
+    if (req.method === "GET" && url === "/health") {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: true }));
+      return;
     }
-  } else {
-    logger.warn('BASE_URL is empty; webhook not set automatically');
+
+    // برای جلوگیری از "Cannot GET /telegram"
+    if (req.method === "GET" && url === webhookPath) {
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+      res.end("OK");
+      return;
+    }
+
+    // Webhook: فقط POST
+    if (req.method === "POST" && url === webhookPath) {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const update = body ? JSON.parse(body) : {};
+          await bot.handleUpdate(update);
+          res.writeHead(200);
+          res.end("OK");
+        } catch (e) {
+          logger.error({ err: e }, "Webhook update handling failed");
+          res.writeHead(200);
+          res.end("OK"); // تلگرام باید 200 بگیرد، وگرنه retry می‌کند
+        }
+      });
+      return;
+    }
+
+    // Not found
+    res.writeHead(404, { "content-type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ ok: false, error: "Not Found" }));
+  } catch (e) {
+    logger.error({ err: e }, "HTTP server error");
+    res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ ok: false, error: "Server error" }));
+  }
+});
+
+server.listen(port, async () => {
+  logger.info({ port, webhookPath }, "HTTP server listening");
+
+  // اگر BASE_URL خالی باشد، ست‌کردن وبهوک را انجام نمی‌دهیم (برای لوکال/تست).
+  if (!env.BASE_URL) {
+    logger.warn("BASE_URL is empty; webhook not set automatically");
+    return;
+  }
+
+  const webhookUrl = new URL(webhookPath, env.BASE_URL).toString();
+  try {
+    await bot.telegram.setWebhook(webhookUrl);
+    logger.info({ url: webhookUrl }, "Webhook set");
+  } catch (e) {
+    logger.error({ err: e, url: webhookUrl }, "Failed to set webhook");
   }
 });
