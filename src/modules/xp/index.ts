@@ -85,7 +85,7 @@ export function registerXpModule(registry: CommandRegistry) {
         }
         const before = await uow.players.getOrCreateFromTelegram({ id: target.id, first_name: target.label } as any);
         const entry = await uow.xp.add({
-          actorId: actor.id,
+          createdBy: actor.id,
           playerId: before.id,
           chatId: (ctx.chat?.id ?? 0) as any,
           amount,
