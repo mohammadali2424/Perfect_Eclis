@@ -20,7 +20,7 @@ export function createBot(opts: {
     return next();
   });
 
-  bot.use(createCommandRouter(opts.registry, opts.uow, opts.logger));
+  bot.use(createCommandRouter({ registry: opts.registry, uow: opts.uow, logger: opts.logger }));
 
   bot.catch((err, ctx) => {
     opts.logger.error('Bot error', { err: String(err), update: ctx.updateType });
