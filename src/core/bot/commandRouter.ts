@@ -2,7 +2,7 @@ import type { MiddlewareFn } from 'telegraf';
 import type { Context } from 'telegraf';
 import type { UnitOfWork } from '../storage/repos.js';
 import type { CommandRegistry } from '../commands/registry.js';
-import type { Logger } from '../logger/logger.js';
+import type { Logger } from '../utils/logger.js';
 
 type RouterCtx = Context & { uow: UnitOfWork };
 
