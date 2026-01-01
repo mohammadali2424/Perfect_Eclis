@@ -9,9 +9,21 @@ import { MemoryUnitOfWork } from './adapters/storage/memory.js';
 import { registerHelpModule } from './modules/help/index.js';
 import { registerSystemModule } from './modules/system/index.js';
 import { registerXpModule } from './modules/xp/index.js';
-import { registerAdminModule } from './modules/admin/index.js';
+import { registerAdminCommands } from "./modules/admin/index.js";
+import { createMemoryAdminStore } from "./modules/admin/adminStore.memory.js";
+
 
 const logger = createLogger(env.NODE_ENV === 'development' ? 'debug' : 'info');
+
+const ownerId = Number(process.env.OWNER_ID || 0);
+if (!ownerId) {
+  logger.warn("OWNER_ID is not set; admin commands will be effectively locked.");
+}
+
+const adminsStore = createMemoryAdminStore(); // فعلاً خالی؛ با دستور داخل ربات پر می‌شود
+
+registerAdminCommands(registry, { ownerId, admins: adminsStore });
+
 
 if (!env.BOT_TOKEN) throw new Error('BOT_TOKEN is required');
 
