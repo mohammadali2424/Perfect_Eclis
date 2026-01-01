@@ -35,7 +35,7 @@ function isPrivileged(ctx: CommandCtx, ownerId: number, admins: AdminStore): boo
   return admins.isAdmin(uid);
 }
 
-export function registerAdminCommands(registry: CommandRegistry, deps: { ownerId: number; admins: AdminStore }) {
+export function registerAdminModule(registry: CommandRegistry, deps: { ownerId: number; admins: AdminStore }) {
   // پنل
   registry.register("پنل", async (ctx: CommandCtx) => {
     if (!isPrivileged(ctx, deps.ownerId, deps.admins)) return denySilent(ctx);
