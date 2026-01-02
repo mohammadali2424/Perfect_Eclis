@@ -9,6 +9,7 @@ import { AuthorityResolver } from "./core/authority/resolver.js";
 import { adminRoleProvider } from "./modules/admin/index.js";
 import { registerSystemModule } from "./modules/system/index.js";
 import { registerXpModule } from "./modules/xp/index.js";
+import { registerChatSettingsCommands } from "./modules/admin/chatSettingsCommands.js";
 import { registerAdminCommands } from "./modules/admin/adminCommands.js";;
 
 export const authority = new AuthorityResolver(adminRoleProvider);
@@ -22,6 +23,7 @@ const registry = new CommandRegistry();
 registerSystemModule(registry);
 registerXpModule(registry);
 registerAdminCommands(registry);
+registerChatSettingsCommands(registry);
 
 // Bot
 const bot = createBot({
@@ -97,6 +99,7 @@ const shutdown = (signal: "SIGINT" | "SIGTERM") => {
 
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));
+
 
 
 
