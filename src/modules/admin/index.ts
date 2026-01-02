@@ -1,5 +1,4 @@
 import type { CommandDef } from "../../core/commands/command.js";
-import { isPrivileged } from "../../core/auth/access.js";
 import { InMemoryAdminStore } from "./adminStore.js";
 import { AdminRoleProvider } from "./adminRoleProvider.js";
 
@@ -19,31 +18,6 @@ function replyTargetTelegramId(ctx: any): number | null {
 
 function uniq(arr: string[]): string[] {
   return [...new Set(arr)];
-}
-
-async function ensurePrivileged(ctx: any) {
-  const id = actorId(ctx);
-  return id !== null ? isPrivileged(id) : false;
-}
-
-async function addAdminRole(targetTelegramId: number, deps: { uow: any }) {
-  const p = await deps.uow.players.getOrCreateFromTelegram(targetTelegramId);
-  const roles = uniq([...(p.roles || []), "admin"]);
-  await deps.uow.players.update({ id: p.id, roles });
-  await deps.uow.commit();
-  return { player: p, roles };
-}
-
-async function removeAdminRole(targetTelegramId: number, deps: { uow: any }) {
-  const p = await deps.uow.players.getOrCreateFromTelegram(targetTelegramId);
-  const roles = (p.roles || []).filter((r: string) => r !== "admin");
-  await deps.uow.players.update({ id: p.id, roles });
-  await deps.uow.commit();
-  return { player: p, roles };
-}
-
-async function listAdmins(deps: { uow: any }) {
-  return deps.uow.players.listAdmins();
 }
 
 export function registerAdminModule(registry: any) {
@@ -97,4 +71,5 @@ export function registerAdminModule(registry: any) {
 
   for (const c of commands) registry.register(c);
 }
+
 
