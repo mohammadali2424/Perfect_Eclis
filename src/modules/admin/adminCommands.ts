@@ -323,8 +323,12 @@ export function registerAdminCommands(registry: any) {
           return;
         }
 
-        const lines = roles.map(r => `• ${r.userId} — ${r.role}`);
-        await ctx.reply(["ادمین‌ها:", ...lines].join("\n"));
+       const lines = roles.map(r => {
+  const chatPart =
+    r.scope.type === "CHAT" ? `(chat ${r.scope.chatId})` : "";
+  return `• ${r.userId} — ${r.role} ${chatPart}`.trim();
+});
+
       },
     },
   ];
