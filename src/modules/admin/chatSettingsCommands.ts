@@ -1,5 +1,5 @@
 import type { CommandDef } from "../../core/commands/command.js";
-import { authority } from "../../main.js";
+import { authority } from "../../core/authority/singleton.js";
 import { RULE_NAZER_OR_OWNER } from "../../core/authority/rules.js";
 
 function actorContext(ctx: any) {
@@ -31,9 +31,10 @@ export function registerChatSettingsCommands(registry: any) {
           return;
         }
 
-       const uow = deps.uow as any;
-await uow.chatSettings.set("ROLE_MGMT_CHAT_ID", actx.chatId);
-if (typeof uow.commit === "function") await uow.commit();
+        const uow = deps.uow as any;
+        await uow.chatSettings.set("ROLE_MGMT_CHAT_ID", actx.chatId);
+        if (typeof uow.commit === "function") await uow.commit();
+
         await ctx.reply("ثبت شد: این گروه به عنوان گروه مدیریت رول تنظیم شد.");
       },
     },
@@ -47,9 +48,10 @@ if (typeof uow.commit === "function") await uow.commit();
         const decision = await authority.check(actx, RULE_NAZER_OR_OWNER);
         if (!decision.allow) return;
 
-       const uow = deps.uow as any;
-await uow.chatSettings.set("ROLE_MGMT_CHAT_ID", actx.chatId);
-if (typeof uow.commit === "function") await uow.commit();;
+        const uow = deps.uow as any;
+        await uow.chatSettings.set("ROLE_MGMT_CHAT_ID", null);
+        if (typeof uow.commit === "function") await uow.commit();
+
         await ctx.reply("حذف شد: گروه مدیریت رول پاک شد.");
       },
     },
@@ -68,8 +70,10 @@ if (typeof uow.commit === "function") await uow.commit();;
           return;
         }
 
-        await deps.uow.chatSettings.set("LOG_CHAT_ID", actx.chatId);
-        await deps.uow.commit?.();
+        const uow = deps.uow as any;
+        await uow.chatSettings.set("LOG_CHAT_ID", actx.chatId);
+        if (typeof uow.commit === "function") await uow.commit();
+
         await ctx.reply("ثبت شد: این گروه به عنوان گروه لاگ تنظیم شد.");
       },
     },
@@ -83,8 +87,10 @@ if (typeof uow.commit === "function") await uow.commit();;
         const decision = await authority.check(actx, RULE_NAZER_OR_OWNER);
         if (!decision.allow) return;
 
-        await deps.uow.chatSettings.set("LOG_CHAT_ID", null);
-        await deps.uow.commit?.();
+        const uow = deps.uow as any;
+        await uow.chatSettings.set("LOG_CHAT_ID", null);
+        if (typeof uow.commit === "function") await uow.commit();
+
         await ctx.reply("حذف شد: گروه لاگ پاک شد.");
       },
     },
@@ -98,7 +104,9 @@ if (typeof uow.commit === "function") await uow.commit();;
         const decision = await authority.check(actx, RULE_NAZER_OR_OWNER);
         if (!decision.allow) return;
 
-        const s = await deps.uow.chatSettings.getSnapshot();
+        const uow = deps.uow as any;
+        const s = await uow.chatSettings.getSnapshot();
+
         await ctx.reply(
           [
             "تنظیمات:",

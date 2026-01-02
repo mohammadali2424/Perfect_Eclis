@@ -5,14 +5,12 @@ import { createLogger } from "./core/utils/logger.js";
 import { createBot } from "./core/bot/createBot.js";
 import { CommandRegistry } from "./core/commands/registry.js";
 import { MemoryUnitOfWork } from "./adapters/storage/memory.js";
-import { AuthorityResolver } from "./core/authority/resolver.js";
-import { adminRoleProvider } from "./modules/admin/index.js";
 import { registerSystemModule } from "./modules/system/index.js";
 import { registerXpModule } from "./modules/xp/index.js";
+import { authority } from "./core/authority/singleton.js";
 import { registerChatSettingsCommands } from "./modules/admin/chatSettingsCommands.js";
-import { registerAdminCommands } from "./modules/admin/adminCommands.js";;
+import { registerAdminCommands } from "./modules/admin/adminCommands.js";
 
-export const authority = new AuthorityResolver(adminRoleProvider);
 const logger = createLogger('info');
 
 // Storage / Unit of Work
@@ -33,73 +31,96 @@ const bot = createBot({
   logger,
 });
 
-// Webhook server (Render)
-const port = Number(process.env.PORT) || 3000;
-const webhookPath = process.env.WEBHOOK_PATH || "/telegram";
+const botMode = (process.env.BOT_MODE || "webhook").toLowerCase();
 
-const server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
-  if (!req.url) {
-    res.statusCode = 404;
-    res.end();
-    return;
-  }
 
-  // Telegraf v4: callback handles only matching path.
-  if (req.url.split("?")[0] !== webhookPath) {
-    res.statusCode = 200;
-    res.setHeader("content-type", "text/plain; charset=utf-8");
-    res.end("ok");
-    return;
-  }
+// ----------------------------
+// BOT MODE: POLLING (LOCAL)
+// ----------------------------
+if (botMode === "polling") {
+  (async () => {
+    logger.info("Starting bot in polling mode");
+    await bot.launch();
+    logger.info("Bot launched (polling)");
+  })();
 
-  const cb = bot.webhookCallback(webhookPath, {
-    secretToken: env.WEBHOOK_SECRET || undefined,
-  });
-  return (cb as any)(req, res);
-});
-
-server.listen(port, async () => {
-  logger.info("HTTP server listening", { port, webhookPath });
-
-  // If BASE_URL is provided, set webhook.
-  const baseUrl = (env.BASE_URL || "").trim();
-  if (baseUrl) {
-    const url = `${baseUrl.replace(/\/$/, "")}${webhookPath}`;
+  const shutdown = (signal: "SIGINT" | "SIGTERM") => {
+    logger.warn(`${signal} received, shutting down`);
     try {
-      await bot.telegram.setWebhook(url, {
-        secret_token: env.WEBHOOK_SECRET || undefined,
-      });
-      logger.info("Webhook set", { url });
+      bot.stop(signal);
     } catch (err) {
-      logger.error("Failed to set webhook", { err, url });
+      logger.warn("Bot stop skipped (probably not running)", { err });
     }
-  } else {
-    logger.warn("BASE_URL is empty; webhook not set automatically");
-  }
-});
+  };
 
-// Graceful shutdown (Render sends SIGTERM)
-const shutdown = (signal: "SIGINT" | "SIGTERM") => {
-  logger.warn(`${signal} received, shutting down`);
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
 
-  // Close HTTP server first (stop accepting new requests)
-  try {
-    server.close(() => logger.info("HTTP server closed"));
-  } catch (err) {
-    logger.warn("HTTP server close failed/skipped", { err });
-  }
+} else {
+  // ----------------------------
+  // BOT MODE: WEBHOOK (RENDER)
+  // ----------------------------
+  const port = Number(process.env.PORT) || 3000;
+  const webhookPath = process.env.WEBHOOK_PATH || "/telegram";
 
-  // Telegraf: stop may throw if bot is not running
-  try {
-    bot.stop(signal);
-  } catch (err) {
-    logger.warn("Bot stop skipped (probably not running)", { err });
-  }
-};
+  const server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
+    if (!req.url) {
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
 
-process.once("SIGINT", () => shutdown("SIGINT"));
-process.once("SIGTERM", () => shutdown("SIGTERM"));
+    if (req.url.split("?")[0] !== webhookPath) {
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/plain; charset=utf-8");
+      res.end("ok");
+      return;
+    }
 
+    const cb = bot.webhookCallback(webhookPath, {
+      secretToken: env.WEBHOOK_SECRET || undefined,
+    });
+    return (cb as any)(req, res);
+  });
+
+  server.listen(port, async () => {
+    logger.info("HTTP server listening", { port, webhookPath });
+
+    const baseUrl = (env.BASE_URL || "").trim();
+    if (baseUrl) {
+      const url = `${baseUrl.replace(/\/$/, "")}${webhookPath}`;
+      try {
+        await bot.telegram.setWebhook(url, {
+          secret_token: env.WEBHOOK_SECRET || undefined,
+        });
+        logger.info("Webhook set", { url });
+      } catch (err) {
+        logger.error("Failed to set webhook", { err, url });
+      }
+    } else {
+      logger.warn("BASE_URL is empty; webhook not set automatically");
+    }
+  });
+
+  const shutdown = (signal: "SIGINT" | "SIGTERM") => {
+    logger.warn(`${signal} received, shutting down`);
+
+    try {
+      server.close(() => logger.info("HTTP server closed"));
+    } catch (err) {
+      logger.warn("HTTP server close failed/skipped", { err });
+    }
+
+    try {
+      bot.stop(signal);
+    } catch (err) {
+      logger.warn("Bot stop skipped (probably not running)", { err });
+    }
+  };
+
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+}
 
 
 
