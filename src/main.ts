@@ -9,7 +9,7 @@ import { AuthorityResolver } from "./core/authority/resolver.js";
 import { adminRoleProvider } from "./modules/admin/index.js";
 import { registerSystemModule } from "./modules/system/index.js";
 import { registerXpModule } from "./modules/xp/index.js";
-import { registerAdminModule } from "./modules/admin/index.js";
+import { registerAdminCommands } from "./modules/admin/adminCommands.js";;
 
 export const authority = new AuthorityResolver(adminRoleProvider);
 const logger = createLogger('info');
@@ -21,7 +21,7 @@ const uowFactory = () => new MemoryUnitOfWork();
 const registry = new CommandRegistry();
 registerSystemModule(registry);
 registerXpModule(registry);
-registerAdminModule(registry);
+registerAdminCommands(registry);
 
 // Bot
 const bot = createBot({
@@ -97,6 +97,7 @@ const shutdown = (signal: "SIGINT" | "SIGTERM") => {
 
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));
+
 
 
 
