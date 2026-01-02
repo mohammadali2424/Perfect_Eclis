@@ -5,11 +5,13 @@ import { createLogger } from "./core/utils/logger.js";
 import { createBot } from "./core/bot/createBot.js";
 import { CommandRegistry } from "./core/commands/registry.js";
 import { MemoryUnitOfWork } from "./adapters/storage/memory.js";
-
+import { AuthorityResolver } from "./core/authority/resolver.js";
+import { adminRoleProvider } from "./modules/admin/index.js";
 import { registerSystemModule } from "./modules/system/index.js";
 import { registerXpModule } from "./modules/xp/index.js";
 import { registerAdminModule } from "./modules/admin/index.js";
 
+export const authority = new AuthorityResolver(adminRoleProvider);
 const logger = createLogger('info');
 
 // Storage / Unit of Work
@@ -95,6 +97,7 @@ const shutdown = (signal: "SIGINT" | "SIGTERM") => {
 
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));
+
 
 
 
