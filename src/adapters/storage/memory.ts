@@ -1,5 +1,6 @@
 import type { UnitOfWork, PlayerRepo, XpLedgerRepo, NpcRepo } from '../../core/storage/repos.js';
 import type { ChatId, Npc, Player, PlayerId, XpLedgerEntry } from '../../core/types/entities.js';
+import { MemoryChatSettingsRepo } from "./memory/chatSettingsRepo.js";
 
 function isoNow() {
   return new Date().toISOString();
@@ -107,7 +108,9 @@ export class MemoryUow implements UnitOfWork {
   public players = new MemoryPlayerRepo();
   public xp = new MemoryXpLedgerRepo();
   public npcs = new MemoryNpcRepo();
+  public chatSettings = new MemoryChatSettingsRepo();
 }
 
 // Back-compat alias (the scaffold's main.ts imports this name)
 export { MemoryUow as MemoryUnitOfWork };
+
