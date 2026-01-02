@@ -2,17 +2,17 @@ FROM node:20.19.0-alpine
 
 WORKDIR /app
 
-# Copy only manifests first for better caching
+RUN corepack enable && corepack prepare pnpm@9.15.3 --activate
+
 COPY package.json ./
-COPY package-lock.json ./
+COPY pnpm-lock.yaml ./
 
-# Use npm in container (stable) — or change to pnpm/yarn if you want
-RUN npm ci
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && \
+    pnpm install --frozen-lockfile
 
-# Copy the rest
 COPY . .
-
-RUN npm run build
+RUN pnpm run build
 
 EXPOSE 3000
-CMD ["npm","run","start"]
+CMD ["pnpm","run","start"]
