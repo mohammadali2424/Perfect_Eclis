@@ -196,6 +196,111 @@ export function registerAdminCommands(registry: any) {
       },
     },
 
+    {
+  name: "افزودن ناظر چت",
+  description: "افزودن ناظر برای همین چت (با Reply)",
+  handler: async (ctx) => {
+    const actx = actorContext(ctx);
+    if (!actx || !actx.chatId) return;
+
+    const decision = await authority.check(actx, RULE_OWNER_ONLY);
+    if (!decision.allow) return;
+
+    const targetId = replyTargetTelegramId(ctx);
+    if (!targetId) {
+      await ctx.reply("روی پیام فرد Reply کن و بنویس: افزودن ناظر چت");
+      return;
+    }
+
+    await adminStore.addRole({
+      userId: targetId,
+      role: "NAZER_CHAT",
+      scope: { type: "CHAT", chatId: actx.chatId },
+    });
+
+    await ctx.reply("ناظر چت ثبت شد.");
+  },
+}
+
+    {
+  name: "حذف ناظر چت",
+  description: "حذف ناظر همین چت (با Reply)",
+  handler: async (ctx) => {
+    const actx = actorContext(ctx);
+    if (!actx || !actx.chatId) return;
+
+    const decision = await authority.check(actx, RULE_OWNER_ONLY);
+    if (!decision.allow) return;
+
+    const targetId = replyTargetTelegramId(ctx);
+    if (!targetId) {
+      await ctx.reply("روی پیام فرد Reply کن و بنویس: حذف ناظر چت");
+      return;
+    }
+
+    await adminStore.removeRole({
+      userId: targetId,
+      role: "NAZER_CHAT",
+      scope: { type: "CHAT", chatId: actx.chatId },
+    });
+
+    await ctx.reply("ناظر چت حذف شد.");
+  },
+}
+
+{
+  name: "افزودن ادمین چت",
+  description: "افزودن ادمین برای همین چت (با Reply)",
+  handler: async (ctx) => {
+    const actx = actorContext(ctx);
+    if (!actx || !actx.chatId) return;
+
+    const decision = await authority.check(actx, RULE_NAZER_OR_OWNER);
+    if (!decision.allow) return;
+
+    const targetId = replyTargetTelegramId(ctx);
+    if (!targetId) {
+      await ctx.reply("روی پیام فرد Reply کن و بنویس: افزودن ادمین چت");
+      return;
+    }
+
+    await adminStore.addRole({
+      userId: targetId,
+      role: "ADMIN_CHAT",
+      scope: { type: "CHAT", chatId: actx.chatId },
+    });
+
+    await ctx.reply("ادمین چت ثبت شد.");
+  },
+}
+
+  {
+  name: "حذف ادمین چت",
+  description: "حذف ادمین همین چت (با Reply)",
+  handler: async (ctx) => {
+    const actx = actorContext(ctx);
+    if (!actx || !actx.chatId) return;
+
+    const decision = await authority.check(actx, RULE_NAZER_OR_OWNER);
+    if (!decision.allow) return;
+
+    const targetId = replyTargetTelegramId(ctx);
+    if (!targetId) {
+      await ctx.reply("روی پیام فرد Reply کن و بنویس: حذف ادمین چت");
+      return;
+    }
+
+    await adminStore.removeRole({
+      userId: targetId,
+      role: "ADMIN_CHAT",
+      scope: { type: "CHAT", chatId: actx.chatId },
+    });
+
+    await ctx.reply("ادمین چت حذف شد.");
+  },
+}
+
+  
     // ------------------------
     // لیست ادمین‌ها
     // ------------------------
