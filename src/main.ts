@@ -74,16 +74,27 @@ server.listen(port, async () => {
   }
 });
 
-// Graceful shutdown
-process.once("SIGINT", () => {
-  logger.warn("SIGINT received, stopping bot");
-  bot.stop("SIGINT");
-  server.close();
-});
+// Graceful shutdown (Render sends SIGTERM)
+const shutdown = (signal: "SIGINT" | "SIGTERM") => {
+  logger.warn(`${signal} received, shutting down`);
 
-process.once("SIGTERM", () => {
-  logger.warn("SIGTERM received, stopping bot");
-  bot.stop("SIGTERM");
-  server.close();
-});
+  // Close HTTP server first (stop accepting new requests)
+  try {
+    server.close(() => logger.info("HTTP server closed"));
+  } catch (err) {
+    logger.warn("HTTP server close failed/skipped", { err });
+  }
+
+  // Telegraf: stop may throw if bot is not running
+  try {
+    bot.stop(signal);
+  } catch (err) {
+    logger.warn("Bot stop skipped (probably not running)", { err });
+  }
+};
+
+process.once("SIGINT", () => shutdown("SIGINT"));
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+
+
 
