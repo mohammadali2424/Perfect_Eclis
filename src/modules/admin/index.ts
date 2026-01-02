@@ -1,5 +1,10 @@
 import type { CommandDef } from "../../core/commands/command.js";
 import { isPrivileged } from "../../core/auth/access.js";
+import { InMemoryAdminStore } from "./adminStore.js";
+import { AdminRoleProvider } from "./adminRoleProvider.js";
+
+export const adminStore = new InMemoryAdminStore();
+export const adminRoleProvider = new AdminRoleProvider(adminStore);
 
 function actorId(ctx: any): number | null {
   const id = ctx.from?.id;
@@ -92,3 +97,4 @@ export function registerAdminModule(registry: any) {
 
   for (const c of commands) registry.register(c);
 }
+
