@@ -31,8 +31,9 @@ export function registerChatSettingsCommands(registry: any) {
           return;
         }
 
-        await deps.uow.chatSettings.set("ROLE_MGMT_CHAT_ID", actx.chatId);
-        await deps.uow.commit?.();
+       const uow = deps.uow as any;
+await uow.chatSettings.set("ROLE_MGMT_CHAT_ID", actx.chatId);
+if (typeof uow.commit === "function") await uow.commit();
         await ctx.reply("ثبت شد: این گروه به عنوان گروه مدیریت رول تنظیم شد.");
       },
     },
@@ -46,8 +47,9 @@ export function registerChatSettingsCommands(registry: any) {
         const decision = await authority.check(actx, RULE_NAZER_OR_OWNER);
         if (!decision.allow) return;
 
-        await deps.uow.chatSettings.set("ROLE_MGMT_CHAT_ID", null);
-        await deps.uow.commit?.();
+       const uow = deps.uow as any;
+await uow.chatSettings.set("ROLE_MGMT_CHAT_ID", actx.chatId);
+if (typeof uow.commit === "function") await uow.commit();;
         await ctx.reply("حذف شد: گروه مدیریت رول پاک شد.");
       },
     },
