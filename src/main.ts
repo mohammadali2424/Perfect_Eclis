@@ -30,8 +30,8 @@ const bot = createBot({
 });
 
 // Webhook server (Render)
-const port = env.PORT;
-const webhookPath = env.WEBHOOK_PATH || "/telegram";
+const port = Number(process.env.PORT) || 3000;
+const webhookPath = process.env.WEBHOOK_PATH || "/telegram";
 
 const server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
   if (!req.url) {
@@ -86,3 +86,4 @@ process.once("SIGTERM", () => {
   bot.stop("SIGTERM");
   server.close();
 });
+
