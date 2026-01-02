@@ -220,7 +220,7 @@ export function registerAdminCommands(registry: any) {
 
     await ctx.reply("ناظر چت ثبت شد.");
   },
-}
+},
 
     {
   name: "حذف ناظر چت",
@@ -246,7 +246,7 @@ export function registerAdminCommands(registry: any) {
 
     await ctx.reply("ناظر چت حذف شد.");
   },
-}
+},
 
 {
   name: "افزودن ادمین چت",
@@ -272,7 +272,7 @@ export function registerAdminCommands(registry: any) {
 
     await ctx.reply("ادمین چت ثبت شد.");
   },
-}
+},
 
   {
   name: "حذف ادمین چت",
@@ -298,7 +298,7 @@ export function registerAdminCommands(registry: any) {
 
     await ctx.reply("ادمین چت حذف شد.");
   },
-}
+},
 
   
     // ------------------------
