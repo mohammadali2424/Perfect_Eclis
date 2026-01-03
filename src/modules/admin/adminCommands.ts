@@ -12,6 +12,7 @@ function actorContext(ctx: any): AuthorityContext | null {
   return { userId: Number(userId), chatId };
 }
 
+
 function replyTargetTelegramUser(ctx: any): any | null {
   const rep = ctx.message?.reply_to_message;
   return rep?.from ?? null;
@@ -163,6 +164,17 @@ await (deps as any).auditLog?.emit?.({
   message: "Admin added",
   meta: { role: "ADMIN_GLOBAL", scope: "GLOBAL" },
 });
+
+
+await deps.auditLog?.emit?.({
+  level: "info",
+  topic: "test",
+  action: "AUDIT_TEST",
+  actorId: actx.userId,
+  chatId: actx.chatId ?? null,
+  message: "Audit log test message",
+});
+await ctx.reply("تست لاگ ارسال شد (اگر گروه لاگ تنظیم باشد).");
 
 
         const who = await describeUserHtml(ctx, targetId, targetUser);
@@ -409,6 +421,7 @@ await (deps as any).auditLog?.emit?.({
         await ctx.reply(`ثبت شد: ${who} ادمین این چت شد.`, { parse_mode: "HTML" });
       },
     },
+
     {
       name: "حذف ادمین چت",
       description: "حذف ادمین همین چت (با Reply)",
@@ -437,6 +450,7 @@ await (deps as any).auditLog?.emit?.({
       },
     },
   ];
+
 
   for (const c of commands) registry.register(c);
 }

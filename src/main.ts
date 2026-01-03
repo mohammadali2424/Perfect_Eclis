@@ -14,8 +14,10 @@ import { registerAdminCommands } from "./modules/admin/adminCommands.js";
 
 const logger = createLogger('info');
 
-// Storage / Unit of Work
-const uowFactory = () => new MemoryUnitOfWork();
+// Storage / Unit of Work (Memory - shared)
+const sharedUow = new MemoryUnitOfWork();
+const uowFactory = () => sharedUow;
+
 
 // Commands
 const registry = new CommandRegistry();
