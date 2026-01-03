@@ -13,20 +13,30 @@ function mention(userId: number, label?: string): string {
   return `<a href="tg://user?id=${userId}">${safe}</a>`;
 }
 
-function formatEvent(e: AuditEvent): string {
-  const ts = e.ts || new Date().toISOString();
-  const lvl = e.level.toUpperCase();
-  const who = e.actorId ? mention(e.actorId, "actor") : "actor:?";
-  const tgt = e.targetId ? mention(e.targetId, "target") : "";
-  const chat = e.chatId != null ? ` chat:${e.chatId}` : "";
-  const meta = e.meta ? `<code>${escapeHtml(JSON.stringify(e.meta))}</code>` : "";
+function levelFa(level: string) {
+  if (level === "info") return "اطلاعات";
+  if (level === "warn") return "هشدار";
+  if (level === "error") return "خطا";
+  return level;
+}
 
-  const header = `<b>[${escapeHtml(lvl)}]</b> <b>${escapeHtml(e.topic)}</b> <i>${escapeHtml(e.action)}</i>`;
-  const line = `${escapeHtml(ts)}\n${header}\n${who}${tgt ? " → " + tgt : ""}${escapeHtml(chat)}\n${escapeHtml(
-    e.message
-  )}`;
+async function resolveChatLabel(telegram: any, chatId: number): Promise<string> {
+  try {
+    const chat = await telegram.getChat(chatId);
+    const title = (chat && (chat.title || chat.username)) ? String(chat.title || `@${chat.username}`) : "";
+    return title ? `${title} (${chatId})` : String(chatId);
+  } catch {
+    return String(chatId);
+  }
+}
 
-  return meta ? `${line}\n${meta}` : line;
+function formatMeta(meta?: Record<string, any>): string {
+  if (!meta) return "";
+  try {
+    return `<code>${escapeHtml(JSON.stringify(meta))}</code>`;
+  } catch {
+    return "";
+  }
 }
 
 export class TelegramAuditLog implements AuditLog {
@@ -36,16 +46,41 @@ export class TelegramAuditLog implements AuditLog {
   ) {}
 
   async emit(event: AuditEvent): Promise<void> {
-    const chatId = await this.getLogChatId();
-    if (!chatId) return;
+    const logChatId = await this.getLogChatId();
+    if (!logChatId) return;
+
+    const ts = event.ts || new Date().toISOString();
+
+    const actor = event.actorId ? mention(event.actorId, "Actor") : "Actor: نامشخص";
+    const target = event.targetId ? mention(event.targetId, "Target") : "";
+
+    const chatLine =
+      event.chatId != null
+        ? `گروه/چت: ${escapeHtml(await resolveChatLabel(this.telegram, Number(event.chatId)))}`
+        : "گروه/چت: نامشخص";
+
+    const header = `<b>[${escapeHtml(levelFa(event.level))}]</b> <b>${escapeHtml(event.topic)}</b> — <i>${escapeHtml(
+      event.action
+    )}</i>`;
+
+    const body = [
+      header,
+      escapeHtml(ts),
+      chatLine,
+      `${actor}${target ? " → " + target : ""}`,
+      `پیام: ${escapeHtml(event.message)}`,
+    ].join("\n");
+
+    const meta = formatMeta(event.meta);
+    const text = meta ? `${body}\n${meta}` : body;
 
     try {
-      await this.telegram.sendMessage(chatId, formatEvent(event), {
+      await this.telegram.sendMessage(logChatId, text, {
         parse_mode: "HTML",
         disable_web_page_preview: true,
       });
     } catch {
-      // ignore
+      // لاگ نباید سیستم را بخواباند
     }
   }
 }
