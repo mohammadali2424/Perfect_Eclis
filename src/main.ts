@@ -8,6 +8,7 @@ import { MemoryUnitOfWork } from "./adapters/storage/memory.js";
 import { registerSystemModule } from "./modules/system/index.js";
 import { registerXpModule } from "./modules/xp/index.js";
 import { authority } from "./core/authority/singleton.js";
+import { TelegramAuditLog } from "./adapters/audit/telegramAuditLog.js";
 import { registerChatSettingsCommands } from "./modules/admin/chatSettingsCommands.js";
 import { registerAdminCommands } from "./modules/admin/adminCommands.js";
 
@@ -29,7 +30,20 @@ const bot = createBot({
   registry,
   uowFactory,
   logger,
+  buildAuditLog: (telegram, uowFactory) =>
+    new TelegramAuditLog(telegram, async () => {
+      const uow = uowFactory() as any;
+      const s = await uow.chatSettings.getSnapshot();
+      return s.logChatId ?? null;
+    }),
 });
+
+const auditLog = new TelegramAuditLog(bot.telegram, async () => {
+  const uow = uowFactory() as any;
+  const s = await uow.chatSettings.getSnapshot();
+  return s.logChatId ?? null;
+});
+
 
 const botMode = (process.env.BOT_MODE || "webhook").toLowerCase();
 

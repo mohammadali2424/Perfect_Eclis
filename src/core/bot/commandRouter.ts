@@ -1,8 +1,10 @@
-import type { MiddlewareFn } from 'telegraf';
-import type { Context } from 'telegraf';
-import type { UnitOfWork } from '../storage/repos.js';
-import type { CommandRegistry } from '../commands/registry.js';
-import type { Logger } from '../utils/logger.js';
+import type { MiddlewareFn } from "telegraf";
+import type { Context } from "telegraf";
+import type { UnitOfWork } from "../storage/repos.js";
+import type { CommandRegistry } from "../commands/registry.js";
+import type { Logger } from "../utils/logger.js";
+import type { AuditLog } from "../audit/auditLog.js";
+import { NullAuditLog } from "../audit/auditLog.js";
 
 type RouterCtx = Context & { uow: UnitOfWork };
 
@@ -14,8 +16,10 @@ export function createCommandRouter(opts: {
   registry: CommandRegistry;
   uowFactory: () => UnitOfWork;
   logger: Logger;
+  auditLog?: AuditLog;
 }): MiddlewareFn<Context> {
   const { registry, uowFactory, logger } = opts;
+  const auditLog: AuditLog = opts.auditLog ?? new NullAuditLog();
 
   return async (ctx, next) => {
     if (!isTextMessage(ctx)) return next();
@@ -23,9 +27,6 @@ export function createCommandRouter(opts: {
     const text = ctx.message.text.trim();
     if (!text) return next();
 
-    // فرمان‌ها بدون اسلش هستند، اما برای دیباگ می‌توان /... هم نوشت.
-    // 1) ابتدا کل متن را به‌عنوان کلید فرمان امتحان می‌کنیم (برای فرمان‌های چندکلمه‌ای)
-    // 2) اگر پیدا نشد، اولین توکن (head) را امتحان می‌کنیم.
     const normalizedFull = text.replace(/^\/+/, "").toLowerCase();
     const [headRaw] = normalizedFull.split(/\s+/);
     const head = headRaw ?? "";
@@ -33,14 +34,36 @@ export function createCommandRouter(opts: {
     const def = registry.get(normalizedFull) ?? registry.get(head);
     if (!def) return next();
 
-    // attach uow
     (ctx as RouterCtx).uow = uowFactory();
 
     try {
-      await def.handler(ctx as RouterCtx, { uow: (ctx as RouterCtx).uow, logger });
+      await def.handler(ctx as RouterCtx, {
+        uow: (ctx as RouterCtx).uow,
+        logger,
+        auditLog,
+      });
     } catch (err) {
-      logger.error('command handler failed', { cmd: normalizedFull, err });
-      await ctx.reply('خطای داخلی در اجرای دستور.');
+      logger.error("command handler failed", { cmd: normalizedFull, err });
+
+      // ثبت خطا در لاگ تلگرام هم (اگر تنظیم شده باشد)
+      try {
+        const actorId = (ctx as any).from?.id ? Number((ctx as any).from.id) : undefined;
+        const chatId = (ctx as any).chat?.id ? Number((ctx as any).chat.id) : undefined;
+
+        await auditLog.emit({
+          level: "error",
+          topic: "router",
+          action: "COMMAND_FAIL",
+          actorId,
+          chatId,
+          message: "command handler failed",
+          meta: { cmd: normalizedFull },
+        });
+      } catch {
+        // ignore
+      }
+
+      await ctx.reply("خطای داخلی در اجرای دستور.");
     }
   };
 }

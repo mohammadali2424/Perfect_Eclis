@@ -20,22 +20,25 @@ export function registerSystemModule(registry: CommandRegistry) {
   });
 
   registry.register({
-    name: "آیدی من",
-    aliases: ["ایدی من", "id me", "my id"],
-    description: "نمایش آیدی تلگرام و چت",
-    handler: async (ctx) => {
-      const userId = ctx.from?.id;
-      const chatId = ctx.chat?.id;
-      const chatType = ctx.chat?.type;
+  name: "آیدی من",
+  aliases: ["ایدی من", "id me", "my id"],
+  description: "نمایش آیدی تلگرام و چت",
+  handler: async (ctx) => {
+    const userId = ctx.from?.id;
+    const chatId = ctx.chat?.id;
+    const chatType = ctx.chat?.type;
+    const username = ctx.from?.username ? `@${ctx.from.username}` : "(no username)";
+    const fullName = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ").trim();
 
-      await ctx.reply(
-        [
-          `userId: ${userId}`,
-          `chatId: ${chatId}`,
-          `chatType: ${chatType}`,
-          `OWNER_TELEGRAM_ID(env): ${process.env.OWNER_TELEGRAM_ID || "(empty)"}`,
-        ].join("\n")
-      );
-    },
-  });
+    await ctx.reply(
+      [
+        `شناسه: ${username}`,
+        `نام: ${fullName || "(no name)"}`,
+        `userId: ${userId}`,
+        `chatId: ${chatId}`,
+        `chatType: ${chatType}`,
+      ].join("\n")
+    );
+  },
+});
 }

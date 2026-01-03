@@ -35,6 +35,17 @@ export function registerChatSettingsCommands(registry: any) {
         await uow.chatSettings.set("ROLE_MGMT_CHAT_ID", actx.chatId);
         if (typeof uow.commit === "function") await uow.commit();
 
+await (deps as any).auditLog?.emit?.({
+  level: "info",
+  topic: "settings",
+  action: "ROLE_MGMT_CHAT_SET",
+  actorId: actx.userId,
+  chatId: actx.chatId ?? null,
+  message: "Role management chat set",
+  meta: { roleMgmtChatId: actx.chatId },
+});
+
+
         await ctx.reply("ثبت شد: این گروه به عنوان گروه مدیریت رول تنظیم شد.");
       },
     },
@@ -51,6 +62,16 @@ export function registerChatSettingsCommands(registry: any) {
         const uow = deps.uow as any;
         await uow.chatSettings.set("ROLE_MGMT_CHAT_ID", null);
         if (typeof uow.commit === "function") await uow.commit();
+
+await deps.auditLog?.emit?.({
+  level: "warn",
+  topic: "settings",
+  action: "ROLE_MGMT_CHAT_CLEAR",
+  actorId: actx.userId,
+  chatId: actx.chatId ?? null,
+  message: "Role management chat cleared",
+});
+
 
         await ctx.reply("حذف شد: گروه مدیریت رول پاک شد.");
       },
@@ -74,6 +95,16 @@ export function registerChatSettingsCommands(registry: any) {
         await uow.chatSettings.set("LOG_CHAT_ID", actx.chatId);
         if (typeof uow.commit === "function") await uow.commit();
 
+await (deps as any).auditLog?.emit?.({
+  level: "info",
+  topic: "settings",
+  action: "LOG_CHAT_SET",
+  actorId: actx.userId,
+  chatId: actx.chatId ?? null,
+  message: "Log chat set",
+  meta: { logChatId: actx.chatId },
+});
+
         await ctx.reply("ثبت شد: این گروه به عنوان گروه لاگ تنظیم شد.");
       },
     },
@@ -90,6 +121,16 @@ export function registerChatSettingsCommands(registry: any) {
         const uow = deps.uow as any;
         await uow.chatSettings.set("LOG_CHAT_ID", null);
         if (typeof uow.commit === "function") await uow.commit();
+
+await deps.auditLog?.emit?.({
+  level: "warn",
+  topic: "settings",
+  action: "LOG_CHAT_CLEAR",
+  actorId: actx.userId,
+  chatId: actx.chatId ?? null,
+  message: "Log chat cleared",
+});
+
 
         await ctx.reply("حذف شد: گروه لاگ پاک شد.");
       },

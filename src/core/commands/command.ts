@@ -1,8 +1,15 @@
-import type { Context } from 'telegraf';
-import type { Logger } from '../utils/logger.js';
-import type { UnitOfWork } from '../storage/repos.js';
+import type { Context } from "telegraf";
+import type { Logger } from "../utils/logger.js";
+import type { AuditLog } from "../audit/auditLog.js";
+import type { UnitOfWork } from "../storage/repos.js";
 
-export type CommandHandler = (ctx: Context, deps: { uow: UnitOfWork; logger: Logger }) => Promise<void>;
+export type CommandDeps = {
+  uow: UnitOfWork;
+  logger: Logger;
+  auditLog?: AuditLog;
+};
+
+export type CommandHandler = (ctx: Context, deps: CommandDeps) => Promise<void>;
 
 export interface CommandDef {
   name: string; // primary name, e.g. 'xp'
@@ -30,7 +37,6 @@ export function createRegistry(): CommandRegistry {
       return map.get(name.toLowerCase()) ?? null;
     },
     list() {
-      // return unique primary commands
       const uniq = new Map<string, CommandDef>();
       for (const v of map.values()) uniq.set(v.name, v);
       return Array.from(uniq.values()).sort((a, b) => a.name.localeCompare(b.name));
