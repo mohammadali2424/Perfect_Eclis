@@ -4,6 +4,8 @@ import { RULE_OWNER_ONLY, RULE_NAZER_OR_OWNER } from "../../core/authority/rules
 import { authority } from "../../core/authority/singleton.js";
 import { ensureRoleManagementChat } from "../../core/chat-policy/roleManagementGate.js";
 import { adminStore } from "./index.js";
+import { worldEvents } from "../../core/worldEvents/singleton.js";
+
 
 function actorContext(ctx: any): AuthorityContext | null {
   const userId = ctx.from?.id;
@@ -227,6 +229,34 @@ await ctx.reply("تست لاگ ارسال شد (اگر گروه لاگ تنظی�
         await ctx.reply(["ناظرها:", ...lines].join("\n"), { parse_mode: "HTML" });
       },
     },
+
+{
+  name: "تست رخداد",
+  description: "ساخت رخداد مهم (فقط برای تست ژورنال)",
+  handler: async (ctx, deps) => {
+    const actx = actorContext(ctx);
+    if (!actx) return;
+
+    const decision = await authority.check(actx, RULE_OWNER_ONLY);
+    if (!decision.allow) return;
+
+    await worldEvents.emit({
+      tier: "T1",
+      tags: ["CITY", "CAPTURE", "WAR"],
+      title: "تصرف شهر",
+      summary: "شهر «نُورکَست» توسط فکشن «آهنین» تصرف شد.",
+      region: "ریجن نمونه",
+      spot: "شهر نورکست",
+      zone: "دروازه جنوبی",
+      actorLabel: "Faction: آهنین",
+      targetLabel: "City: نورکست",
+      meta: { city: "norkast", faction: "iron", by: actx.userId },
+    });
+
+    await ctx.reply("رخداد تست ارسال شد.");
+  },
+},
+
 
     // ---------- ADMIN (GLOBAL) ----------
     {
