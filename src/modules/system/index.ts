@@ -25,12 +25,12 @@ export function registerSystemModule(registry: CommandRegistry) {
       const sent = await ctx.reply("pong");
 
       const t1 = Date.now();
-      const botRoundTripMs = t1 - t0;
+      const botRoundTripSec = (t1 - t0) / 1000;
 
       const parts = [
         "pong ✅",
-        `⏱ پاسخ‌دهی ربات: ${botRoundTripMs}ms`,
-        telegramLatencyMs !== null ? `📡 تاخیر تلگرام: ${telegramLatencyMs}ms` : null,
+        `⏱ پاسخ‌دهی ربات: ${botRoundTripSec.toFixed(2)}s`,
+        telegramLatencyMs !== null ? `📡 تاخیر تلگرام: ${(telegramLatencyMs / 1000).toFixed(2)}s` : null,
         `🆔 chat: ${(ctx.chat as any)?.id ?? "?"}`,
         `👤 user: ${(ctx.from as any)?.id ?? "?"}`,
       ].filter(Boolean);
