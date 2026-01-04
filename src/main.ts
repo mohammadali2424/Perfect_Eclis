@@ -11,6 +11,7 @@ import { authority } from "./core/authority/singleton.js";
 import { TelegramAuditLog } from "./adapters/audit/telegramAuditLog.js";
 import { registerChatSettingsCommands } from "./modules/admin/chatSettingsCommands.js";
 import { registerAdminCommands } from "./modules/admin/adminCommands.js";
+import { initWorldEvents } from "./core/worldEvents/singleton.js";
 
 const logger = createLogger('info');
 
@@ -46,6 +47,7 @@ const auditLog = new TelegramAuditLog(bot.telegram, async () => {
   return s.logChatId ?? null;
 });
 
+initWorldEvents(auditLog);
 
 const botMode = (process.env.BOT_MODE || "webhook").toLowerCase();
 
