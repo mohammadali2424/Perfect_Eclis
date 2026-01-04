@@ -3,7 +3,7 @@ import type { CommandRegistry } from "../../core/commands/registry.js";
 export function registerSystemModule(registry: CommandRegistry) {
   registry.register({
     name: "ping",
-    aliases: ["بات"],
+    aliases: ["پینگ"],
     description: "تست اتصال ربات",
     handler: async (ctx) => {
       await ctx.reply("pong ✅");
