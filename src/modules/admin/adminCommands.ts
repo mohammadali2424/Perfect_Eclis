@@ -132,6 +132,53 @@ export function registerAdminCommands(registry: any) {
       },
     },
 
+    {
+      name: "تست رخداد",
+      aliases: ["تسترخداد", "eventtest"],
+      description: "تست ژورنال رخدادهای کلان (فقط OWNER)",
+      handler: async (ctx, deps) => {
+        const actx = actorContext(ctx);
+        if (!actx) return;
+
+        const decision = await authority.check(actx, RULE_OWNER_ONLY);
+        if (!decision.allow) {
+          await ctx.reply("دسترسی نداری.");
+          return;
+        }
+
+        // 1) اثبات اجرای دستور
+        await ctx.reply("OK: دستور اجرا شد.");
+
+        // 2) اثبات اینکه auditLog می‌تواند به گروه لاگ بفرستد
+        await (deps as any).auditLog?.emit?.({
+          level: "info",
+          topic: "test",
+          action: "AUDIT_OK",
+          actorId: actx.userId,
+          chatId: actx.chatId ?? null,
+          message: "تست مستقیم AuditLog",
+          meta: { at: new Date().toISOString() },
+        });
+
+        // 3) اثبات مسیر worldEvents -> bridge -> audit
+        await worldEvents.emit({
+          tier: "T1",
+          tags: ["CITY", "CAPTURE", "WAR"],
+          title: "تست رخداد: تصرف شهر",
+          summary: "این فقط یک رخداد تستی برای بررسی ژورنال است.",
+          region: "TEST_REGION",
+          spot: "TEST_CITY",
+          zone: "TEST_GATE",
+          actorLabel: `OWNER:${actx.userId}`,
+          targetLabel: "CITY:TEST_CITY",
+          meta: { kind: "test", by: actx.userId },
+        });
+
+        await ctx.reply("OK: رخداد ارسال شد (اگر گروه لاگ تنظیم باشد، باید آنجا هم پیام بیاید).");
+      },
+    },
+
+
     // ---------- NAZER (GLOBAL) ----------
     {
       name: "افزودن ناظر",
@@ -230,32 +277,7 @@ await ctx.reply("تست لاگ ارسال شد (اگر گروه لاگ تنظی�
       },
     },
 
-{
-  name: "تست رخداد",
-  description: "ساخت رخداد مهم (فقط برای تست ژورنال)",
-  handler: async (ctx, deps) => {
-    const actx = actorContext(ctx);
-    if (!actx) return;
 
-    const decision = await authority.check(actx, RULE_OWNER_ONLY);
-    if (!decision.allow) return;
-
-    await worldEvents.emit({
-      tier: "T1",
-      tags: ["CITY", "CAPTURE", "WAR"],
-      title: "تصرف شهر",
-      summary: "شهر «نُورکَست» توسط فکشن «آهنین» تصرف شد.",
-      region: "ریجن نمونه",
-      spot: "شهر نورکست",
-      zone: "دروازه جنوبی",
-      actorLabel: "Faction: آهنین",
-      targetLabel: "City: نورکست",
-      meta: { city: "norkast", faction: "iron", by: actx.userId },
-    });
-
-    await ctx.reply("رخداد تست ارسال شد.");
-  },
-},
 
 
     // ---------- ADMIN (GLOBAL) ----------
