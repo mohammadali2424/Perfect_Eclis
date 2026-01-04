@@ -13,9 +13,13 @@ function mention(userId: number, label?: string): string {
   return `<a href="tg://user?id=${userId}">${safe}</a>`;
 }
 
+function uniq<T>(arr: T[]): T[] {
+  return Array.from(new Set(arr));
+}
+
 function hashtags(tags: string[]): string {
-  const uniq = Array.from(new Set(tags.map(t => String(t).trim()).filter(Boolean)));
-  return uniq.length ? uniq.map(t => `#${t}`).join(" ") : "";
+  const clean = uniq(tags.map(t => String(t).trim()).filter(Boolean));
+  return clean.length ? clean.map(t => `#${t}`).join(" ") : "";
 }
 
 function buildLocation(ev: any): string {
@@ -26,20 +30,26 @@ function buildLocation(ev: any): string {
   return parts.length ? parts.join(" — ") : "";
 }
 
-function actorText(ev: any): string {
+function actorTextFromWorldEvent(ev: any): string {
   const m = ev?.meta || {};
-  const id = typeof m.actorTelegramId === "number" ? m.actorTelegramId : null;
+  // اگر از emitter داده شود
+  const id =
+    typeof m.actorTelegramId === "number"
+      ? m.actorTelegramId
+      : typeof m.by === "number"
+        ? m.by
+        : null;
 
   const label =
     m.actorUsername ? `@${m.actorUsername}` :
     m.actorName ? String(m.actorName) :
     ev?.actorLabel ? String(ev.actorLabel) :
-    id != null ? String(id) : "؟";
+    id != null ? String(id) : "نامشخص";
 
   return id != null ? mention(id, label) : escapeHtml(label);
 }
 
-function targetText(ev: any): string {
+function targetTextFromWorldEvent(ev: any): string {
   const m = ev?.meta || {};
   const id = typeof m.targetTelegramId === "number" ? m.targetTelegramId : null;
 
@@ -53,49 +63,47 @@ function targetText(ev: any): string {
   return id != null ? mention(id, label) : escapeHtml(label);
 }
 
-function formatGenericEvent(e: AuditEvent): string {
-  const ts = escapeHtml(e.ts || new Date().toISOString());
-  const lvl = escapeHtml(String(e.level).toUpperCase());
-  const topic = escapeHtml(e.topic);
-  const action = escapeHtml(e.action);
+// قالب عمومی (برای بقیه‌ی رویدادها)
+function formatGeneric(e: AuditEvent): string {
+  const ts = e.ts || new Date().toISOString();
+  const lvl = String(e.level).toUpperCase();
 
-  const actor = e.actorId ? mention(e.actorId, "actor") : "actor:?";
-  const target = e.targetId ? mention(e.targetId, "target") : "";
-  const chat = e.chatId != null ? `چت: ${escapeHtml(String(e.chatId))}` : "";
+  const chatLine =
+    e.chatId != null ? `گروه/چت: ${escapeHtml(String(e.chatId))}` : `گروه/چت: نامشخص`;
 
-  const header = `<b>[${lvl}]</b> <b>${topic}</b> <i>${action}</i>`;
-  const body = e.message ? escapeHtml(e.message) : "";
+  const actorLine =
+    e.actorId != null ? `Actor: ${mention(e.actorId, "Actor")}` : `Actor: نامشخص`;
 
-  const lines = [
-    header,
-    `زمان: ${ts}`,
-    chat,
-    `${actor}${target ? " → " + target : ""}`,
-    body,
-  ].filter(Boolean);
+  const header = `<b>[${escapeHtml(lvl)}]</b> <b>${escapeHtml(e.topic)}</b> — <i>${escapeHtml(e.action)}</i>`;
+  const body = e.message ? `پیام: ${escapeHtml(e.message)}` : `پیام:`;
 
-  // meta فقط برای error (یا اگر خواستی بعداً تنظیمش کنیم)
-  const showMeta = e.level === "error";
+  // meta فقط برای error یا وقتی پیام خالی است
+  const showMeta = e.level === "error" || !e.message;
   const meta = showMeta && e.meta ? `<code>${escapeHtml(JSON.stringify(e.meta))}</code>` : "";
 
-  return meta ? `${lines.join("\n")}\n${meta}` : lines.join("\n");
+  const out = [header, escapeHtml(ts), chatLine, actorLine, body].join("\n");
+  return meta ? `${out}\n${meta}` : out;
 }
 
+// قالب نهایی WorldEvent (T1)
 function formatWorldT1(e: AuditEvent): string {
   const ev = (e.meta as any)?.event;
+
+  const tags = Array.isArray(ev?.tags) ? ev.tags.map(String) : [];
+  const tagLine = hashtags(tags);
 
   const title = ev?.title ? escapeHtml(String(ev.title)) : "رخداد مهم جهان";
   const summary = ev?.summary ? escapeHtml(String(ev.summary)) : "";
 
-  const tags = Array.isArray(ev?.tags) ? ev.tags : [];
-  const tagLine = hashtags(tags.map(String));
-
   const loc = buildLocation(ev);
-  const actor = actorText(ev);
-  const target = targetText(ev);
+  const actor = actorTextFromWorldEvent(ev);
+  const target = targetTextFromWorldEvent(ev);
+
+  // تیتر: هشتگ‌ها + عنوان
+  const head = tagLine ? `<b>${escapeHtml(tagLine)} — ${title}</b>` : `<b>${title}</b>`;
 
   const lines = [
-    tagLine ? `<b>${escapeHtml(tagLine)} — ${title}</b>` : `<b>${title}</b>`,
+    head,
     summary ? `خلاصه: ${summary}` : "",
     loc ? `مکان: ${escapeHtml(loc)}` : "",
     `عامل: ${actor}`,
@@ -106,7 +114,8 @@ function formatWorldT1(e: AuditEvent): string {
   const showMeta = e.level === "error";
   const meta = showMeta && e.meta ? `<code>${escapeHtml(JSON.stringify(e.meta))}</code>` : "";
 
-  return meta ? `${lines.join("\n")}\n${meta}` : lines.join("\n");
+  const out = lines.join("\n");
+  return meta ? `${out}\n${meta}` : out;
 }
 
 export class TelegramAuditLog implements AuditLog {
@@ -116,12 +125,11 @@ export class TelegramAuditLog implements AuditLog {
   ) {}
 
   async emit(event: AuditEvent): Promise<void> {
-const debug = `<code>${escapeHtml(JSON.stringify({ topic: event.topic, action: event.action }))}</code>`;
     const chatId = await this.getLogChatId();
     if (!chatId) return;
 
     const isWorldT1 = event.topic === "world" && event.action === "WORLD_T1";
-    const text = isWorldT1 ? formatWorldT1(event) : formatGenericEvent(event);
+    const text = isWorldT1 ? formatWorldT1(event) : formatGeneric(event);
 
     try {
       await this.telegram.sendMessage(chatId, text, {
