@@ -116,6 +116,7 @@ export class TelegramAuditLog implements AuditLog {
   ) {}
 
   async emit(event: AuditEvent): Promise<void> {
+const debug = `<code>${escapeHtml(JSON.stringify({ topic: event.topic, action: event.action }))}</code>`;
     const chatId = await this.getLogChatId();
     if (!chatId) return;
 
