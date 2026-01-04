@@ -1,15 +1,7 @@
 import type { CommandRegistry } from "../../core/commands/registry.js";
 
 export function registerSystemModule(registry: CommandRegistry) {
-  registry.register({
-    name: "ping",
-    aliases: ["پینگ"],
-    description: "تست اتصال ربات",
-    handler: async (ctx) => {
-      await ctx.reply("pong ✅");
-    },
-  });
-
+ 
   registry.register({
     name: "start",
     aliases: ["شروع"],
@@ -18,6 +10,49 @@ export function registerSystemModule(registry: CommandRegistry) {
       await ctx.reply("سلام! 👋\nبرای دیدن دستورها: /help");
     },
   });
+
+  registry.register({
+    name: "ping",
+    aliases: ["پینگ"],
+    description: "تست اتصال + سرعت پاسخ‌دهی",
+    handler: async (ctx) => {
+      const t0 = Date.now();
+
+      const msgDateSec = (ctx.message as any)?.date as number | undefined;
+      const telegramLatencyMs =
+        typeof msgDateSec === "number" ? Math.max(0, Date.now() - msgDateSec * 1000) : null;
+
+      const sent = await ctx.reply("pong");
+
+      const t1 = Date.now();
+      const botRoundTripMs = t1 - t0;
+
+      const parts = [
+        "pong ✅",
+        `⏱ پاسخ‌دهی ربات: ${botRoundTripMs}ms`,
+        telegramLatencyMs !== null ? `📡 تاخیر تلگرام: ${telegramLatencyMs}ms` : null,
+        `🆔 chat: ${(ctx.chat as any)?.id ?? "?"}`,
+        `👤 user: ${(ctx.from as any)?.id ?? "?"}`,
+      ].filter(Boolean);
+
+      try {
+        if (sent?.message_id) {
+          await ctx.telegram.editMessageText(
+            (ctx.chat as any).id,
+            sent.message_id,
+            undefined,
+            parts.join("\n")
+          );
+          return;
+        }
+      } catch {
+        // اگر ادیت نشد، پیام جدا می‌فرستیم
+      }
+
+      await ctx.reply(parts.join("\n"));
+    },
+  });
+
 
   registry.register({
   name: "آیدی من",
