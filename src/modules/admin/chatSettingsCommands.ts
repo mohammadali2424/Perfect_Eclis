@@ -1,5 +1,6 @@
 import type { CommandDef } from "../../core/commands/command.js";
 import { authority } from "../../core/authority/singleton.js";
+import { worldEvents } from "../../core/worldEvents/singleton.js";
 import { RULE_NAZER_OR_OWNER } from "../../core/authority/rules.js";
 
 function actorContext(ctx: any) {
@@ -35,15 +36,19 @@ export function registerChatSettingsCommands(registry: any) {
         await uow.chatSettings.set("ROLE_MGMT_CHAT_ID", actx.chatId);
         if (typeof uow.commit === "function") await uow.commit();
 
-await (deps as any).auditLog?.emit?.({
-  level: "info",
-  topic: "settings",
-  action: "ROLE_MGMT_CHAT_SET",
-  actorId: actx.userId,
-  chatId: actx.chatId ?? null,
-  message: "Role management chat set",
-  meta: { roleMgmtChatId: actx.chatId },
+await worldEvents.emit({
+  tier: "T1",
+  tags: ["GOV"],
+  title: "chat.settings.updated.v1",
+  summary: "ROLE_MGMT_CHAT_ID updated",
+  meta: {
+    key: "ROLE_MGMT_CHAT_ID",
+    value: actx.chatId,
+    actorUserId: actx.userId,
+    chatId: actx.chatId,
+  },
 });
+
 
 
         await ctx.reply("ثبت شد: این گروه به عنوان گروه مدیریت رول تنظیم شد.");
@@ -63,14 +68,19 @@ await (deps as any).auditLog?.emit?.({
         await uow.chatSettings.set("ROLE_MGMT_CHAT_ID", null);
         if (typeof uow.commit === "function") await uow.commit();
 
-await deps.auditLog?.emit?.({
-  level: "warn",
-  topic: "settings",
-  action: "ROLE_MGMT_CHAT_CLEAR",
-  actorId: actx.userId,
-  chatId: actx.chatId ?? null,
-  message: "Role management chat cleared",
+await worldEvents.emit({
+  tier: "T1",
+  tags: ["GOV"],
+  title: "chat.settings.updated.v1",
+  summary: "ROLE_MGMT_CHAT_ID updated",
+  meta: {
+    key: "ROLE_MGMT_CHAT_ID",
+    value: actx.chatId,
+    actorUserId: actx.userId,
+    chatId: actx.chatId,
+  },
 });
+
 
 
         await ctx.reply("حذف شد: گروه مدیریت رول پاک شد.");
@@ -95,15 +105,19 @@ await deps.auditLog?.emit?.({
         await uow.chatSettings.set("LOG_CHAT_ID", actx.chatId);
         if (typeof uow.commit === "function") await uow.commit();
 
-await (deps as any).auditLog?.emit?.({
-  level: "info",
-  topic: "settings",
-  action: "LOG_CHAT_SET",
-  actorId: actx.userId,
-  chatId: actx.chatId ?? null,
-  message: "Log chat set",
-  meta: { logChatId: actx.chatId },
+await worldEvents.emit({
+  tier: "T1",
+  tags: ["GOV"],
+  title: "chat.settings.updated.v1",
+  summary: "ROLE_MGMT_CHAT_ID updated",
+  meta: {
+    key: "ROLE_MGMT_CHAT_ID",
+    value: actx.chatId,
+    actorUserId: actx.userId,
+    chatId: actx.chatId,
+  },
 });
+
 
         await ctx.reply("ثبت شد: این گروه به عنوان گروه لاگ تنظیم شد.");
       },
@@ -122,14 +136,19 @@ await (deps as any).auditLog?.emit?.({
         await uow.chatSettings.set("LOG_CHAT_ID", null);
         if (typeof uow.commit === "function") await uow.commit();
 
-await deps.auditLog?.emit?.({
-  level: "warn",
-  topic: "settings",
-  action: "LOG_CHAT_CLEAR",
-  actorId: actx.userId,
-  chatId: actx.chatId ?? null,
-  message: "Log chat cleared",
+await worldEvents.emit({
+  tier: "T1",
+  tags: ["GOV"],
+  title: "chat.settings.updated.v1",
+  summary: "ROLE_MGMT_CHAT_ID updated",
+  meta: {
+    key: "ROLE_MGMT_CHAT_ID",
+    value: actx.chatId,
+    actorUserId: actx.userId,
+    chatId: actx.chatId,
+  },
 });
+
 
 
         await ctx.reply("حذف شد: گروه لاگ پاک شد.");
@@ -147,6 +166,20 @@ await deps.auditLog?.emit?.({
 
         const uow = deps.uow as any;
         const s = await uow.chatSettings.getSnapshot();
+
+await worldEvents.emit({
+  tier: "T1",
+  tags: ["GOV"],
+  title: "chat.settings.updated.v1",
+  summary: "ROLE_MGMT_CHAT_ID updated",
+  meta: {
+    key: "ROLE_MGMT_CHAT_ID",
+    value: actx.chatId,
+    actorUserId: actx.userId,
+    chatId: actx.chatId,
+  },
+});
+
 
         await ctx.reply(
           [

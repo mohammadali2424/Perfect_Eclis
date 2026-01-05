@@ -1,40 +1,24 @@
-export type WorldEventTier = "T1";
+export type WorldTier = "T1" | "T2" | "T3";
 
-export type WorldEventTag =
-  | "CITY"
-  | "SIEGE"
-  | "CAPTURE"
-  | "FACTION"
-  | "GOV"
-  | "ALLIANCE"
-  | "WAR"
-  | "BOSS"
-  | "PHENOMENON"
-  | "CARAVAN"
-  | "RAID"
-  | "ROADS"
-  | "BATTLE"
-  | "FIGHT"
-  | "DEATH"
-  | "KILL"
-  | "ARMY"
-  | "SPAWN"
-  | "MOVE"
-  | "DESTROY";
+// Tag آزاد است، ولی عرف: UPPER_SNAKE یا UPPER (مثل CITY / CAPTURE / WAR)
+export type WorldTag = string;
 
 export interface WorldEvent {
-  tier: WorldEventTier;
-  tags: WorldEventTag[];
-  title: string;
-  summary: string;
+  ts?: string;            // ISO
+  tier: WorldTier;        // T1 مهم
+  tags: WorldTag[];       // برای جستجو/دسته‌بندی
+  title: string;          // تیتر کوتاه
+  summary?: string;       // توضیح کامل‌تر (اختیاری)
 
+  // مکان
   region?: string;
   spot?: string;
   zone?: string;
 
+  // نمایشگرها (fallback)
   actorLabel?: string;
   targetLabel?: string;
 
-  ts?: string;
+  // دیتا آزاد برای formatter/bridge/سیستم‌ها
   meta?: Record<string, any>;
 }
